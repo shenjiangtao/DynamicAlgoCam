@@ -1,0 +1,266 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "FramePixelValueProcess.hpp"
+#include "exception/ObException.hpp"
+#include "logger/LoggerInterval.hpp"
+#include "frame/FrameFactory.hpp"
+#include "utils/Utils.hpp"
+
+namespace libobsensor {
+
+template <typename T> void imagePixelValueScale(const T *src, T *dst, uint32_t width, uint32_t height, float scale_) {
+    const T *srcPixel = src;
+    T       *dstPixel = dst;
+    for(uint32_t h = 0; h < height; h++) {
+        for(uint32_t w = 0; w < width; w++) {
+            *dstPixel = (T)(*srcPixel * scale_);
+            srcPixel++;
+            dstPixel++;
+        }
+    }
+}
+
+template <typename T> void imagePixelValueOffset(T *src, T *dst, uint32_t width, uint32_t height, int8_t offset) {
+    T *dstPixel = dst;
+    T *srcPixel = src;
+    if(offset > 0) {
+        uint8_t shiftCount = static_cast<uint8_t>(offset);
+        for(uint32_t h = 0; h < height; h++) {
+            for(uint32_t w = 0; w < width; w++) {
+                *dstPixel = *srcPixel >> shiftCount;
+                srcPixel++;
+                dstPixel++;
+            }
+        }
+    }
+    else if(offset < 0) {
+        uint8_t shiftCount = static_cast<uint8_t>(-offset);
+        for(uint32_t h = 0; h < height; h++) {
+            for(uint32_t w = 0; w < width; w++) {
+                *dstPixel = *srcPixel << shiftCount;
+                srcPixel++;
+                dstPixel++;
+            }
+        }
+    }
+}
+
+template <typename T> void imagePixelValueThreshold(T *src, T *dst, uint32_t width, uint32_t height, uint32_t min, uint32_t max) {
+    T *dstPixel = dst;
+    T *srcPixel = src;
+    if(min >= max) {
+        for(uint32_t h = 0; h < height; h++) {
+            for(uint32_t w = 0; w < width; w++) {
+                *dstPixel = 0;
+                srcPixel++;
+                dstPixel++;
+            }
+        }
+    }
+    else {
+        for(uint32_t h = 0; h < height; h++) {
+            for(uint32_t w = 0; w < width; w++) {
+                *dstPixel = (*srcPixel < min) ? 0 : ((*srcPixel > max) ? 0 : *srcPixel);
+                srcPixel++;
+                dstPixel++;
+            }
+        }
+    }
+}
+
+PixelValueScaler::PixelValueScaler() {}
+PixelValueScaler::~PixelValueScaler() noexcept {}
+
+void PixelValueScaler::updateConfig(std::vector<std::string> &params) {
+    if(params.size() != 1) {
+        THROW_INVALID_PARAM_EXCEPTION("PixelValueScaler config error: params size not match");
+    }
+    try {
+        std::lock_guard<std::mutex> scaleLock(mtx_);
+        scale_ = std::stof(params[0]);
+    }
+    catch(const std::exception &e) {
+        THROW_INVALID_PARAM_EXCEPTION("PixelValueScaler config error: " + std::string(e.what()));
+    }
+}
+
+void PixelValueScaler::setConfigData(void *data, uint32_t size) {
+    utils::unusedVar(data);
+    utils::unusedVar(size);
+}
+
+const std::string &PixelValueScaler::getConfigSchema() const {
+    // csv format: name，type， min，max，step，default，description
+    static const std::string schema = "scale, float, 0.01, 100.0, 0.01, 1.0, value scale factor";
+    return schema;
+}
+
+std::shared_ptr<Frame> PixelValueScaler::process(std::shared_ptr<const Frame> frame) {
+    if(frame->getType() != OB_FRAME_DEPTH) {
+        LOG_WARN_INTVL("PixelValueScaler unsupported to process this frame type: {}", frame->getType());
+        return FrameFactory::createFrameFromOtherFrame(frame);
+    }
+
+    std::lock_guard<std::mutex> scaleLock(mtx_);
+    auto                        depthFrame = frame->as<DepthFrame>();
+    auto                        outFrame   = FrameFactory::createFrameFromOtherFrame(frame);
+    switch(frame->getFormat()) {
+    case OB_FORMAT_Y16:
+        imagePixelValueScale<uint16_t>((uint16_t *)frame->getData(), (uint16_t *)outFrame->getData(), depthFrame->getWidth(), depthFrame->getHeight(), scale_);
+        break;
+    default:
+        LOG_ERROR_INTVL("PixelValueScaler: unsupported format: {}", frame->getFormat());
+        break;
+    }
+
+    auto outDepthFrame = outFrame->as<DepthFrame>();
+    auto valueScale    = outDepthFrame->getValueScale();
+    outDepthFrame->setValueScale(valueScale * scale_);
+
+    return outFrame;
+}
+
+ThresholdFilter::ThresholdFilter() {}
+ThresholdFilter::~ThresholdFilter() noexcept {}
+
+void ThresholdFilter::updateConfig(std::vector<std::string> &params) {
+    if(params.size() != 2) {
+        THROW_INVALID_PARAM_EXCEPTION("ThresholdFilter config error: params size not match");
+    }
+    try {
+        std::lock_guard<std::mutex> cutOffLock(mtx_);
+        int                         min = std::stoi(params[0]);
+        if(min >= 0 && min <= 16000) {
+            min_ = min;
+        }
+
+        int max = std::stoi(params[1]);
+        if(max >= 0 && max <= 16000) {
+            max_ = max;
+        }
+    }
+    catch(const std::exception &e) {
+        THROW_INVALID_PARAM_EXCEPTION("ThresholdFilter config error: " + std::string(e.what()));
+    }
+}
+
+void ThresholdFilter::setConfigData(void *data, uint32_t size) {
+    utils::unusedVar(data);
+    utils::unusedVar(size);
+}
+
+const std::string &ThresholdFilter::getConfigSchema() const {
+    // csv format: name，type， min，max，step，default，description
+    static const std::string schema = "min, int, 0, 16000, 1, 0, min depth range\n"
+                                      "max, int, 0, 16000, 1, 16000, max depth range";
+    return schema;
+}
+
+std::shared_ptr<Frame> ThresholdFilter::process(std::shared_ptr<const Frame> frame) {
+    if(!frame) {
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex>       cutOffLock(mtx_);
+    std::shared_ptr<const DepthFrame> depth;
+    if(frame->is<FrameSet>()) {
+        auto fset = frame->as<FrameSet>();
+        auto df   = fset->getFrame(OB_FRAME_DEPTH);
+        if(!df) {
+            LOG_WARN("Invalid input frame, not depth frame found!");
+            return nullptr;
+        }
+        depth = df->as<DepthFrame>();
+    }
+    else if(frame->is<DepthFrame>()) {
+        depth = frame->as<DepthFrame>();
+    }
+    else {
+        LOG_WARN("Invalid input frame, not depth frame found!");
+        return nullptr;
+    }
+    auto  outFrame = FrameFactory::createFrameFromOtherFrame(depth);
+    float scale    = depth->getValueScale();
+
+    if(max_ != 65535) {
+        switch(depth->getFormat()) {
+        case OB_FORMAT_Y16:
+            imagePixelValueThreshold((uint16_t *)depth->getData(), (uint16_t *)outFrame->getData(), depth->getWidth(), depth->getHeight(),
+                                     (uint32_t)(min_ / scale), (uint32_t)(max_ / scale));
+            break;
+        case OB_FORMAT_Y8:
+            imagePixelValueThreshold((uint8_t *)depth->getData(), (uint8_t *)outFrame->getData(), depth->getWidth(), depth->getHeight(),
+                                     (uint32_t)(min_ / scale), (uint32_t)(max_ / scale));
+            break;
+        default:
+            LOG_ERROR_INTVL("ThresholdFilter: unsupported format: {}", depth->getFormat());
+            break;
+        }
+    }
+
+    if(frame->is<FrameSet>()) {
+        auto frameSet    = FrameFactory::createFrameFromOtherFrame(frame);
+        auto outFrameSet = frameSet->as<FrameSet>();
+        outFrameSet->pushFrame(std::move(outFrame));
+        return frameSet;
+    }
+
+    return outFrame;
+}
+
+PixelValueOffset::PixelValueOffset() {}
+PixelValueOffset::~PixelValueOffset() noexcept {}
+
+void PixelValueOffset::updateConfig(std::vector<std::string> &params) {
+    if(params.size() != 1) {
+        THROW_INVALID_PARAM_EXCEPTION("PixelValueOffset config error: params size not match");
+    }
+    try {
+        std::lock_guard<std::mutex> offsetLock(mtx_);
+        offset_ = static_cast<int8_t>(std::stoi(params[0]));
+    }
+    catch(const std::exception &e) {
+        THROW_INVALID_PARAM_EXCEPTION("PixelValueOffset config error: " + std::string(e.what()));
+    }
+}
+
+void PixelValueOffset::setConfigData(void *data, uint32_t size) {
+    utils::unusedVar(data);
+    utils::unusedVar(size);
+}
+
+const std::string &PixelValueOffset::getConfigSchema() const {
+    // csv format: name，type， min，max，step，default，description
+    static const std::string schema = "offset, int, -16, 16, 1, 0, value offset factor";
+    return schema;
+}
+
+std::shared_ptr<Frame> PixelValueOffset::process(std::shared_ptr<const Frame> frame) {
+    if(!frame) {
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex> offsetLock(mtx_);
+    auto                        videoFrame = frame->as<VideoFrame>();
+    auto                        outFrame   = FrameFactory::createFrameFromOtherFrame(frame);
+    if(offset_ != 0) {
+        switch(frame->getFormat()) {
+        case OB_FORMAT_Y16:
+            imagePixelValueOffset((uint16_t *)frame->getData(), (uint16_t *)outFrame->getData(), videoFrame->getWidth(), videoFrame->getHeight(), offset_);
+            break;
+        case OB_FORMAT_Y8:
+            imagePixelValueOffset((uint8_t *)frame->getData(), (uint8_t *)outFrame->getData(), videoFrame->getWidth(), videoFrame->getHeight(), offset_);
+            break;
+        default:
+            LOG_ERROR_INTVL("PixelValueOffset: unsupported format: {}", frame->getFormat());
+            break;
+        }
+
+        uint8_t bitSize = frame->as<VideoFrame>()->getPixelAvailableBitSize();
+        outFrame->as<VideoFrame>()->setPixelAvailableBitSize(bitSize - offset_);
+    }
+    return outFrame;
+}
+
+}  // namespace libobsensor

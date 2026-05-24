@@ -1,0 +1,155 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "G2DeviceInfo.hpp"
+#include "G2Device.hpp"
+#include "G2XLDevice.hpp"
+#include "G210Device.hpp"
+#include "G435LeDevice.hpp"
+#include "DevicePids.hpp"
+#include "utils/Utils.hpp"
+#include "exception/ObException.hpp"
+#include "SourcePortInfo.hpp"
+#if defined(BUILD_USB_PAL)
+#include "usb/UsbPortGroup.hpp"
+#endif
+#if defined(BUILD_NET_PAL)
+#include "ethernet/NetPortGroup.hpp"
+#include "ethernet/NetDataStreamPort.hpp"
+#endif
+
+#include <map>
+
+namespace libobsensor {
+
+const std::map<int, std::string> G2DeviceNameMap = {
+    { 0x0670, "Gemini2" }, { 0x0673, "Gemini2 L" }, { 0x0671, "Gemini2 XL" }, { 0x0808, "Gemini 215" }, { 0x0809, "Gemini 210" }
+};
+
+G2DeviceInfo::G2DeviceInfo(const SourcePortInfoList groupedInfoList) {
+    auto firstPortInfo = groupedInfoList.front();
+    if(IS_USB_PORT(firstPortInfo->portType)) {
+        auto portInfo = std::dynamic_pointer_cast<const USBSourcePortInfo>(groupedInfoList.front());
+
+        auto iter = G2DeviceNameMap.find(portInfo->pid);
+        if(iter != G2DeviceNameMap.end()) {
+            name_ = iter->second;
+        }
+        else {
+            name_ = "Gemini2 series device";
+        }
+
+        fullName_ = "Orbbec " + name_;
+
+        pid_                = portInfo->pid;
+        vid_                = portInfo->vid;
+        uid_                = portInfo->uid;
+        deviceSn_           = portInfo->serial;
+        connectionType_     = portInfo->connSpec;
+        sourcePortInfoList_ = groupedInfoList;
+    }
+    else if(IS_NET_PORT(firstPortInfo->portType)) {
+        auto portInfo = std::dynamic_pointer_cast<const NetSourcePortInfo>(groupedInfoList.front());
+        auto vid      = portInfo->vid;
+        auto pid      = portInfo->pid;
+
+        auto iter = std::find_if(G435LeDeviceInfoList.begin(), G435LeDeviceInfoList.end(),
+                                 [vid, pid](const DeviceInfoEntry &entry) { return entry.vid_ == vid && entry.pid_ == pid; });
+
+        if(iter != G435LeDeviceInfoList.end()) {
+            name_     = iter->deviceName_;
+            fullName_ = std::string(iter->manufacturer_) + " " + name_;
+        }
+        else {
+            auto iter2 = G2DeviceNameMap.find(portInfo->pid);
+            if(iter2 != G2DeviceNameMap.end() && (portInfo->vid == ORBBEC_DEVICE_VID)) {
+                name_ = iter2->second;
+            }
+            else {
+                name_ = "Gemini2 series device";
+            }
+
+            fullName_ = "Orbbec " + name_;
+        }
+
+        pid_                = portInfo->pid;
+        vid_                = portInfo->vid;
+        uid_                = portInfo->mac;
+        deviceSn_           = portInfo->serialNumber;
+        connectionType_     = "Ethernet";
+        sourcePortInfoList_ = groupedInfoList;
+    }
+    else {
+        THROW_INVALID_PARAM_EXCEPTION("Invalid port type");
+    }
+}
+
+G2DeviceInfo::~G2DeviceInfo() noexcept {}
+
+std::shared_ptr<IDevice> G2DeviceInfo::createDevice(OBDeviceAccessMode accessMode) const {
+    (void)accessMode;  // access control is unsupported
+    if(isDeviceInContainer(G435LeDevPids, vid_, pid_)) {
+        return std::make_shared<G435LeDevice>(shared_from_this(), accessMode);
+    }
+    else if(vid_ == ORBBEC_DEVICE_VID) {
+        if(pid_ == 0x0671) {
+            if(IS_NET_PORT(sourcePortInfoList_.front()->portType)) {
+                return std::make_shared<G2XLNetDevice>(shared_from_this());
+            }
+            return std::make_shared<G2XLUSBDevice>(shared_from_this());
+        }
+        else if(pid_ == 0x0808 || pid_ == 0x0809) {
+            return std::make_shared<G210Device>(shared_from_this());
+        }
+    }
+    return std::make_shared<G2Device>(shared_from_this());
+}
+
+#if defined(BUILD_USB_PAL)
+std::vector<std::shared_ptr<IDeviceEnumInfo>> G2DeviceInfo::pickDevices(const SourcePortInfoList infoList) {
+    std::vector<std::shared_ptr<IDeviceEnumInfo>> G2DeviceInfos;
+    auto                                          remainder = FilterUSBPortInfoByVidPid(infoList, ORBBEC_DEVICE_VID, Gemini2DevPids);
+    auto                                          groups    = utils::groupVector<std::shared_ptr<const SourcePortInfo>>(remainder, GroupUSBSourcePortByUrl);
+    auto                                          iter      = groups.begin();
+    while(iter != groups.end()) {
+        if(iter->size() >= 4) {
+            auto info = std::make_shared<G2DeviceInfo>(*iter);
+            G2DeviceInfos.push_back(info);
+        }
+        iter++;
+    }
+
+    return G2DeviceInfos;
+}
+#endif
+
+#if defined(BUILD_NET_PAL)
+std::vector<std::shared_ptr<IDeviceEnumInfo>> G2DeviceInfo::pickNetDevices(const SourcePortInfoList infoList) {
+    std::vector<std::shared_ptr<IDeviceEnumInfo>> gemini2DeviceInfos;
+    auto                                          remainder       = FilterNetPortInfoByVidPid(infoList, ORBBEC_DEVICE_VID, Gemini2DevPids);
+    auto                                          G435LeRemainder = FilterNetPortInfoByVidPid(infoList, G435LeDevPids);
+
+    remainder.insert(remainder.end(), G435LeRemainder.begin(), G435LeRemainder.end());
+    auto groups = utils::groupVector<std::shared_ptr<const SourcePortInfo>>(remainder, GroupNetSourcePortByMac);
+    auto iter   = groups.begin();
+    while(iter != groups.end()) {
+        if(iter->size() >= 1) {
+            auto portInfo = std::dynamic_pointer_cast<const NetSourcePortInfo>(iter->front());
+            iter->emplace_back(std::make_shared<RTSPStreamPortInfo>(*portInfo, static_cast<uint16_t>(8888), portInfo->port, OB_STREAM_COLOR));
+            iter->emplace_back(std::make_shared<RTSPStreamPortInfo>(*portInfo, static_cast<uint16_t>(8554), portInfo->port, OB_STREAM_DEPTH));
+            iter->emplace_back(std::make_shared<RTSPStreamPortInfo>(*portInfo, static_cast<uint16_t>(8555), portInfo->port, OB_STREAM_IR_LEFT));
+            iter->emplace_back(std::make_shared<RTSPStreamPortInfo>(*portInfo, static_cast<uint16_t>(8556), portInfo->port, OB_STREAM_IR_RIGHT));
+            iter->emplace_back(std::make_shared<NetDataStreamPortInfo>(*portInfo, static_cast<uint16_t>(8900), portInfo->port));
+            iter->emplace_back(std::make_shared<RTSPStreamPortInfo>(*portInfo, static_cast<uint16_t>(8557), portInfo->port, OB_STREAM_CONFIDENCE));
+
+            auto deviceEnumInfo = std::make_shared<G2DeviceInfo>(*iter);
+            gemini2DeviceInfos.push_back(deviceEnumInfo);
+        }
+        iter++;
+    }
+
+    return gemini2DeviceInfos;
+}
+#endif
+
+}  // namespace libobsensor

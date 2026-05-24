@@ -1,0 +1,593 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "LiDARStreamer.hpp"
+
+#include "frame/Frame.hpp"
+#include "frame/FrameFactory.hpp"
+#include "stream/StreamProfile.hpp"
+#include "logger/LoggerInterval.hpp"
+#include "utils/Utils.hpp"
+#include "property/InternalProperty.hpp"
+#include "IDevice.hpp"
+#include "DevicePids.hpp"
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#endif
+
+#undef min
+#undef max
+#include <iostream>
+#include <cmath>
+#include <algorithm>
+
+const size_t LIDAR_FILTER_FRAME_QUEUE_SIZE = 10;
+
+namespace libobsensor {
+
+#pragma pack(push, 1)
+// Original LiDAR stream data header
+typedef struct {
+    uint8_t  magic[6];           // magic data, must be 0x4D 0x53 0x02 0xF4 0xEB 0x90
+    uint16_t dataLen;            // data lenth
+    uint8_t  model;              // 0: MS600; 1:ME450
+    uint8_t  scanRate;           // 1:5HZ;2:10HZ;3:15HZ;4:20HZ;
+    uint16_t dataBlockNum;       // data block index based 1
+    uint16_t frameIndex;         // 1~65535
+    uint8_t  dataFormat;         // 0:IMU; 1:point cloud; 2: spherical point cloud;5: calibration point cloud
+    uint64_t timestamp;          // timestamp, 0~3600e9, unit 1ns
+    uint8_t  timestampSyncMode;  // 0: free run; 1: outer sync; 2: PTP sync
+    uint32_t warningInfo;
+    uint8_t  echoMode;          // 1:first echo; 2:last echo
+    uint16_t scanSpeed;         // scan speed, RPM
+    uint16_t verticalScanRate;  // vertical scan rate, unit 0.1Hz
+    uint16_t apdtemperature;    // APD temperature, unit 0.01c
+    uint8_t  reserved[5];       // reserve
+} LiDARDataHeader;
+
+#pragma pack(pop)
+
+// data block magic
+#define HEAD_MAGIC "\x4D\x53\x02\xF4\xEB\x90"
+#define HEAD_MAGIC_LEN (6)
+#define TAIL_MAGIC "\xFE\xFE\xFE\xFE"
+#define TAIL_MAGIC_LEN (4)
+
+#if !(defined(_WIN32) || defined(__APPLE__))
+static inline uint64_t ntohll(uint64_t val) {
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+    return (((uint64_t)ntohl(val & 0xFFFFFFFFULL)) << 32) | ntohl(val >> 32);
+#else
+    return val;
+#endif
+}
+#endif
+
+static inline float floatLerp(const float &x0, const float &x1, const float &y0, const float &y1, const float &x) {
+    const float &dy     = y1 - y0;
+    const float &dx     = x1 - x0;
+    float        result = 0.0f;
+
+    if(dx == 0) {
+        return y0;
+    }
+
+    result = y0 + (x - x0) * dy / dx;
+    return result;
+}
+
+void LiDARStreamer::copyToOBLiDARSpherePoint(const LiDARSpherePoint *point, OBLiDARSpherePoint *obPoint) {
+    // to host order and to unit mm / degrees
+    obPoint->distance = ntohs(point->distance) * 2.0f;
+    obPoint->theta    = static_cast<int16_t>(ntohs(point->theta)) * 0.01f;
+    obPoint->phi      = static_cast<int16_t>(ntohs(point->phi)) * 0.01f;
+
+    uint16_t extValue = (static_cast<uint16_t>(point->reflectivity) << 8) | point->tag;
+
+    obPoint->tag               = extValue >> 14;
+    const uint16_t &pulseWidth = extValue & 0x3FFF;
+    obPoint->reflectivity      = calculateReflectivity(obPoint->distance * 0.01f, pulseWidth, obPoint->tag);
+}
+
+LiDARStreamer::LiDARStreamer(IDevice *owner, const std::shared_ptr<IDataStreamPort> &backend,
+                             std::vector<std::pair<std::string, std::shared_ptr<IFilter>>> filters)
+    : owner_(owner),
+      backend_(backend),
+      profile_(nullptr),
+      callback_(nullptr),
+      running_(false),
+      frameIndex_(0),
+      frame_(nullptr),
+      frameDataOffset_(0),
+      expectedDataNumber_(0),
+      filters_(std::move(filters)) {
+
+    lowPowerFactors_  = { 1.f, 1.f };
+    highPowerFactors_ = { 1.f, 1.f };
+
+    auto iter = filters_.begin();
+    while(iter != filters_.end()) {
+        iter->second->resizeFrameQueue(LIDAR_FILTER_FRAME_QUEUE_SIZE);
+        auto nextIter = iter + 1;
+        if(nextIter == filters_.end()) {
+            iter->second->setCallback([this](std::shared_ptr<Frame> frame) { outputFrame(frame); });
+        }
+        else {
+            iter->second->setCallback([nextIter](std::shared_ptr<Frame> frame) { nextIter->second->pushFrame(frame); });
+        }
+
+        iter++;
+    }
+
+    LOG_DEBUG("LiDARStreamer created");
+}
+
+LiDARStreamer::LiDARStreamer(IDevice *owner, const std::shared_ptr<IDataStreamPort> &backend)
+    : LiDARStreamer(owner, backend, std::vector<std::pair<std::string, std::shared_ptr<IFilter>>>()) {}
+
+LiDARStreamer::~LiDARStreamer() noexcept {
+    try {
+        stopStream(profile_);
+    }
+    catch(const std::exception &e) {
+        LOG_ERROR("Exception occurred while destroying LiDARStreamer: {}", e.what());
+    }
+}
+
+void LiDARStreamer::startStream(std::shared_ptr<const StreamProfile> profile, MutableFrameCallback callback) {
+    LOG_DEBUG("Try to start stream: {}", profile);
+
+    // check if stream is already running
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(running_) {
+            THROW_UNSUPPORTED_OPERATION_EXCEPTION(utils::string::to_string() << "The LiDAR stream has already been started.");
+            return;
+        }
+        // check stream profile and convert to scan profile
+        checkAndConvertProfile(profile);
+        profile_            = profile;
+        callback_           = callback;
+        running_            = true;
+        expectedDataNumber_ = 1;  // the first data block
+    }
+
+    // 1. send command to stop stream
+    try {
+        trySendStopStreamVendorCmd();
+    }
+    catch(const std::exception &e) {
+        LOG_WARN("Exception occurred while send stop stream command: {}", e.what());
+    }
+
+    // enable/disable LiDARFormatConverter
+    getFormatConverter()->enable(profile->getFormat() == OB_FORMAT_LIDAR_POINT);
+
+    BEGIN_TRY_EXECUTE({
+        // 2. start backend stream
+        LOG_DEBUG("LiDARStreamer try to start backend stream...");
+        backend_->startStream([this](std::shared_ptr<Frame> frame) { LiDARStreamer::parseLiDARData(frame); });
+
+        // 3. start LiDAR stream
+        LOG_DEBUG("LiDARStreamer try to send start stream command...");
+        trySendStartStreamVendorCmd();
+        running_ = true;
+        LOG_DEBUG("LiDARStreamer start backend stream finished...");
+    })
+    CATCH_EXCEPTION_AND_EXECUTE({
+        backend_->stopStream();
+        frame_.reset();
+        callback_ = nullptr;
+        running_  = false;
+        throw;
+    })
+}
+
+void LiDARStreamer::stopStream(std::shared_ptr<const StreamProfile> profile) {
+    LOG_DEBUG("LiDARStreamer stop...");
+    utils::unusedVar(profile);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(!running_) {
+            LOG_DEBUG("LiDARStreamer stream is off...");
+            return;
+        }
+        callback_ = nullptr;
+    }
+    try {
+        trySendStopStreamVendorCmd();
+    }
+    catch(const std::exception &e) {
+        LOG_ERROR("Exception occurred while send stop stream command: {}", e.what());
+    }
+
+    LOG_DEBUG("LiDARStreamer stop backend...");
+    backend_->stopStream();
+    profile.reset();
+    profileInfo_.clear();
+    frameIndex_ = 0;
+    frame_.reset();
+    frameDataOffset_    = 0;
+    expectedDataNumber_ = 0;
+    running_            = false;
+    LOG_DEBUG("LiDARStreamer stop finished.");
+}
+
+void LiDARStreamer::trySendStopStreamVendorCmd() {
+    auto            owner      = getOwner();
+    auto            propServer = owner->getPropertyServer();
+    OBPropertyValue value      = { 0 };
+
+    propServer->setPropertyValue(OB_PROP_LIDAR_STREAMING_ON_OFF_INT, value, PROP_ACCESS_INTERNAL);
+}
+
+void LiDARStreamer::trySendStartStreamVendorCmd() {
+    auto            propServer = owner_->getPropertyServer();
+    OBPropertyValue value;
+    bool            isCalibrationMode = false;  // default is normal mode
+
+    // get work mode
+    /*
+    // TODO: The work mode setting and acquisition are not open temporarily.
+    try {
+        auto workMode     = propServer->getPropertyValueT<int32_t>(OB_PROP_LIDAR_WORK_MODE_INT, PROP_ACCESS_INTERNAL);
+        isCalibrationMode = workMode == 0x03;
+    }
+    catch(std::exception &e) {
+        LOG_WARN("Get LiDAR work mode failed, error: %s", e.what());
+        isCalibrationMode = false;  // default is normal mode
+    }
+    */
+
+    // format
+    switch(profileInfo_.format) {
+    case OB_FORMAT_LIDAR_POINT:
+    case OB_FORMAT_LIDAR_SPHERE_POINT:
+        // support by multi-lines LiDAR
+        if(isCalibrationMode) {
+            THROW_INVALID_DATA_EXCEPTION("Invalid LiDAR format");
+        }
+        break;
+    case OB_FORMAT_LIDAR_CALIBRATION:
+        // support by multi-lines LiDAR
+        if(!isCalibrationMode) {
+            THROW_INVALID_DATA_EXCEPTION("Invalid LiDAR format");
+        }
+        break;
+    case OB_FORMAT_LIDAR_SCAN:  // support by single-line LiDAR
+    default:
+        THROW_INVALID_DATA_EXCEPTION("Invalid LiDAR format");
+        break;
+    }
+
+    // get filter level
+    try {
+        auto filter = getPointFilter();
+        if(filter) {
+            auto filterLevel = propServer->getPropertyValueT<int32_t>(OB_PROP_LIDAR_TAIL_FILTER_LEVEL_INT, PROP_ACCESS_INTERNAL);
+            filter->setConfigValue("FilterLevel", filterLevel);
+        }
+    }
+    catch(std::exception &e) {
+        LOG_WARN("Get LiDAR filter level failed, error: %s", e.what());
+    }
+
+    // set speed
+    value.intValue = profileInfo_.scanSpeed;
+    propServer->setPropertyValue(OB_PROP_LIDAR_SCAN_SPEED_INT, value, PROP_ACCESS_INTERNAL);
+
+    // set streaming on
+    value.intValue = 1;
+    propServer->setPropertyValue(OB_PROP_LIDAR_STREAMING_ON_OFF_INT, value, PROP_ACCESS_INTERNAL);
+}
+
+void LiDARStreamer::checkAndConvertProfile(std::shared_ptr<const StreamProfile> profile) {
+    auto lidarProfile = profile->as<LiDARStreamProfile>();
+
+    profileInfo_ = lidarProfile->getInfo();
+}
+
+void LiDARStreamer::parseLiDARData(std::shared_ptr<Frame> frame) {
+    const uint16_t   dataBlockSize   = profileInfo_.dataBlockSize;
+    const uint32_t   maxDataBlockNum = profileInfo_.maxDataBlockNum;
+    const uint16_t   pointsNum       = profileInfo_.pointsNum;
+    const uint32_t   frameSize       = profileInfo_.frameSize;
+    auto             data            = frame->getData();
+    auto             dataSize        = frame->getDataSize();
+    LiDARDataHeader *header          = (LiDARDataHeader *)data;
+
+    // data block format: LiDARDataHeader(40) || point 1 ... point n || tail magic(FE FE FE FE)
+    // The input parameter "frame" represents a data block.
+    // Each frame consists of n blocks (determined by the scan speed).
+    // We must acquire all data blocks in order to assemble a complete data frame.
+    // Currently, the out-of-order issue is not considered.
+    // If the data is discontinuous or incomplete, the data blocks will be discarded.
+
+    // check data size
+    if(dataSize != dataBlockSize) {
+        // LOG_WARN("This LiDAR block data will be dropped because data size({}) is not equal to {}!", dataSize, dataBlockSize);
+        return;
+    }
+    // convert to host order
+    header->dataLen          = ntohs(header->dataLen);
+    header->dataBlockNum     = ntohs(header->dataBlockNum);
+    header->frameIndex       = ntohs(header->frameIndex);
+    header->timestamp        = ntohll(header->timestamp);
+    header->warningInfo      = ntohl(header->warningInfo);
+    header->scanSpeed        = ntohs(header->scanSpeed);
+    header->verticalScanRate = ntohs(header->verticalScanRate);
+    header->apdtemperature   = ntohs(header->apdtemperature);
+
+    // check header and tail magic
+    if((0 != memcmp(header->magic, HEAD_MAGIC, HEAD_MAGIC_LEN)) || (0 != memcmp(data + dataSize - TAIL_MAGIC_LEN, TAIL_MAGIC, TAIL_MAGIC_LEN))) {
+        LOG_WARN("This LiDAR block data will be dropped because magic is invalid!");
+        return;
+    }
+
+    // check data size
+    uint32_t pointDataSize = static_cast<uint32_t>(dataSize - sizeof(LiDARDataHeader) - TAIL_MAGIC_LEN);  // point data size in this block data
+    uint16_t curPointsNum  = 0;
+
+    // format and data size
+    OBFormat format = OB_FORMAT_UNKNOWN;
+    switch(header->dataFormat) {
+    case 2:
+        // Sphere point -> OB_FORMAT_LIDAR_SPHERE_POINT
+        if((profileInfo_.format != OB_FORMAT_LIDAR_POINT) && (profileInfo_.format != OB_FORMAT_LIDAR_SPHERE_POINT)) {
+            break;
+        }
+        format       = OB_FORMAT_LIDAR_SPHERE_POINT;
+        curPointsNum = static_cast<uint16_t>(pointDataSize / sizeof(LiDARSpherePoint));
+        break;
+    case 5:
+        // Point in calibration mode
+        if(profileInfo_.format != OB_FORMAT_LIDAR_CALIBRATION) {
+            break;
+        }
+        format       = OB_FORMAT_LIDAR_CALIBRATION;
+        curPointsNum = pointsNum;  // we don't know how many points in calibration data, set to default points num
+        break;
+    case 1:  // Cartesian point -> OB_FORMAT_LIDAR_POINT. The LiDAR never output data in this format
+    default:
+        break;
+    }
+    if(format == OB_FORMAT_UNKNOWN) {
+        LOG_WARN("This LiDAR block data will be dropped because data format is unknown! format: {}, profile format: {}", header->dataFormat,
+                 profileInfo_.format);
+        return;
+    }
+    if(curPointsNum != pointsNum) {
+        LOG_WARN("This LiDAR block data will be dropped because data point num({}) is not equal to {}", curPointsNum, pointsNum);
+        return;
+    }
+
+    if(expectedDataNumber_ != header->dataBlockNum) {
+        // not the first data block?
+        if(header->dataBlockNum != 1) {
+            LOG_WARN("This LiDAR block data will be dropped because data block number({}) is not equal to {}", header->dataBlockNum, expectedDataNumber_);
+            expectedDataNumber_ = 1;  // reset to 1
+            return;
+        }
+        // Received the new first data block
+        if(frameDataOffset_ > 0) {
+            LOG_WARN("This LiDAR last frame data will be dropped because we received the new first data block. Data size: {}", frameDataOffset_);
+        }
+        expectedDataNumber_ = 1;  // reset to 1
+        frame_              = nullptr;
+        frameDataOffset_    = 0;
+    }
+
+    // alloc frame memory
+    if(1 == header->dataBlockNum) {
+        // the first data block, all the frame memory
+        frame_ = FrameFactory::createFrame(OB_FRAME_LIDAR_POINTS, format, frameSize);
+        frame_->setStreamProfile(profile_);
+        frameDataOffset_ = 0;
+    }
+
+    data += sizeof(LiDARDataHeader);
+    auto frameData = frame_->getDataMutable() + frameDataOffset_;
+    // convert coordinate system
+    if(format == OB_FORMAT_LIDAR_SPHERE_POINT) {
+
+        // update data offset
+        frameDataOffset_ += curPointsNum * sizeof(OBLiDARSpherePoint);
+        if(frameDataOffset_ <= frameSize) {
+            // copy to ob sphere point
+            for(uint16_t i = 0; i < curPointsNum; ++i) {
+                auto point   = reinterpret_cast<const LiDARSpherePoint *>(data) + i;
+                auto obPoint = reinterpret_cast<OBLiDARSpherePoint *>(frameData) + i;
+                copyToOBLiDARSpherePoint(point, obPoint);
+            }
+        }
+        else {
+            LOG_WARN("This LiDAR block data will be dropped because frame data is invalid. Data number: {}", header->dataBlockNum);
+            return;
+        }
+    }
+    else {
+        // OB_FORMAT_LIDAR_CALIBRATION
+        // just copy all data
+        memcpy(frameData, data, pointDataSize);
+        // update data offset
+        frameDataOffset_ += pointDataSize;
+    }
+
+    // timestamp
+    // TODO 20250417: timestamp in header is invalid now, use system time
+    auto timestamp = utils::getNowTimesUs();
+    frame_->setTimeStampUsec(timestamp);
+    frame_->setSystemTimeStampUsec(timestamp);
+
+    if(header->dataBlockNum >= maxDataBlockNum) {
+        // reach the max data block num - all data for a circle
+        // or get the last data block for a circle
+        // Tips: for now, we do not consider out-of-order transmission or packet loss
+
+        // update frame info
+        auto frameIndex = ++frameIndex_;
+        frame_->setDataSize(frameDataOffset_);
+        frame_->setNumber(frameIndex);
+
+        // process the filter in another thread.
+        if(!filters_.empty()) {
+            filters_.front().second->pushFrame(frame_);
+        }
+        else {
+            outputFrame(frame_);
+        }
+
+        // release the frame
+        frame_              = nullptr;
+        frameDataOffset_    = 0;
+        expectedDataNumber_ = 1;  // reset to 1
+    }
+    else {
+        // wait for more data
+        ++expectedDataNumber_;
+    }
+}
+
+IDevice *LiDARStreamer::getOwner() const {
+    return owner_;
+}
+
+void LiDARStreamer::outputFrame(std::shared_ptr<Frame> frame) {
+    // output frame
+    std::lock_guard<std::mutex> lock(mutex_);
+    if(callback_ && running_) {
+        callback_(frame);
+    }
+}
+
+std::shared_ptr<IFilter> LiDARStreamer::getFormatConverter() {
+    for(auto pair: filters_) {
+        if(pair.first == "LiDARFormatConverter") {
+            return pair.second;
+        }
+    }
+
+    THROW_ITEM_NOT_FOUND_EXCEPTION("Not found the LiDARFormatConverter");
+}
+
+std::shared_ptr<IFilter> LiDARStreamer::getPointFilter() {
+    for(auto pair: filters_) {
+        if(pair.first == "LiDARPointFilter") {
+            return pair.second;
+        }
+    }
+
+    THROW_ITEM_NOT_FOUND_EXCEPTION("Not found the LiDARPointFilter");
+}
+
+uint8_t LiDARStreamer::calculateReflectivity(const float &distance, const uint16_t &pulseWidthIn, const uint16_t &targetFlag) {
+
+    static constexpr int highPowerLowThreshTableSize    = 45;
+    static constexpr int highPowerMediumThreshTableSize = 37;
+    static constexpr int lowPowerLowThreshTableSize     = 21;
+    static constexpr int lowPowerMediumThreshTableSize  = 14;
+
+    static float highPowerLowThreshRefCalibData[highPowerLowThreshTableSize][2] = {
+        { 240, 2 },   { 255, 2 },    { 293, 2 },    { 312, 2 },    { 345, 3 },    { 369, 3 },    { 408, 3 },    { 385, 3 },    { 403, 3 },
+        { 453, 4 },   { 474, 4 },    { 488, 4 },    { 504, 5 },    { 521, 5 },    { 542, 6 },    { 566, 7 },    { 576, 7 },    { 623, 8 },
+        { 636, 10 },  { 686, 11 },   { 691, 13 },   { 741, 15 },   { 775, 18 },   { 826, 22 },   { 851, 13 },   { 904, 14 },   { 915, 16 },
+        { 968, 18 },  { 1019, 20 },  { 1021, 23 },  { 1030, 27 },  { 1043, 31 },  { 1054, 37 },  { 1062, 44 },  { 1079, 54 },  { 1097, 68 },
+        { 1124, 87 }, { 1145, 100 }, { 1140, 116 }, { 1178, 136 }, { 1189, 162 }, { 1208, 197 }, { 1275, 244 }, { 1322, 309 }, { 1378, 405 },
+    };
+
+    static float highPowerMediumThreshRefCalibData[highPowerMediumThreshTableSize][2] = {
+        { 111, 4 },   { 141, 4 },   { 143, 5 },   { 146, 5 },   { 163, 6 },   { 203, 7 },    { 228, 7 },    { 288, 8 },   { 313, 10 },  { 369, 11 },
+        { 373, 13 },  { 421, 15 },  { 451, 18 },  { 516, 22 },  { 544, 13 },  { 612, 14 },   { 625, 16 },   { 689, 18 },  { 739, 20 },  { 741, 23 },
+        { 752, 27 },  { 766, 31 },  { 772, 37 },  { 786, 44 },  { 799, 54 },  { 810, 68 },   { 827, 87 },   { 844, 100 }, { 847, 116 }, { 865, 136 },
+        { 875, 162 }, { 889, 197 }, { 921, 244 }, { 952, 309 }, { 982, 405 }, { 1040, 555 }, { 1115, 805 },
+    };
+
+    static float lowPowerLowThreshRefCalibData[lowPowerLowThreshTableSize][2] = {
+        { 153, 27 },  { 198, 31 },  { 210, 37 },  { 273, 44 },   { 316, 54 },   { 349, 68 },    { 420, 87 },
+        { 453, 100 }, { 458, 116 }, { 518, 136 }, { 550, 162 },  { 577, 197 },  { 633, 244 },   { 671, 309 },
+        { 734, 405 }, { 810, 555 }, { 861, 805 }, { 910, 1271 }, { 958, 2298 }, { 1028, 5361 }, { 1391, 16109 },
+    };
+
+    static float lowPowerMediumThreshRefCalibData[lowPowerMediumThreshTableSize][2] = {
+        { 126, 100 }, { 137, 116 }, { 181, 136 }, { 216, 162 },  { 257, 197 },  { 324, 244 },  { 352, 309 },
+        { 406, 405 }, { 505, 555 }, { 565, 805 }, { 607, 1271 }, { 644, 2298 }, { 700, 5361 }, { 809, 16109 },
+    };
+
+    const float &lpLthFactor = lowPowerFactors_.lowThresh;
+    const float &lpMthFactor = lowPowerFactors_.mediumThresh;
+    const float &hpLthFactor = highPowerFactors_.lowThresh;
+    const float &hpMthFactor = highPowerFactors_.mediumThresh;
+
+    float pulseWidth      = static_cast<float>(pulseWidthIn);
+    float (*tableData)[2] = nullptr;
+    int   tableSize       = 0;
+    float recPower        = 0;
+
+    switch(targetFlag) {
+    case 0x0:  // low power low threshold
+    {
+        pulseWidth = pulseWidth * lpLthFactor;
+        tableData  = lowPowerLowThreshRefCalibData;
+        tableSize  = lowPowerLowThreshTableSize;
+        break;
+    }
+    case 0x1:  // low power medium threshold
+    {
+        pulseWidth = pulseWidth * lpMthFactor;
+        tableData  = lowPowerMediumThreshRefCalibData;
+        tableSize  = lowPowerMediumThreshTableSize;
+
+        break;
+    }
+
+    case 0x2:  // high power low threshold
+    {
+        pulseWidth = pulseWidth * hpLthFactor;
+        tableData  = highPowerLowThreshRefCalibData;
+        tableSize  = highPowerLowThreshTableSize;
+        break;
+    }
+
+    case 0x3:  // high power medium threshold
+    {
+        pulseWidth = pulseWidth * hpMthFactor;
+        tableData  = highPowerMediumThreshRefCalibData;
+        tableSize  = highPowerMediumThreshTableSize;
+        break;
+    }
+    default:
+        recPower = 0;
+        break;
+    }
+
+    if(tableData) {
+        if(pulseWidth <= tableData[0][0])
+            recPower = tableData[0][1];
+        else if(pulseWidth >= tableData[tableSize - 1][0])
+            recPower = tableData[tableSize - 1][1];
+        else {
+            for(int i = 0; i < tableSize; i++) {
+                if(pulseWidth > tableData[i][0])
+                    continue;
+                recPower = floatLerp(tableData[i - 1][0], tableData[i][0], tableData[i - 1][1], tableData[i][1], pulseWidth);
+                break;
+            }
+        }
+    }
+
+    float refValue = recPower * distance * distance * 0.00020218f;
+    if(refValue > 10 && refValue < 100) {
+        refValue = sqrt(refValue) * 10;
+    }
+    refValue = (refValue >= 120.f) ? (refValue * 0.7f) : refValue;
+
+    refValue = (refValue > 255.f) ? 255.f : refValue;
+    refValue = (refValue < 5.f) ? 5.f : refValue;
+
+    return static_cast<uint8_t>(refValue);
+}
+
+}  // namespace libobsensor

@@ -1,0 +1,226 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#if defined(BUILD_NET_PAL)
+
+#include "GvcpCcpController.hpp"
+#include "logger/Logger.hpp"
+#include "logger/LoggerInterval.hpp"
+#include "logger/LoggerSnWrapper.hpp"
+
+namespace libobsensor {
+
+#define GetCurrentSN() portInfo_->serialNumber
+
+GvcpCcpController::GvcpCcpController(const std::shared_ptr<const IDeviceEnumInfo> &info, const std::string &minVersion) {
+    // create gvcp transmitor
+    auto portInfo    = info->getSourcePortInfoList().front();
+    auto netPortInfo = std::dynamic_pointer_cast<const NetSourcePortInfo>(portInfo);
+    gvcpTransmit_    = std::make_shared<GVCPTransmit>(netPortInfo);
+    portInfo_        = netPortInfo;
+    ccpSupported_    = checkCcpCapability(minVersion);
+}
+
+GvcpCcpController::~GvcpCcpController() {
+    TRY_EXECUTE({ releaseControl(); });
+}
+
+int32_t GvcpCcpController::getFirmwareVersionInt(const std::string &version) {
+    int    dotCount     = 0;
+    char   buf[16]      = { 0 };
+    size_t bufIndex     = 0;
+    int    calFwVersion = 0;
+    auto   size         = version.size();
+    for(size_t i = 0; i < size; i++) {
+        const char c = version[i];
+        if(isdigit(c) && bufIndex < sizeof(buf)) {
+            buf[bufIndex] = c;
+            bufIndex++;
+        }
+        if('.' == c) {
+            buf[sizeof(buf) - 1] = '\0';
+            if(strlen(buf) > 0) {
+                int value = atoi(buf);
+                // The version number has only two digits
+                if(value >= 100) {
+                    LOG_ERROR("bad fwVersion: {}", version);
+                    return false;
+                }
+
+                if(dotCount == 0) {  // Major version number
+                    calFwVersion += 10000 * value;
+                }
+                else if(dotCount == 1) {  // minor version number
+                    calFwVersion += 100 * value;
+                }
+                else if(dotCount == 2) {  // Test version number
+                    calFwVersion += value;
+                }
+                else {
+                    LOG_ERROR("bad fwVersion: {}", version);
+                    return false;
+                }
+
+                dotCount++;
+                bufIndex = 0;
+                memset(buf, 0, sizeof(buf));
+            }
+        }
+    }
+    buf[sizeof(buf) - 1] = '\0';
+    if(strlen(buf) > 0 && strlen(buf) <= 2 && dotCount == 2) {
+        int value = atoi(buf);
+        calFwVersion += value;
+    }
+    // If the version number cannot be determined, then fix logic is given priority
+    if(calFwVersion == 0 || dotCount < 2) {
+        LOG_ERROR("bad fwVersion: {}, parse digital version failed", version);
+        return 0;
+    }
+    return calFwVersion;
+}
+
+bool GvcpCcpController::checkCcpCapability(const std::string &minVersion) {
+    auto currentVerion = getFirmwareVersionInt(portInfo_->devVersion);
+    if(currentVerion > 0) {
+        auto tempVersion = getFirmwareVersionInt(minVersion);
+        if(currentVerion < tempVersion) {
+            LOG_WARN("Current firmware version is {}, which is < the minimum required version {}. CCP is not supported", portInfo_->devVersion, minVersion);
+            return false;
+        }
+    }
+
+    // Read GVCP capability register
+    auto res = gvcpTransmit_->readRegister(GVCP_CAPABILITY_REGISTER);
+    if(res.first != GEV_STATUS_SUCCESS) {
+        if(res.first == GEV_STATUS_ACCESS_DENIED) {
+            return true;
+        }
+        LOG_ERROR("Failed to read GVCP_CAPABILITY_REGISTER (error status: {}). Assuming CCP unsupported.", res.first);
+        return false;
+    }
+    return true;
+}
+
+void GvcpCcpController::acquireControl(OBDeviceAccessMode accessMode) {
+    if(!ccpSupported_) {
+        THROW_UNSUPPORTED_OPERATION_EXCEPTION("The current device doesn't support CCP");
+    }
+
+    uint16_t ccpValue = 0;
+    // check access mode
+    switch(accessMode) {
+    case OB_DEVICE_MONITOR_ACCESS:
+        break;
+    case OB_DEVICE_EXCLUSIVE_ACCESS:
+        // exclusive access: write CCP register to acquire the privilege
+        ccpValue = GVCP_CCP_EXCLUSIVE_ACCESS | GVCP_CCP_CONTROL_ACCESS;
+        break;
+    case OB_DEVICE_DEFAULT_ACCESS:
+    case OB_DEVICE_CONTROL_ACCESS:
+        // control access: writer CCP register to acquire the privilege
+        accessMode = OB_DEVICE_CONTROL_ACCESS;
+        ccpValue   = GVCP_CCP_CONTROL_ACCESS;
+        break;
+    default:
+        std::ostringstream oss;
+        oss << "Unsupported or invalid access mode: " << accessMode;
+        THROW_UNSUPPORTED_OPERATION_EXCEPTION(oss.str());
+        break;
+    }
+
+    if(accessMode == OB_DEVICE_MONITOR_ACCESS) {
+        // read CCP register to detect the privilege
+        auto res = gvcpTransmit_->readRegister(GVCP_CCP_REGISTER);
+        if(res.first != GEV_STATUS_SUCCESS || ((res.second & GVCP_CCP_EXCLUSIVE_ACCESS) != 0)) {
+            std::ostringstream oss;
+            oss << "[" << portInfo_->serialNumber
+                << "] The requested 'monitor access' privilege conflicts with the current control channel privilege: " << res.second;
+            THROW_ACCESS_DENIED_EXCEPTION(oss.str());
+        }
+        accessMode_ = accessMode;
+        return;
+    }
+
+    // exclusive and control access: write CCP register to acquire the privilege
+    auto status = gvcpTransmit_->writeRegister(GVCP_CCP_REGISTER, ccpValue);
+    if(status != GEV_STATUS_SUCCESS) {
+        std::ostringstream oss;
+        if(status == GEV_STATUS_ACCESS_DENIED) {
+            oss << "[" << portInfo_->serialNumber << "] The requested '" << accessMode << "' privilege conflicts with the current control channel privilege";
+            THROW_ACCESS_DENIED_EXCEPTION(oss.str());
+        }
+        else {
+            oss << "[" << portInfo_->serialNumber << "] Failed to acquire the '" << accessMode << "' privilege. Status code: " << status;
+            THROW_IO_EXCEPTION(oss.str());
+        }
+    }
+    accessMode_ = accessMode;
+    // start thread to keep alive
+    keepaliveStopped_ = false;
+    keepaliveThread_  = std::thread([this, ccpValue]() {
+        // read heartbeat timeout register
+        uint32_t timeout = 0;
+        auto     res     = gvcpTransmit_->readRegister(GVCP_HEARTBEAT_TIMEOUT_REGISTER);
+        if(res.first != GEV_STATUS_SUCCESS) {
+            timeout = 1000;  // use default value
+            LOG_WARN("Failed to read hearbeat timeout register, use the default timeout({}) instant. Status code: {:#04x}", timeout, res.first);
+        }
+        else {
+            // It is recommended for the application to send a heartbeat message three times within that device heartbeat timeout period.
+            // This ensures at least two heartbeat UDP packets can be lost without the connection being automatically closed by the device
+            // because of heartbeat timeout.Depending on the quality of the network connection, it is possible to adjust these numbers
+            timeout = res.second / 3;
+            if(timeout < 500) {
+                timeout = 500;
+            }
+        }
+
+        std::mutex                   mutex;
+        std::unique_lock<std::mutex> lock(mutex);
+        while(!keepaliveStopped_) {
+            // Read CCP register to keepalive
+            res = gvcpTransmit_->readRegister(GVCP_CCP_REGISTER);
+            if(res.first != GEV_STATUS_SUCCESS) {
+                LOG_INTVL(LOG_INTVL_OBJECT_TAG + "GVCP Keepalive", 3000, spdlog::level::warn, "[{}] CCP register read failed, ignored. Status code: {:#04x}",
+                           portInfo_->serialNumber, res.first);
+            }
+            else {
+                res.second = (res.second & GVCP_CCP_MASK);
+                if(res.second != ccpValue) {
+                    LOG_INTVL(LOG_INTVL_OBJECT_TAG + "GVCP Keepalive", 3000, spdlog::level::warn,
+                               "[{}] CCP register mismatch: expected {:#04x}, got {:#04x}. Ignored", portInfo_->serialNumber, ccpValue, res.second);
+                }
+            }
+            keepaliveCv_.wait_for(lock, std::chrono::milliseconds(timeout), [&]() { return keepaliveStopped_.load(); });
+        }
+        LOG_DEBUG("GVCP Keepalive exists now");
+        keepaliveStopped_ = true;
+    });
+}
+
+void GvcpCcpController::releaseControl() {
+    if(!ccpSupported_) {
+        return;
+    }
+    // stop heartbeat
+    keepaliveStopped_ = true;
+    keepaliveCv_.notify_all();
+    if(keepaliveThread_.joinable()) {
+        keepaliveThread_.join();
+    }
+    // restore the CCP to open access
+    if((accessMode_ != OB_DEVICE_MONITOR_ACCESS) && (accessMode_ != OB_DEVICE_ACCESS_DENIED)) {
+        auto status = gvcpTransmit_->writeRegister(GVCP_CCP_REGISTER, GVCP_CCP_OPEN_ACCESS);
+        if(status != GEV_STATUS_SUCCESS) {
+            LOG_DEBUG("Failed to restore the CCP to open access, ignore it. Status code: {:#04x}", status);
+        }
+        else {
+            LOG_DEBUG("Restore the CCP to open access successfully");
+        }
+    }
+}
+
+}  // namespace libobsensor
+
+#endif  // BUILD_NET_PAL

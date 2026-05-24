@@ -1,0 +1,218 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "FirmwareUpdateGuards.hpp"
+#include "DevicePids.hpp"
+#include "logger/Logger.hpp"
+#include "utils/Utils.hpp"
+
+namespace libobsensor {
+// FirmwareUpdateGuardFactory
+FirmwareUpdateGuardFactory::FirmwareUpdateGuardFactory(IDevice *owner) : DeviceComponentBase(owner) {}
+
+std::shared_ptr<IFirmwareUpdateGuard> FirmwareUpdateGuardFactory::create() {
+    auto vid   = getOwner()->getInfo()->vid_;
+    auto pid   = getOwner()->getInfo()->pid_;
+    auto guard = std::make_shared<CompositeGuard>();
+
+    guard->addGuard(std::make_shared<FirmwareUpgradeStateGuard>(getOwner()));
+    if(isDeviceInContainer(G330DevPids, vid, pid)) {
+        guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+        guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+        return guard;
+    }
+    else if(isDeviceInContainer(DaBaiADevPids, vid, pid)) {
+        guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+        guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+        return guard;
+    }
+    else if(isDeviceInContainer(G435LeDevPids, vid, pid)) {
+        guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+        guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+        return guard;
+    }
+    else if(vid == ORBBEC_DEVICE_VID) {
+        if(std::find(Gemini2DevPids.begin(), Gemini2DevPids.end(), pid) != Gemini2DevPids.end()) {
+            guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+            guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+            return guard;
+        }
+        else if(std::find(Astra2DevPids.begin(), Astra2DevPids.end(), pid) != Astra2DevPids.end()) {
+            guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+            guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+            return guard;
+        }
+        else if(std::find(G305DevPids.begin(), G305DevPids.end(), pid) != G305DevPids.end()) {
+            guard->addGuard(std::make_shared<GlobalTimestampGuard>(getOwner()));
+            guard->addGuard(std::make_shared<HeardbeatGuard>(getOwner()));
+            return guard;
+        }
+    }
+
+    // FemtoBolt and FemtoMega upgrade differently than other devices, no need to add any guards for them
+    LOG_DEBUG("Create update guard: Unsupported device pid: {}", pid);
+    return guard;
+}
+
+// CompositeGuard
+CompositeGuard::CompositeGuard(const std::vector<std::shared_ptr<IFirmwareUpdateGuard>> &guards) : guards_(guards) {
+    preUpdate();
+}
+
+CompositeGuard::CompositeGuard(CompositeGuard &&other) noexcept {
+    guards_ = std::move(other.guards_);
+}
+
+CompositeGuard &CompositeGuard::operator=(CompositeGuard &&other) noexcept {
+    if(this != &other) {
+        guards_ = std::move(other.guards_);
+    }
+    return *this;
+}
+
+CompositeGuard::~CompositeGuard() noexcept {
+    postUpdate();
+}
+
+void CompositeGuard::addGuard(std::shared_ptr<IFirmwareUpdateGuard> guard) {
+    if(guard) {
+        guards_.emplace_back(guard);
+        guard->preUpdate();
+    }
+}
+
+void CompositeGuard::preUpdate() {
+    for(auto &guard: guards_) {
+        guard->preUpdate();
+    }
+}
+
+void CompositeGuard::postUpdate() {
+    for(auto it = guards_.rbegin(); it != guards_.rend(); ++it) {
+        (*it)->postUpdate();
+    }
+}
+
+// SeparateGuard
+// NullGuard
+NullGuard::NullGuard(IDevice *owner) {
+    utils::unusedVar(owner);
+}
+
+void NullGuard::preUpdate() {}
+
+void NullGuard::postUpdate() {}
+
+// GlobalTimestampGuard
+FirmwareUpgradeStateGuard::FirmwareUpgradeStateGuard(IDevice *owner) : owner_(owner) {}
+
+FirmwareUpgradeStateGuard::FirmwareUpgradeStateGuard(FirmwareUpgradeStateGuard &&other) noexcept {
+    owner_ = other.owner_;
+}
+
+FirmwareUpgradeStateGuard &FirmwareUpgradeStateGuard::operator=(FirmwareUpgradeStateGuard &&other) noexcept {
+    if(this != &other) {
+        owner_ = other.owner_;
+    }
+    return *this;
+}
+
+void FirmwareUpgradeStateGuard::preUpdate() {
+    if(owner_) {
+        owner_->setFirmwareUpdateState(true);
+    }
+}
+
+void FirmwareUpgradeStateGuard::postUpdate() {
+    if(owner_) {
+        owner_->setFirmwareUpdateState(false);
+    }
+}
+
+// GlobalTimestampGuard
+GlobalTimestampGuard::GlobalTimestampGuard(IDevice *owner) : owner_(owner), isGlobalTimestampEnabled_(false) {
+    globalTimestampFilter_ = owner_->getComponentT<GlobalTimestampFitter>(OB_DEV_COMPONENT_GLOBAL_TIMESTAMP_FILTER, false).get();
+}
+
+GlobalTimestampGuard::GlobalTimestampGuard(GlobalTimestampGuard &&other) noexcept {
+    owner_                       = other.owner_;
+    isGlobalTimestampEnabled_    = other.isGlobalTimestampEnabled_;
+    globalTimestampFilter_       = other.globalTimestampFilter_;
+    other.globalTimestampFilter_ = nullptr;
+}
+
+GlobalTimestampGuard &GlobalTimestampGuard::operator=(GlobalTimestampGuard &&other) noexcept {
+    if(this != &other) {
+        owner_                       = other.owner_;
+        isGlobalTimestampEnabled_    = other.isGlobalTimestampEnabled_;
+        globalTimestampFilter_       = other.globalTimestampFilter_;
+        other.globalTimestampFilter_ = nullptr;
+    }
+    return *this;
+}
+
+void GlobalTimestampGuard::preUpdate() {
+    if(globalTimestampFilter_) {
+        isGlobalTimestampEnabled_ = globalTimestampFilter_->isEnabled();
+        LOG_DEBUG("GlobalTimestampGuard: try to disable global timestamp filter, current state: {}", isGlobalTimestampEnabled_);
+        TRY_EXECUTE({ globalTimestampFilter_->enable(false); });
+    }
+}
+
+void GlobalTimestampGuard::postUpdate() {
+    if(globalTimestampFilter_) {
+        LOG_DEBUG("GlobalTimestampGuard: try to restore global timestamp filter, previous state: {}", isGlobalTimestampEnabled_);
+        TRY_EXECUTE({ globalTimestampFilter_->enable(isGlobalTimestampEnabled_); });
+    }
+}
+
+// HeardbeatGuard
+HeardbeatGuard::HeardbeatGuard(IDevice *owner) : owner_(owner), isHeartrateEnabled_(false), isFirmwareLogEnabled_(false) {
+    deviceMonitor_ = owner_->getComponentT<DeviceMonitor>(OB_DEV_COMPONENT_DEVICE_MONITOR, false).get();
+}
+
+HeardbeatGuard::HeardbeatGuard(HeardbeatGuard &&other) noexcept {
+    owner_                 = other.owner_;
+    isHeartrateEnabled_    = other.isHeartrateEnabled_;
+    isFirmwareLogEnabled_  = other.isFirmwareLogEnabled_;
+    deviceMonitor_         = other.deviceMonitor_;
+    other.deviceMonitor_   = nullptr;
+}
+
+HeardbeatGuard &HeardbeatGuard::operator=(HeardbeatGuard &&other) noexcept {
+    if(this != &other) {
+        owner_                 = other.owner_;
+        isHeartrateEnabled_    = other.isHeartrateEnabled_;
+        isFirmwareLogEnabled_  = other.isFirmwareLogEnabled_;
+        deviceMonitor_         = other.deviceMonitor_;
+        other.deviceMonitor_   = nullptr;
+    }
+    return *this;
+}
+
+void HeardbeatGuard::preUpdate() {
+    if(deviceMonitor_) {
+        isHeartrateEnabled_ = deviceMonitor_->isHeartbeatEnabled();
+        LOG_DEBUG("HeardbeatGuard: try to disable heartbeat, current state: {}", isHeartrateEnabled_);
+        TRY_EXECUTE({ deviceMonitor_->disableHeartbeat(); });
+
+        isFirmwareLogEnabled_ = deviceMonitor_->isFirmwareLogEnabled();
+        LOG_DEBUG("HeardbeatGuard: try to disable firmware log, current state: {}", isFirmwareLogEnabled_);
+        TRY_EXECUTE({ deviceMonitor_->disableFirmwareLog(); });
+    }
+}
+
+void HeardbeatGuard::postUpdate() {
+    if(deviceMonitor_) {
+        if(isHeartrateEnabled_) {
+            LOG_DEBUG("HeardbeatGuard: try to restore heartbeat, previous state: {}", isHeartrateEnabled_);
+            TRY_EXECUTE({ deviceMonitor_->enableHeartbeat(); });
+        }
+
+        if(isFirmwareLogEnabled_) {
+            LOG_DEBUG("HeardbeatGuard: try to restore firmware log, previous state: {}", isFirmwareLogEnabled_);
+            TRY_EXECUTE({ deviceMonitor_->enableFirmwareLog(); });
+        }
+    }
+}
+}  // namespace libobsensor

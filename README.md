@@ -1,19 +1,11 @@
-# Orbbec SDK
-
-![stability](https://img.shields.io/badge/stability-stable-green) ![version](https://img.shields.io/badge/version-1.10.27-green)
+# Open Source Orbbec SDK
 
 > [!IMPORTANT]
->
-> Welcome to the Orbbec SDK. Before you begin using this version of Orbbec SDK, it's crucial to check the following device support list to verify the compatibility.
->
+> Welcome to Orbbec's latest open-source Orbbec SDK! Before you begin using this version of the SDK, it's crucial to check the [device support list](#12-supported-devices) to verify that your device is supported to ensure compatibility.
 
-This main branch is based on Orbbec SDK v1 and it is compatible with Orbbec's original OpenNI protocol devices through built-in code, enabling developers to migrate to Orbbec SDK to support both new and old products with one set of code.
+-  **LiDAR** devices are supported in **OrbbecSDK v2.6.2 and later** , For detailed instructions on using the LiDAR, please refer to the [LiDAR_README.md](LiDAR_README.md).
 
-With the major update in 2024 October, Orbbec SDK becomes open-source with enhanced flexibility and scalability. This update ensures compatibility with all new Orbbec USB products that adhere to the UVC standard. However, [Orbbec SDK v2](https://github.com/orbbec/OrbbecSDK_v2) no longer supports Orbbec's legacy OpenNI protocol devices, which will continue to receive bug fixes support in the Orbbec SDK v1 branch. We encourage you to check out whether your devices is supported by Orbbec SDK v2 and use the new release if it is supported there.
-
-If you are a user in China, it is recommended to use Gitee([gitee Repo](https://gitee.com/orbbecdeveloper/OrbbecSDK)).
-
-Here is the device support list of main branch (v1.x) and Orbbec SDK v2 (v2.x):
+Here is the device support list of OrbbecSDK v1 (v1.x) and Orbbec SDK v2 (v2.x):
 
 <table border="1" style="border-collapse: collapse; text-align: left; width: 100%;">
   <thead>
@@ -25,15 +17,15 @@ Here is the device support list of main branch (v1.x) and Orbbec SDK v2 (v2.x):
     </tr>
   </thead>
   <tbody>
-      <tr>
-      <td style="text-align: center; font-weight: bold;">Gemini 305g</td>
-      <td>Gemini 305g</td>
+    <tr>
+      <td style="text-align: center; font-weight: bold;">Gemini 305</td>
+      <td>Gemini 305</td>
       <td>not supported</td>
       <td>recommended for new designs</td>
     </tr>
     <tr>
-      <td style="text-align: center; font-weight: bold;">Gemini 305</td>
-      <td>Gemini 305</td>
+      <td style="text-align: center; font-weight: bold;">Gemini 305g</td>
+      <td>Gemini 305g</td>
       <td>not supported</td>
       <td>recommended for new designs</td>
     </tr>
@@ -183,8 +175,6 @@ Here is the device support list of main branch (v1.x) and Orbbec SDK v2 (v2.x):
 2. If a device is supported by both Orbbec SDK v1 and Orbbec SDK v2, **the minimum supported firmware version may differ between the two SDKs.** Please refer to **Supported Devices** list for detailed information.
 In particular, note that the Astra Mini Pro and Astra Mini S Pro use different communication protocols in firmware v1.x.x and v2.x.x, Orbbec SDK v1 supports only v1.x.x firmware, while Orbbec SDK v2 supports only v2.x.x firmware. Upgrading from v1.x.x to v2.x.x, please refer to [Upgrading from OpenNI Protocol to UVC Protocol](https://github.com/orbbec/OrbbecSDK_v2?tab=readme-ov-file#12-upgrading-from-openni-protocol-to-uvc-protocol).
 
-
-
 **Definition**:
 
 1. recommended for new designs: we will provide full supports with new features,  bug fix and performance optimization;
@@ -194,192 +184,257 @@ In particular, note that the Astra Mini Pro and Astra Mini S Pro use different c
 5. to be supported: we will add support in the near future.
 
 
-## Supported Devices
-
-| **Products List** | **Minimal Firmware Version** |
-|-------------------|-----------------------------|
-| Gemini 330        | 1.2.20                      |    
-| Gemini 330L        | 1.2.20                     |  
-| Gemini 335        | 1.2.20                      | 
-| Gemini 335L        | 1.2.20                     | 
-| Gemini 336        | 1.2.20                      |
-| Gemini 336L        | 1.2.20                     |    
-| Femto Bolt        | 1.0.6                       |         
-| Femto Mega        | 1.1.7                       |        
-| Femto Mega I      | 2.0.2                       |  
-| Gemini 2 XL       | Obox: V1.2.5  VL:1.4.54     |
-| Astra 2           | 2.8.20                      |
-| Gemini 2 L        | 1.4.32                      |
-| Gemini 2          | 1.4.60                      |       
-| Astra+            | 1.0.19                      |                      
-| Femto             | 1.6.7                       |
-| Femto W           | 1.1.8                       | 
-| DaBai             | 2436                        | 
-| DaBai DCW         | 2460                        | 
-| DaBai DW          | 2606                        | 
-| Gemini E          | 3460                        |
-| Gemini E Lite     | 3606                        | 
-| Gemini            | 3018                        |
-| Astra Mini Pro    | 1007                        | 
-| Astra Mini S Pro  | 1005                        |
-
-## What is included in the repository
-
-* **library** : Orbbec SDK core library files and C/C++ header files.
-* **examples** : C/C++ samples project source code.
-* **doc** : API reference documentation and sample documentation.
-* **driver** : Windows device driver for OpenNI protocol devices (Dabai, Dabai DCW, Dabai DW, Astra mini Pro, Astra Pro Plus, A1 Pro, Gemini E, Gemini E Lite, Gemini). While modules that use the standard UVC protocol do not need to install drivers.
-* **scripts** : Linux udev rules for resolving permission issues and Windows timestamp registration scripts for resolving timestamp and metadata issues.
-
-## license structure
-
-The current software license structure is as follows
-
-![SdkLicenseDiagram](doc/resources/sdk_licensediagram.png)
-
-More information about the license of each module can be found in the [license file](LICENSE.txt).
-
-## Platform support
-
-| Operating system | Requirement                                                                                  | Description                                                                                                                             |
-|------------------|----------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| Windows          | - Windows 10 April 2018 (version 1803, operating system build 17134) release (x64) or higher ,windows 11 | The generation of the VS project depends on the installation of the VS version and the cmake version, and supports VS2015/vs2017/vs2019 |
-| Linux            | - Linux Ubuntu 16.04/18.04/20.04/22.04 (x64)                                                       | Support GCC 7.5                                                                                                                         |
-| Arm32            | - Linux Ubuntu 16.04/18.04/20.04                                                             | Support GCC 7.5                                                                                                                         |
-| Arm64            | - Linux Ubuntu 18.04/20.04/22.04                                                                   | Support GCC 7.5                                                                                                                         |
-| MacOS            | - M series chip, 11.0 and above; Intel x86 chip, 10.15 and above.                            | supported hardware products: Gemini 2, Gemini 2 L, Astra 2, Gemini 2 XL, Femto Mega, Gemini 330 series                                                   |
-
-* Note: supported Arm platforms: NVIDIA Jetson AGX Orin (arm64), NVIDIA Jetson Orin NX (arm64), NVIDIA Jetson Orin Nano (arm64), NVIDIA Jetson AGX Xavier (arm64), NVIDIA Jetson Xavier NX (arm64), NVIDIA Jetson Nano (arm64), A311D (arm64), Raspberry Pi 4 (arm64), Raspberry Pi 3 (arm32), RK3399 (arm64), other Arm platforms, may need to Cross-compile.
+## 1. Introduction
 
 
+This is the open-source library of Orbbec SDK v2.x.
+The Orbbec SDK is a cross-platform library for interfacing with Orbbec RGB-D cameras, providing C/C++ APIs as well as [wrappers](wrappers/README.md) for various other languages and frameworks.
 
-## OrbbecViewer
+<div align=center>
+<img src="docs/resource/Overview.jpg" width="400" align="center" />
+</div>
 
-OrbbecViewer is a useful tool based on Orbbec SDK, that can be used to view the data stream from the Orbbec camera and control the camera.
-![OrbbecViewer](doc/resources/OrbbecViewer.png)
+### 1.1 Migration from Orbbec SDK v1 to Open-Source Orbbec SDK v2
+To enhance performance and meet the diverse needs of our customers, the Orbbec SDK has been open-sourced since version 2.0.0.
 
-**Supported platforms**: Windows x64, Linux x64 & ARM64, MacOS M series chip & Intel x86 chip
+#### Upgrade Recommendation
 
-**Download link**: [Releases](https://github.com/orbbec/OrbbecSDK/releases)
+For projects currently utilizing version Orbbec SDK v1.x that are considering an upgrade to Orbbec SDK v2.x, we advise using the pre-compiled binaries available in the [Release](https://github.com/orbbec/OrbbecSDK_v2/releases) page. This ensures a seamless transition and maintains consistency with your existing setup.
 
-**OrbbecViewer User Manual**: [OrbbecViewer User Manual](doc/OrbbecViewer/English/OrbbecViewer.md)
+#### API Compatibility
+We have made every effort to maintain backward compatibility with the previous API. However, in pursuit of higher performance and an improved user experience, several updates have been introduced. Some interfaces were modified or removed due to infrequent use or design limitations. These adjustments were made carefully to minimize disruption and do not affect the SDK’s standard functionality.
 
-## Getting started
+#### Migration Resources
 
-### Get source code
+- Migration guidance: [orbbecsdkv1_to_openorbbecsdkv2.md](docs/tutorial/orbbecsdkv1_to_openorbbecsdkv2.md)
+- Comprehensive API Changes Overview: [api_changes_at_v2.x.x.md](docs/api/api_changes_at_v2.x.x.md)
+
+#### Continued using for Orbbec SDK v1.x
+
+If you wish to continue using Orbbec SDK v1.x, the pre-compiled binaries remain available in our [OrbbecSDK v1](https://github.com/orbbec/OrbbecSDK) repository.
+Nonetheless, we strongly encourage migration to Orbbec SDK v2.x, which offers enhanced features, better performance, and ongoing support.
+Our commitment to SDK v2.x reflects Orbbec’s long-term strategy to provide robust support, foster an open-source community, and drive continuous innovation.
+
+### 1.2 Upgrading from OpenNI Protocol to UVC Protocol
+
+#### Timeline and Scope
+Starting from October 2025 (Orbbec SDK v2.5.5), we will begin upgrading devices that use the OpenNI protocol to the UVC protocol, enabling full compatibility with Orbbec SDK v2.
+
+Already upgraded devices and future upgrade schedule：
+
+| **Already Upgraded Devices** | **Future Upgrade Schedule** |
+|---|---|
+| • Astra Mini S Pro<br>• Astra Mini Pro | • Gemini E, Gemini UW, Gemini EW<br>• DaBai Max, DaBai Max Pro<br>• DaBai DW, DaBai DCW, DaBai DCW2, DaBai DW2 |
+
+#### OpenNI-to-UVC Firmware Upgrade Tool
+Orbbec provides a dedicated [firmware upgrade tool](https://github.com/orbbec/OrbbecFirmware) that enables devices to switch from the OpenNI protocol to the UVC protocol.
+Please select the firmware download link for your device type and follow the corresponding upgrade guide to update the firmware.
+
+
+#### Upgrade Instructions
+If you are currently using the OpenNI SDK, please refer to the [How to Upgrade OpenNI Protocol Devices to UVC Protocol and API Usage Guide](docs/tutorial/opennisdk_to_orbbecsdkv2.md) for detailed instructions on switching to Orbbec SDK v2 after updating your device firmware.
+After upgrading to the UVC protocol, these devices will have a firmware major version number of 2 (for example: v2.x.xx).
+
+
+#### Important Notes
+- Firmware version v2.x.x (major version 2) indicates a UVC protocol device, which requires Orbbec SDK v2.
+- Firmware version v1.x.x (major version 1) indicates an OpenNI protocol device, which requires either the OpenNI SDK or Orbbec SDK v1.
+
+
+### 1.3 Supported Platforms
+
+- Windows 10 or later: x86 and x64 architectures
+- Linux x64: tested on Ubuntu 20.04, 22.04 and 24.04
+- Linux ARM64: tested on  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX, NVIDIA Jetson Thor
+- [Android](https://github.com/orbbec/OrbbecSDK-Android-Wrapper/tree/v2-main): tested on Android 13
+- macOS: tested on M2 chip, OS version 13.2
+
+### 1.4 Supported Devices
+
+| **Products List** | **Minimal Firmware Version** | **Recommended Firmware Version**    |
+|-------------------|------------------------------|-------------------------------|
+| Gemini 305        | 1.0.30                     |        1.0.70                   |
+| Gemini 305g        | 1.0.70                     |        1.0.70                   |
+| Gemini 345        | 1.7.04                     |        1.9.03                   |
+| Gemini 345Lg        | 1.7.04                     |        1.9.03                   |
+| Gemini 435Le        | 1.2.4                     |        1.3.6                   |
+| Gemini 335Le        | 1.5.31                     |        1.6.00                     |
+| Gemini 330        | 1.2.20                       |        1.6.00                       |
+| Gemini 330L       | 1.2.20                       |       1.6.00                      |
+| Gemini 335        | 1.2.20                       |       1.6.00                        |
+| Gemini 335L       | 1.2.20                       |        1.6.00                       |
+| Gemini 336        | 1.2.20                       |       1.6.00                        |
+| Gemini 336L       | 1.2.20                       |        1.6.00                       |
+| Gemini 335Lg      | 1.3.46                       |        1.6.00                       |
+| Femto Bolt        | 1.1.2                  |              1.1.3                       |
+| Femto Mega        | 1.3.0                  |              1.3.1                       |
+| Femto Mega I        | 2.0.4                  |            2.0.4                     |
+| Astra 2           | 2.8.20                       |         2.8.20                      |
+| Gemini 2 L        | 1.4.53                       |        1.5.2                       |
+| Gemini 2          | 1.4.92               |                1.4.98                       |
+| Gemini 215        | 1.0.9                        |        1.0.9                      |
+| Gemini 210        | 1.0.9                        |        1.0.9                      |
+| Astra mini Pro        | 2.0.03                        |        2.0.03                        |
+| Astra mini S Pro        | 2.0.03                        |        2.0.03                        |
+| Pulsar SL450      | 2.2.4.5                      | 2.2.4.5                          |
+| Pulsar ME450      | 1.0.0.6                      | 1.0.0.6                          |
+
+
+For optimal performance, we strongly recommend updating to the latest firmware version. This ensures that you benefit from the most recent enhancements and bug fixes.
+
+More devices support will be added in the near future. If you can not find your device in the table above currently, try the version v1.x.y at [Orbbec SDK v1](https://github.com/orbbec/OrbbecSDK)
+
+## 2. Documentation
+
+*The Orbbec SDK documentation is available on [GitHub Pages](https://orbbec.github.io/OrbbecSDK_v2/).*
+
+### 2.1 Environment Setup
+
+#### windows
+
+For windows, you need to register the metadata associated with frames (this includes things like timestamps and other information about the video frame).
+
+- Metadata registration follow this:[/scripts/env_setup/obsensor_metadata_win10.md](scripts/env_setup/obsensor_metadata_win10.md)
+
+*Notes: If the metadata is not registered, the device timestamp will be abnormal, thereby affecting the SDK’s internal frame synchronization functionality.*
+
+#### Linux
+
+For Linux, we have provided a script to help you set up the environment. You can run the script as follows:
 
 ```bash
-git clone https://github.com/orbbec/OrbbecSDK.git
-```
-Alternatively, you can install via binary packages, please refer to [installation guidance](doc/tutorial/English/Installation_guidance.md) for more information.
-
-### Environment setup
-
-* Linux:
-
- If you installed via a debian package, you can skip the installation of the udev rules file. If not, please install it using the following commands:
-
-  ```bash
-  cd OrbbecSDK/misc/scripts
+cd scripts/env_setup
   sudo chmod +x ./install_udev_rules.sh
   sudo ./install_udev_rules.sh
   sudo udevadm control --reload && sudo udevadm trigger
-  ```
-* Windows:
-
-  Timestamp registration: [follow this: obsensor_metadata_win10](misc/scripts/obsensor_metadata_win10.md)
-* *For more information, please refer to：[Environment Configuration](doc/tutorial/English/Environment_Configuration.md)*
-
-## Examples
-
-The sample code is located in the `./examples` directory and can be built using CMake.
-
-### Build
-
-```bash
-cd OrbbecSDK && mkdir build && cd build && cmake .. && cmake --build . --config Release
 ```
 
-### Run example
+*Notes: If this script is not executed, open the device will fail due to permission issues. You need to run the sample with sudo (administrator privileges).*
 
-To connect your Orbbec camera to your PC, run the following steps:
 
-```bash
-cd OrbbecSDK/build/bin # build output dir
-./OBMultiStream  # OBMultiStream.exe on Windows
+### 2.2 How to Use install package
+If you do not want to compile the Orbbec SDK, you can use the SDK installation package. First [download the corresponding installation package](https://github.com/orbbec/OrbbecSDK_v2/releases) for your platform.
+
+1. The file `OrbbecSDK_vx.x.x_win64.exe` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Windows.
+2. The file `OrbbecSDK_vx.x.x_amd64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Linux x86_64, likes ubuntu.
+3. The file `OrbbecSDK_vx.x.x_arm64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on ARM64，likes  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX.
+
+#### Linux Install via .deb Package
+- On the Linux x64 (ubuntu) platform, install using the following command. (If you are using the Arm64 platform, please use `OrbbecSDK_vx.x.x_arm64.deb`)
+~~~
+sudo dpkg -i OrbbecSDK_v2.x.x_amd64.deb
+~~~
+
+- Check the entire package path of the Orbbec SDK using dpkg -L orbbecsdk, while the header files and library files of the Orbbec SDK will be installed in the /usr/local path.
+~~~
+dpkg -L orbbecsdk
+~~~
+
+- Run the Orbbec Viewer.
+~~~
+sudo ./OrbbecViewer
+~~~
+
+#### Windows Install via .exe Package
+On the windows platform, Double-click OrbbecSDK_vx.x.x_win64.exe directly to install, After installation is complete, run OrbbecViewer or the Orbbec SDK from the installation directory.
+
+### 2.3 Quick Start
+
+If you do not intend to modify the SDK itself, it is recommended to use a [pre-compiled distribution](https://github.com/orbbec/OrbbecSDK_v2/releases). For a comprehensive guide on installing the SDK, setting up your development environment, and developing applications, please consult the [Tutorial](docs/tutorial/installation_and_development_guide.md) section for detailed information.
+
+To explore practical examples and gain insights on utilizing the SDK, please navigate to [Examples](examples/README.md) section for more information.
+
+Orbbec Viewer is an all-in-one graphical user interface (GUI) built on the Orbbec SDK, offering a suite of features including data stream preview, camera configuration, post-processing, and more. To learn how to effectively use the Orbbec Viewer, please refer to the  [Orbbec Viewer User Guide](docs/tutorial/orbbecviewer.md).
+
+### 2.4 API Reference
+
+[Orbbec SDK v2 API User Guide](https://orbbec.github.io/docs/OrbbecSDKv2_API_User_Guide/), this document provides an overview of key features in the Orbbec SDK v2 and demonstrates how to use its most commonly used APIs. For more detailed APIs, please refer to [Orbbec SDK v2 API Reference](https://orbbec.github.io/docs/OrbbecSDKv2/index.html)
+
+### 2.5 Camera Parameters and Value Ranges
+
+For common depth, IR, and color camera parameters and their value ranges, refer to [orbbec_camera_params.html](https://orbbec.github.io/OrbbecSDK_v2/docs/tutorial/orbbec_camera_params.html)
+
+### 2.6 Camera Distortion
+
+For each device's Original depth and color distortions, as well as depth distortion after D2C, color distortion after C2C, and point cloud distortion, refer to [orbbec_camera_distortion.md](docs/tutorial/orbbec_camera_distortion.md).
+
+
+### 2.7 Performance tuning
+
+For different use cases, the SDK can be tuned to achieve optimal performance. Please refer to the [performance tuning guide](docs/tutorial/performance_tuning.md) for more information.
+
+### 2.8 Building from Source
+
+If you would like to modify the SDK itself, you can build the SDK from source. Please refer to the [build guide](docs/tutorial/building_orbbec_sdk.md) for more information.
+
+### 2.9 FAQ
+
+Most frequently asked questions can be found in the [FAQ](docs/FAQ.md) file.
+
+More asked and answered questions can be found in the [issues](https://github.com/orbbec/OrbbecSDK_v2/issues) channel. Use key words for searching may help you find the answer you are looking for.
+
+## 3. Gallery
+
+### 3.1 The QuickStart Example
+
+```c++
+// Create a pipeline.
+ob::Pipeline pipe;
+
+// Start the pipeline with default config.
+pipe.start();
+
+// Create a window for showing the frames, and set the size of the window.
+ob_smpl::CVWindow win("QuickStart", 1280, 720, ob_smpl::ARRANGE_ONE_ROW);
+
+while(win.run()) {
+    // Wait for frameSet from the pipeline, the default timeout is 1000ms.
+    auto frameSet = pipe.waitForFrameset();
+
+    // Push the frames to the window for showing.
+    win.pushFramesToView(frameSet);
+}
+
+// Stop the Pipeline, no frame data will be generated
+pipe.stop();
 ```
 
-Notes: On MacOS, sudo privileges are required.
+![QuickStart Example](docs/resource/QuickStart.jpg)
 
-```bash
-# MacOS
-cd OrbbecSDK/build/bin # build output dir
-cp ../../lib/macOS/* . # copy lib to output dir
-sudo ./OBMultiStream
+### 3.2 The Orbbec Viewer
+
+![Orbbec Viewer](docs/resource/OrbbecViewer.jpg)
+- Notes
+
+If the Orbbec Viewer is used under Linux OS and is used for updating any camera firmware, users may encounter the issue that the firmware file selection window is not poping up. Users are unable to proceed with the firmware update work flow and are unable to update the camera firmware.
+
+- Solution:
+1. Exit the Orbbec Viewer under Linux OS .
+2. Run the following command as root in a terminal for installing the necessary tool Zenity.
+```
+sudo apt-get install zenity
 ```
 
-The following image is the result of running MultiStream on the Gemini2 device. Other Devices run result maybe different.
+3. Start the Orbbec Viewer under Linux OS and proceed with the firmware update work flow.
 
-![Multistream](doc/resources/MultiStream.png)
+### 3.3 DepthQualityTool
+[Depth Quality Tool](https://github.com/orbbec/OrbbecTools/releases/tag/DepthQualityTool) enables users to evaluate the camera’s depth quality across key metrics: Depth Accuracy, Spatial Precision, Temporal Precision, and Fill Rate.
+Users can easily view and interpret these metrics in real time or record the data for offline analysis.
 
-Notes:
-On the Linux/Arm platform ,this sample requires users to compile with Opencv4.2 or above,otherwise, it cannot be rendered.
 
-### Use Orbbec SDK in your CMake project
+## 4. Contributing
 
-Find and link Orbbec SDK in your CMakeLists.txt file like this:
+At present, we are focusing our efforts on the internal development of the SDK and are not accepting external contributions for functionality expansion. However, we value your input and are open to reviewing any pull requests or suggestions you might have.
 
-```cmake
-cmake_minimum_required(VERSION 3.1.15)
-project(OrbbecSDKTest)
+Should you have any questions or concerns, please feel free to reach out to us through the [issues](https://github.com/orbbec/OrbbecSDK_v2/issues) channel.
 
-add_executable(${PROJECT_NAME} main.cpp)
+## 5. License
 
-# find Orbbec SDK
-set(OrbbecSDK_DIR "/your/path/to/OrbbecSDK")
-find_package(OrbbecSDK REQUIRED)
+This project is licensed under the MIT License with some other licenses for third-party libraries and extensions - see the [LICENSE](LICENSE.txt) file for details.
 
-# link Orbbec SDK
-target_link_libraries(${PROJECT_NAME} OrbbecSDK::OrbbecSDK)
-```
+## 6. Links
 
-## Documents
-
-### Overview
-* Github Pages：[https://orbbec.github.io/OrbbecSDK/](https://orbbec.github.io/OrbbecSDK/)
-* Overview Document：[doc/tutorial/English/OverviewDocument.md](doc/tutorial/English/OverviewDocument.md)
-
-### Tutorials
-* Quick Start：[doc/tutorial/English/Environment_Configuration.md](doc/tutorial/English/Environment_Configuration.md)
-* Examples: [examples/README.md](examples/README.md)
-
-### API Reference
-* API Reference: [doc/api/English/index.html](https://orbbec.github.io/OrbbecSDK/doc/api/English/index.html)
-* OrbbecSDK C++ API user guide：[doc/tutorial/English/OrbbecSDK_C++_API_user_guide-v1.0.pdf](https://orbbec.github.io/OrbbecSDK/doc/tutorial/English/OrbbecSDK_C++_API_user_guide-v1.0.pdf)
-
-### Multi Camera Sync
-* Multi Camera Sync Document: [Multi Camera Sync](https://www.orbbec.com/docs/set-up-cameras-for-external-synchronization_v1-2/)
-
-## Frequently Asked Questions
-
-### No Data Stream from Multiple Cameras
-
-**Insufficient Power Supply**:
-  - Ensure that all cameras are not connected to the same hub.
-  - Use a powered hub to provide sufficient power to each camera.
-
-**High Resolution**:
-  - Try lowering the resolution to resolve data stream issues.
-
-**Increase usbfs_memory_mb Value**:
-  - Increase the `usbfs_memory_mb` value to 128MB by running the following command:
-    ```bash
-    echo 128 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
-    ```
-  - For making this change permanent, check [this link](https://github.com/OpenKinect/libfreenect2/issues/807).
-
-## Related links
-
-* [Orbbec SDK Repo](https://github.com/orbbec/OrbbecSDK)
-* [Orbbec Main Page](https://www.orbbec.com/)
-* [Orbbec 3D Club](https://3dclub.orbbec3d.com)
+- [Orbbec SDK V2.x Open Source Library](https://github.com/orbbec/OrbbecSDK_v2)
+- [Orbbec SDK V1.x Pre-Compiled Library](https://github.com/orbbec/OrbbecSDK)
+- [Orbbec Company Main Page](https://www.orbbec.com/)
+- [Orbbec 3D Club](https://3dclub.orbbec3d.com)

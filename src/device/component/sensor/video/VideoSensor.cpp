@@ -1,0 +1,404 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "VideoSensor.hpp"
+#include "ISensorStreamStrategy.hpp"
+#include "IDevice.hpp"
+#include "exception/ObException.hpp"
+#include "logger/LoggerInterval.hpp"
+#include "logger/LoggerHelper.hpp"
+#include "utils/Utils.hpp"
+#include "stream/StreamProfile.hpp"
+#include "frame/Frame.hpp"
+#include "FilterDecorator.hpp"
+#include "publicfilters/FormatConverterProcess.hpp"
+#include "property/InternalProperty.hpp"
+#include "DevicePids.hpp"
+
+#include "logger/LoggerSnWrapper.hpp"  // Must be included last to override log macros
+
+namespace libobsensor {
+
+#define GetCurrentSN() owner_->getSn()
+
+VideoSensor::VideoSensor(IDevice *owner, OBSensorType sensorType, const std::shared_ptr<ISourcePort> &backend)
+    : SensorBase(owner, sensorType, backend), lazySelf_(std::make_shared<LazySensor>(owner, sensorType)) {
+    auto vsPort = std::dynamic_pointer_cast<IVideoStreamPort>(backend_);
+    if(!vsPort) {
+        THROW_INVALID_PARAM_EXCEPTION("Backend is not a valid IVideoStreamPort");
+    }
+
+    try {
+        // try to stop stream to avoid that the device is in streaming state due to some reason such as a previous crash
+        trySendStopStreamVendorCmd();
+    }
+    catch(const std::exception &e) {
+        LOG_WARN("Failed to stop stream: {}", e.what());
+    }
+
+    auto backendSpList = vsPort->getStreamProfileList();
+    setStreamProfileList(backendSpList);
+
+    LOG_DEBUG("VideoSensor created @{}", sensorType_);
+}
+
+VideoSensor::~VideoSensor() noexcept {
+    try {
+        disableStreamRecovery();
+        stop();
+    }
+    catch(const std::exception &e) {
+        LOG_ERROR("Exception occurred while destroying VideoSensor: {}", e.what());
+    }
+    LOG_DEBUG("VideoSensor destroyed @{}", sensorType_);
+}
+
+#define MIN_VIDEO_FRAME_DATA_SIZE 1024
+void VideoSensor::start(std::shared_ptr<const StreamProfile> sp, FrameCallback callback) {
+    LOG_INFO("Try to start stream: {}", sp);
+
+    // validate device state
+    validateDeviceState(sp);
+
+    // validate stream profile
+    {
+        auto owner    = getOwner();
+        auto strategy = owner->getComponentT<ISensorStreamStrategy>(OB_DEV_COMPONENT_SENSOR_STREAM_STRATEGY, false);
+        if(strategy) {
+            strategy->validateStream(sp);
+            strategy->markStreamActivated(sp);
+        }
+    }
+
+    if(sensorType_ == OB_SENSOR_DEPTH || isIRSensor(sensorType_)) {
+        auto owner      = getOwner();
+        auto deviceInfo = owner->getInfo();
+        auto vid        = deviceInfo->vid_;
+        auto pid        = deviceInfo->pid_;
+        if(!isDeviceInContainer(G435LeDevPids, vid, pid)) {
+            auto propServer          = owner->getPropertyServer();
+            auto isSupportDecamation = propServer->isPropertySupported(OB_STRUCT_PRESET_RESOLUTION_CONFIG, PROP_OP_READ_WRITE, PROP_ACCESS_INTERNAL);
+            auto videoStreamProfile  = sp->as<VideoStreamProfile>();
+            auto decimationConfig    = videoStreamProfile->getDecimationConfig();
+
+            if(decimationConfig.factor != 0 && isSupportDecamation) {
+                OBPresetResolutionConfig presetResolutionConfig{};
+                presetResolutionConfig.width  = static_cast<int16_t>(decimationConfig.originWidth);
+                presetResolutionConfig.height = static_cast<int16_t>(decimationConfig.originHeight);
+                if(sensorType_ == OB_SENSOR_DEPTH) {
+                    presetResolutionConfig.depthDecimationFactor = decimationConfig.factor;
+                    presetResolutionConfig.irDecimationFactor    = 0;
+                    propServer->setStructureDataT<OBPresetResolutionConfig>(OB_STRUCT_PRESET_RESOLUTION_CONFIG, presetResolutionConfig);
+                }
+                else if(isIRSensor(sensorType_)) {
+                    presetResolutionConfig.irDecimationFactor    = decimationConfig.factor;
+                    presetResolutionConfig.depthDecimationFactor = 0;
+                    propServer->setStructureDataT<OBPresetResolutionConfig>(OB_STRUCT_PRESET_RESOLUTION_CONFIG, presetResolutionConfig);
+                }
+            }
+        }
+    }
+
+    activatedStreamProfile_ = sp;
+    frameCallback_          = callback;
+    updateStreamState(STREAM_STATE_STARTING);
+
+    auto backendIter = streamProfileBackendMap_.find(sp);
+    if(backendIter == streamProfileBackendMap_.end()) {
+        THROW_ITEM_NOT_FOUND_EXCEPTION("Can not find backend stream profile for activated stream profile");
+    }
+    currentBackendStreamProfile_ = backendIter->second.first;
+    currentFormatFilterConfig_   = backendIter->second.second;
+
+    if(currentFormatFilterConfig_ && currentFormatFilterConfig_->converter) {
+        auto filter          = std::dynamic_pointer_cast<FilterDecorator>(currentFormatFilterConfig_->converter);
+        auto baseFilter      = filter->getBaseFilter();
+        auto formatConverter = std::dynamic_pointer_cast<FormatConverter>(baseFilter);
+        if(formatConverter) {
+            formatConverter->setConversion(currentFormatFilterConfig_->srcFormat, currentFormatFilterConfig_->dstFormat);
+        }
+        currentFormatFilterConfig_->converter->setCallback([this](std::shared_ptr<Frame> frame) {
+            LOG_FREQ_CALC(DEBUG, 5000, "{} format converter frame callback, frameRate={freq}fps", sensorType_);
+            outputFrame(frame);
+        });
+    }
+
+    auto vsPort = std::dynamic_pointer_cast<IVideoStreamPort>(backend_);
+    LOG_INFO("Start backend stream: {}", currentBackendStreamProfile_);
+    BEGIN_TRY_EXECUTE({
+        vsPort->startStream(currentBackendStreamProfile_, [this](std::shared_ptr<Frame> frame) {  //
+            onBackendFrameCallback(frame);
+        });
+    })
+    CATCH_EXCEPTION_AND_EXECUTE({
+        {
+            auto owner    = getOwner();
+            auto strategy = owner->getComponentT<ISensorStreamStrategy>(OB_DEV_COMPONENT_SENSOR_STREAM_STRATEGY, false);
+            if(strategy) {
+                strategy->markStreamDeactivated(activatedStreamProfile_);
+            }
+        }
+        activatedStreamProfile_.reset();
+        frameCallback_ = nullptr;
+        updateStreamState(STREAM_STATE_START_FAILED);
+        throw;
+    })
+}
+
+void VideoSensor::onBackendFrameCallback(std::shared_ptr<Frame> frame) {
+    if(streamState_ != STREAM_STATE_STREAMING && streamState_ != STREAM_STATE_STARTING) {
+        return;
+    }
+
+    LOG_FREQ_CALC(INFO, 5000, "{} backend frame callback, frameRate={freq}fps", sensorType_);
+    auto deviceInfo = owner_->getInfo();
+    auto vid        = deviceInfo->vid_;
+    auto pid        = deviceInfo->pid_;
+    if(isDeviceInOrbbecSeries(FemtoBoltDevPids, vid, pid) || isDeviceInOrbbecSeries(FemtoMegaDevPids, vid, pid)) {
+        auto videoFrame = frame->as<VideoFrame>();
+        videoFrame->setPixelType(OB_PIXEL_TOF_DEPTH);
+    }
+
+    auto vsp              = currentBackendStreamProfile_->as<VideoStreamProfile>();
+    auto maxFrameDataSize = vsp->getMaxFrameDataSize();
+
+    auto dataSize = frame->getDataSize();
+    auto format   = frame->getFormat();
+
+#ifdef OB_DEBUG
+    // auto fsp   = frame->getStreamProfile();
+    // auto owner = fsp->getOwner();
+    // if(fsp.get() != currentBackendStreamProfile_.get()) {
+    //     THROW_INVALID_PARAM_EXCEPTION("Frame's stream profile is not the same as activated stream profile");
+    // }
+    // if(owner.get() != static_cast<void *>(this)) {
+    //     THROW_INVALID_PARAM_EXCEPTION("Frame's owner is not this VideoSensor");
+    // }
+#endif
+
+    auto markDataDrop = [this]() { droppedFrameStatus_.fetch_or(OB_SDK_STATUS_FRAME_DROP_DATA, std::memory_order_relaxed); };
+
+    if(format == OB_FORMAT_MJPG && frame->getDataSize() < MIN_VIDEO_FRAME_DATA_SIZE) {
+        LOG_WARN_INTVL("[{}] This frame will be dropped because data size less than mini size (1024 byte)! size={} @{}", GetCurrentSN(), dataSize, sensorType_);
+        markDataDrop();
+        return;
+    }
+    else if(format == OB_FORMAT_MJPG && sensorType_ != OB_SENSOR_DEPTH && !utils::checkJpgImageData(frame->getData(), dataSize)) {
+        LOG_WARN_INTVL("[{}] This frame will be dropped because jpg format verification failure! @{}", GetCurrentSN(), sensorType_);
+        markDataDrop();
+        return;
+    }
+    else if(maxFrameDataSize < dataSize) {
+        LOG_WARN_INTVL("[{}] This frame will be dropped because because the data size is larger than expected! size={}, expected={} @{}", GetCurrentSN(),
+                       dataSize, maxFrameDataSize, sensorType_);
+        markDataDrop();
+        return;
+    }
+    else if(IS_FIXED_SIZE_FORMAT(format) && maxFrameDataSize != dataSize) {
+        LOG_WARN_INTVL("[{}] This frame will be dropped because the data size does not match the expectation! size={}, expected={} @{}", GetCurrentSN(),
+                       dataSize, maxFrameDataSize, sensorType_);
+        markDataDrop();
+        return;
+    }
+
+    updateStreamState(STREAM_STATE_STREAMING);
+
+    if(frameMetadataModifier_) {
+        frameMetadataModifier_->modify(frame);
+    }
+
+    if(currentFormatFilterConfig_ && currentFormatFilterConfig_->converter) {
+        currentFormatFilterConfig_->converter->pushFrame(frame);
+    }
+    else {
+        outputFrame(frame);
+    }
+}
+
+void VideoSensor::stop() {
+    if(!isStreamActivated()) {
+        return;
+    }
+
+    // Wait for stream recovery to finish
+    waitRecoveringFinished();
+
+    try {
+        auto owner    = getOwner();
+        auto strategy = owner->getComponentT<ISensorStreamStrategy>(OB_DEV_COMPONENT_SENSOR_STREAM_STRATEGY, false);
+        if(strategy) {
+            strategy->markStreamDeactivated(activatedStreamProfile_);
+        }
+    }
+    catch(const std::exception &e) {
+        LOG_WARN("Failed to mark stream as deactivated: {}", e.what());
+    }
+
+    updateStreamState(STREAM_STATE_STOPPING);
+
+    try {
+        auto vsPort = std::dynamic_pointer_cast<IVideoStreamPort>(backend_);
+        vsPort->stopStream(currentBackendStreamProfile_);
+    }
+    catch(const std::exception &e) {
+        LOG_WARN("Failed to stop video stream port: {}", e.what());
+    }
+
+    try {
+        trySendStopStreamVendorCmd();
+    }
+    catch(const std::exception &e) {
+        LOG_WARN("Failed to send stop stream vendor command: {}", e.what());
+    }
+
+    updateStreamState(STREAM_STATE_STOPPED);
+
+    if(currentFormatFilterConfig_ && currentFormatFilterConfig_->converter) {
+        currentFormatFilterConfig_->converter->reset();
+    }
+
+    if(frameProcessor_) {
+        frameProcessor_->reset();
+    }
+
+    activatedStreamProfile_.reset();
+    frameCallback_ = nullptr;
+}
+
+void VideoSensor::trySendStopStreamVendorCmd() {
+    auto owner      = getOwner();
+    auto propServer = owner->getPropertyServer();
+    auto propertyId = -1;
+    if(propertyId == -1) {
+        switch(sensorType_) {
+        case OB_SENSOR_IR:
+        case OB_SENSOR_IR_LEFT:
+            propertyId = OB_PROP_STOP_IR_STREAM_BOOL;
+            break;
+        case OB_SENSOR_COLOR:
+        case OB_SENSOR_COLOR_LEFT:
+        case OB_SENSOR_COLOR_RIGHT:
+            propertyId = OB_PROP_STOP_COLOR_STREAM_BOOL;
+            break;
+        case OB_SENSOR_IR_RIGHT:
+            propertyId = OB_PROP_STOP_IR_RIGHT_STREAM_BOOL;
+            break;
+        case OB_SENSOR_DEPTH:
+            propertyId = OB_PROP_STOP_DEPTH_STREAM_BOOL;
+            break;
+        case OB_SENSOR_CONFIDENCE:
+            propertyId = OB_PROP_STOP_CONFIDENCE_STREAM_BOOL;
+            break;
+        default:
+            return;
+        }
+    }
+
+    if(propServer->isPropertySupported(propertyId, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+        propServer->setPropertyValueT<bool>(propertyId, true);
+    }
+}
+
+void VideoSensor::updateFormatFilterConfig(const std::vector<FormatFilterConfig> &configs) {
+    if(isStreamActivated()) {
+        THROW_WRONG_API_CALL_SEQUENCE_EXCEPTION("Can not update format filter config while streaming");
+    }
+    formatFilterConfigs_ = configs;
+    streamProfileList_.clear();
+
+    auto streamType = utils::mapSensorTypeToStreamType(sensorType_);
+    for(const auto &backendSp: backendStreamProfileList_) {
+        auto format   = backendSp->getFormat();
+        bool filtered = false;
+        std::for_each(formatFilterConfigs_.begin(), formatFilterConfigs_.end(), [&](const FormatFilterConfig &config) {
+            if(config.srcFormat != format) {
+                return;
+            }
+
+            if(config.policy == FormatFilterPolicy::REMOVE) {
+                filtered = true;
+                return;
+            }
+
+            // FormatFilterPolicy is ADD or REPLACE, add a new stream profile with the new format
+            auto sp = backendSp->clone();
+            sp->setFormat(config.dstFormat);
+            sp->bindOwner(lazySelf_);
+            sp->setType(streamType);
+            streamProfileList_.push_back(sp);
+            streamProfileBackendMap_[sp] = { backendSp, &config };
+
+            filtered |= (config.policy != FormatFilterPolicy::ADD);  // if policy is REPLACE, filter out the original stream profile
+        });
+
+        if(!filtered) {  // if no filter applied, add the original stream profile
+            auto sp = backendSp->clone();
+            sp->bindOwner(lazySelf_);
+            sp->setType(streamType);
+            streamProfileList_.push_back(sp);
+            streamProfileBackendMap_[sp] = { backendSp, nullptr };
+            continue;
+        }
+    }
+
+    DEBUG_EXECUTE({
+        LOG_TRACE(" filtered stream profile list size={} @{}", streamProfileList_.size(), sensorType_);
+        for(auto &sp: streamProfileList_) {
+            LOG_TRACE(" - {}", sp);
+        }
+    });
+}
+
+void VideoSensor::setStreamProfileList(const StreamProfileList &profileList) {
+    auto              streamType    = utils::mapSensorTypeToStreamType(sensorType_);
+    StreamProfileList backendSpList = profileList;
+    for(auto &backendSp: backendSpList) {
+        auto sp = backendSp->clone();
+        sp->bindOwner(lazySelf_);
+        sp->setType(streamType);
+        backendStreamProfileList_.push_back(sp);
+        LOG_TRACE("Backend stream profile {}", backendSp);
+    }
+
+    std::sort(backendStreamProfileList_.begin(), backendStreamProfileList_.end(),
+              [](const std::shared_ptr<const StreamProfile> &a, const std::shared_ptr<const StreamProfile> &b) {
+                  auto aVsp = a->as<VideoStreamProfile>();
+                  auto bVsp = b->as<VideoStreamProfile>();
+                  auto aRes = aVsp->getWidth() * aVsp->getHeight();
+                  auto bRes = bVsp->getWidth() * bVsp->getHeight();
+                  if(aRes != bRes) {
+                      return aRes > bRes;
+                  }
+                  else if(aVsp->getHeight() != bVsp->getHeight()) {
+                      return aVsp->getHeight() > bVsp->getHeight();
+                  }
+                  else if(aVsp->getFps() != bVsp->getFps()) {
+                      return aVsp->getFps() > bVsp->getFps();
+                  }
+                  return aVsp->getFormat() > bVsp->getFormat();
+              });
+
+    // The stream profile list is same as the backend stream profile list at default.
+    for(auto &backendSp: backendStreamProfileList_) {
+        auto sp = backendSp->clone();
+        sp->bindOwner(lazySelf_);
+        sp->setType(streamType);
+        streamProfileList_.push_back(sp);
+        streamProfileBackendMap_[sp] = { backendSp, nullptr };
+    }
+
+    if(!formatFilterConfigs_.empty()) {
+        updateFormatFilterConfig(formatFilterConfigs_);
+    }
+}
+
+void VideoSensor::setFrameProcessor(std::shared_ptr<FrameProcessor> frameProcessor) {
+    SensorBase::setFrameProcessor(frameProcessor);
+}
+void VideoSensor::setFrameMetadataModifer(std::shared_ptr<IFrameMetadataModifier> modifier) {
+    if(isStreamActivated()) {
+        THROW_WRONG_API_CALL_SEQUENCE_EXCEPTION("Can not update frame metadata modifier while streaming");
+    }
+    frameMetadataModifier_ = modifier;
+}
+}  // namespace libobsensor

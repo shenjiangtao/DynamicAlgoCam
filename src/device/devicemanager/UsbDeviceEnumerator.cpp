@@ -1,0 +1,370 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "UsbDeviceEnumerator.hpp"
+#include "DevicePids.hpp"
+#include "utils/Utils.hpp"
+#include <unordered_set>
+
+#include "gemini305/G305DeviceInfo.hpp"
+#include "gemini330/G330DeviceInfo.hpp"
+#include "gemini2/G2DeviceInfo.hpp"
+#include "astra2/Astra2DeviceInfo.hpp"
+#include "femtobolt/FemtoBoltDeviceInfo.hpp"
+#include "femtomega/FemtoMegaDeviceInfo.hpp"
+#include "openni/OpenNIDeviceInfo.hpp"
+#include "bootloader/BootDeviceInfo.hpp"
+
+namespace libobsensor {
+UsbDeviceEnumerator::UsbDeviceEnumerator(DeviceChangedCallback callback) : platform_(Platform::getInstance()) {
+    devChangedCallback_ = [callback, this](const DeviceEnumInfoList &removedList, const DeviceEnumInfoList &addedList) {
+        (void)this;
+#ifdef __ANDROID__
+        // On the Android platform, it is necessary to call back to Java in the same thread, and complete the release of relevant resources in the callback
+        // function.
+        callback(removedList, addedList);
+#elif defined(__linux__)
+        // Solve the problem of deadlock caused by multiple callbacks in a short period of time in Linux, and the related interfaces that access libusb are
+        // called in the user callback function.
+        auto cbThread = std::thread(callback, removedList, addedList);
+        cbThread.detach();
+#else
+        // On the WIN platform, since the callback is called by MF-related threads, if the callback is directly made to the user program without switching
+        // threads, the user program needs to update the MFC interface, which will cause the program to crash;
+        if(devChangedCallbackThread_.joinable()) {
+            devChangedCallbackThread_.join();
+        }
+        devChangedCallbackThread_ = std::thread(callback, removedList, addedList);
+#endif
+    };
+
+    deviceInfoList_ = queryArrivalDevice(true);
+
+    deviceArrivalHandleThread_ = std::thread(&UsbDeviceEnumerator::deviceArrivalHandleThreadFunc, this);
+    deviceRemovalHandleThread_ = std::thread(&UsbDeviceEnumerator::deviceRemovalHandleThreadFunc, this);
+
+    deviceWatcher_ = platform_->createUsbDeviceWatcher();
+    deviceWatcher_->start([this](OBDeviceChangedType changedType, std::string url) { return onPlatformDeviceChanged(changedType, url); });
+
+    std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+    if(!deviceInfoList_.empty()) {
+        LOG_DEBUG("Found {} device(s):", deviceInfoList_.size());
+        for(auto &deviceInfo: deviceInfoList_) {
+            LOG_DEBUG("  - Name: {}, PID: 0x{:04X}, SN/ID: {}, connection: {}", deviceInfo->getName(), deviceInfo->getPid(), deviceInfo->getDeviceSn(),
+                      deviceInfo->getConnectionType());
+        }
+    }
+    else {
+        LOG_DEBUG("No matched usb device found!");
+    }
+}
+
+UsbDeviceEnumerator::~UsbDeviceEnumerator() noexcept {
+    stop();
+    deviceWatcher_.reset();
+    platform_.reset();
+}
+
+void UsbDeviceEnumerator::stop() {
+    destroy_ = true;
+
+    newUsbPortArrivalCV_.notify_all();
+    if(deviceArrivalHandleThread_.joinable()) {
+        deviceArrivalHandleThread_.join();
+    }
+
+    deviceRemovalCV_.notify_all();
+    if(deviceRemovalHandleThread_.joinable()) {
+        deviceRemovalHandleThread_.join();
+    }
+
+    if(devChangedCallbackThread_.joinable()) {
+        devChangedCallbackThread_.join();
+    }
+
+    if(deviceWatcher_) {
+        deviceWatcher_->stop();
+    }
+}
+
+bool UsbDeviceEnumerator::onPlatformDeviceChanged(OBDeviceChangedType changeType, std::string devUid) {
+    if(changeType == OB_DEVICE_REMOVED) {
+        std::lock_guard<std::mutex> lock(deviceRemovalMutex_);
+        deviceRemovalUidSet_.emplace(devUid);
+        deviceRemovalCV_.notify_all();
+    }
+    else {  // OB_DEVICE_ARRIVAL
+        newUsbPortArrival_ = true;
+        newUsbPortArrivalCV_.notify_all();
+    }
+
+    return true;  // default
+}
+
+DeviceEnumInfoList UsbDeviceEnumerator::queryRemovedDevice(std::unordered_set<std::string> deviceRemovalUidSet) {
+    auto portInfoList = currentUsbPortInfoList_;
+    auto canBeRemoved = [&deviceRemovalUidSet](const std::shared_ptr<const SourcePortInfo> &item) {
+        auto port = std::dynamic_pointer_cast<const USBSourcePortInfo>(item);
+        if(port == nullptr) {
+            return false;
+        }
+        else if(deviceRemovalUidSet.count(port->url)) {
+            LOG_DEBUG("usb device will be removed: {}", port->url);
+            return true;
+        }
+        else if(deviceRemovalUidSet.count(port->infUrl)) {
+            LOG_DEBUG("usb device will be removed: {}", port->infUrl);
+            return true;
+        }
+        return false;
+    };
+    portInfoList.erase(std::remove_if(portInfoList.begin(), portInfoList.end(), canBeRemoved), portInfoList.end());
+
+    LOG_DEBUG("Current usb device port list:");
+    for(const auto &item: portInfoList) {
+        auto portInfo = std::dynamic_pointer_cast<const USBSourcePortInfo>(item);
+        LOG_DEBUG(" - {0} | {1}", portInfo->infUrl, portInfo->infName);
+    }
+
+    std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+    if(portInfoList != currentUsbPortInfoList_) {
+        currentUsbPortInfoList_           = portInfoList;
+        DeviceEnumInfoList curList        = usbDeviceInfoMatch(portInfoList);
+        auto               removedDevList = utils::subtract_sets(deviceInfoList_, curList);
+        deviceInfoList_                   = curList;
+        return removedDevList;
+    }
+    return {};
+}
+
+DeviceEnumInfoList UsbDeviceEnumerator::queryArrivalDevice(bool includeGmsl) {
+    std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+    auto                                   portInfoList              = platform_->queryUsbSourcePortInfos(includeGmsl);
+    auto                                   currentDeviceInfoListTemp = deviceInfoList_;
+    if(portInfoList != currentUsbPortInfoList_) {
+        LOG_DEBUG("Current usb device port list:");
+        for(const auto &item: portInfoList) {
+            auto portInfo = std::dynamic_pointer_cast<const USBSourcePortInfo>(item);
+            LOG_DEBUG(" - {0} | {1}", portInfo->infUrl, portInfo->infName);
+        }
+        DeviceEnumInfoList curList = usbDeviceInfoMatch(portInfoList);
+
+        auto addDevList = utils::subtract_sets(curList, currentDeviceInfoListTemp);
+        for(const auto &item: addDevList) {
+            currentUsbPortInfoList_.insert(currentUsbPortInfoList_.end(), item->getSourcePortInfoList().begin(), item->getSourcePortInfoList().end());
+        }
+
+        return addDevList;
+    }
+    return {};
+}
+
+DeviceEnumInfoList UsbDeviceEnumerator::usbDeviceInfoMatch(const SourcePortInfoList portInfoList) {
+    DeviceEnumInfoList deviceInfoList;
+
+    auto g305Devs = G305DeviceInfo::pickDevices(portInfoList);
+    std::copy(g305Devs.begin(), g305Devs.end(), std::back_inserter(deviceInfoList));
+
+    auto g330Devs = G330DeviceInfo::pickDevices(portInfoList);
+    std::copy(g330Devs.begin(), g330Devs.end(), std::back_inserter(deviceInfoList));
+
+    auto g2Devs = G2DeviceInfo::pickDevices(portInfoList);
+    std::copy(g2Devs.begin(), g2Devs.end(), std::back_inserter(deviceInfoList));
+
+    auto a2Devs = Astra2DeviceInfo::pickDevices(portInfoList);
+    std::copy(a2Devs.begin(), a2Devs.end(), std::back_inserter(deviceInfoList));
+
+    auto femtoBoltDevs = FemtoBoltDeviceInfo::pickDevices(portInfoList);
+    std::copy(femtoBoltDevs.begin(), femtoBoltDevs.end(), std::back_inserter(deviceInfoList));
+
+    auto femtoMegaDevs = FemtoMegaDeviceInfo::pickDevices(portInfoList);
+    std::copy(femtoMegaDevs.begin(), femtoMegaDevs.end(), std::back_inserter(deviceInfoList));
+
+    auto openniDevs = OpenNIDeviceInfo::pickDevices(portInfoList);
+    std::copy(openniDevs.begin(), openniDevs.end(), std::back_inserter(deviceInfoList));
+
+    auto bootDevs = BootDeviceInfo::pickDevices(portInfoList);
+    std::copy(bootDevs.begin(), bootDevs.end(), std::back_inserter(deviceInfoList));
+
+    return deviceInfoList;
+}
+
+void UsbDeviceEnumerator::deviceArrivalHandleThreadFunc() {
+    std::mutex                   mtx;
+    std::unique_lock<std::mutex> lk(mtx);
+    while(!destroy_) {
+        newUsbPortArrivalCV_.wait(lk, [&]() { return newUsbPortArrival_ || destroy_; });
+        if(destroy_) {
+            break;
+        }
+        uint16_t delayTime = 1000;
+#ifdef OS_MACOS
+        delayTime = 3000;
+#endif
+        do {
+            newUsbPortArrival_ = false;
+            newUsbPortArrivalCV_.wait_for(lk, std::chrono::milliseconds(delayTime));
+        } while(!destroy_ && newUsbPortArrival_);
+
+        if(destroy_) {
+            break;
+        }
+
+        DeviceEnumInfoList addedDevList;
+        DeviceEnumInfoList removedDevList;
+        {
+            std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+            addedDevList = queryArrivalDevice(false);
+            removedDevList = findMatchingGmslDeviceByUsb(addedDevList);
+            for(auto &item: addedDevList) {
+                deviceInfoList_.emplace_back(item);
+            }
+        }
+
+        if(!addedDevList.empty()) {
+            LOG_DEBUG("device list changed: added={0}, current={1}", addedDevList.size(), deviceInfoList_.size());
+            if(!deviceInfoList_.empty()) {
+                LOG_DEBUG("Current device list: ");
+                for(auto &deviceInfo: deviceInfoList_) {
+                    LOG_DEBUG("  - Name: {}, PID: 0x{:04X}, SN/ID: {}", deviceInfo->getName(), deviceInfo->getPid(), deviceInfo->getDeviceSn());
+                }
+            }
+            std::unique_lock<std::mutex> lock(callbackMutex_);
+            if(!destroy_ && devChangedCallback_) {
+                devChangedCallback_(removedDevList, addedDevList);
+            }
+        }
+    }
+}
+
+void UsbDeviceEnumerator::deviceRemovalHandleThreadFunc() {
+    std::mutex                   mtx;
+    std::unique_lock<std::mutex> lk(mtx);
+    while(!destroy_) {
+        deviceRemovalCV_.wait(lk, [&]() { return !deviceRemovalUidSet_.empty() || destroy_; });
+        if(destroy_) {
+            break;
+        }
+        std::unordered_set<std::string> removalUidList{};
+        {
+            // copy list
+            std::lock_guard<std::mutex> lock(deviceRemovalMutex_);
+            removalUidList.swap(deviceRemovalUidSet_);
+        }
+        std::vector<std::shared_ptr<const IDeviceEnumInfo>> removedDevList;
+        {
+            std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+            removedDevList = queryRemovedDevice(removalUidList);
+            for(auto iter = deviceInfoList_.begin(); iter != deviceInfoList_.end();) {
+                if(removalUidList.count((*iter)->getUid())) {
+                    iter = deviceInfoList_.erase(iter);
+                }
+                else {
+                    iter++;
+                }
+            }
+        }
+        if(removedDevList.size()) {
+            LOG_DEBUG("device list changed: removed={0}, current={1}", removedDevList.size(), deviceInfoList_.size());
+            if(!removedDevList.empty()) {
+                LOG_DEBUG("Removed device list:");
+                for(auto &deviceInfo: removedDevList) {
+                    LOG_DEBUG("  - Name: {}, PID: 0x{:04X}, SN/ID: {}", deviceInfo->getName(), deviceInfo->getPid(), deviceInfo->getDeviceSn());
+                }
+            }
+            if(!deviceInfoList_.empty()) {
+                LOG_DEBUG("Remained device list:");
+                for(auto &deviceInfo: deviceInfoList_) {
+                    LOG_DEBUG("  - Name: {}, PID: 0x{:04X}, SN/ID: {}", deviceInfo->getName(), deviceInfo->getPid(), deviceInfo->getDeviceSn());
+                }
+            }
+            std::unique_lock<std::mutex> lock(callbackMutex_);
+            if(!destroy_ && devChangedCallback_) {
+                devChangedCallback_(removedDevList, {});
+            }
+        }
+    }
+}
+
+DeviceEnumInfoList UsbDeviceEnumerator::getDeviceInfoList() {
+    std::unique_lock<std::recursive_mutex> lock(deviceInfoListMutex_);
+    return deviceInfoList_;
+}
+
+void UsbDeviceEnumerator::setDeviceChangedCallback(DeviceChangedCallback callback) {
+    std::unique_lock<std::mutex> lock(callbackMutex_);
+    devChangedCallback_ = [callback, this](const DeviceEnumInfoList &removedList, const DeviceEnumInfoList &addedList) {
+        (void)this;
+#ifdef __ANDROID__
+        // On the Android platform, it is necessary to call back to Java in the same thread, and complete the release of relevant resources in the callback
+        // function.
+        callback(removedList, addedList);
+#elif defined(__linux__)
+        // Solve the problem of deadlock caused by multiple callbacks in a short period of time in Linux, and the related interfaces that access libusb are
+        // called in the user callback function.
+        auto cbThread = std::thread(callback, removedList, addedList);
+        cbThread.detach();
+#else
+        // On the WIN platform, since the callback is called by MF-related threads, if the callback is directly made to the user program without switching
+        // threads, the user program needs to update the MFC interface, which will cause the program to crash;
+
+        if(devChangedCallbackThread_.joinable()) {
+            devChangedCallbackThread_.join();
+        }
+        // auto cb = [this, removedList, addedList](){
+        //     LOG_ERROR("device changed callback begin";
+        //     callback(removedList, addedList);
+        //     LOG_ERROR("device changed callback end";
+        // };
+        // devChangedCallbackThread_ = std::thread(cb);
+        devChangedCallbackThread_ = std::thread(callback, removedList, addedList);
+#endif
+    };
+}
+
+DeviceEnumInfoList UsbDeviceEnumerator::findMatchingGmslDeviceByUsb(const DeviceEnumInfoList &addedDevList) {
+    DeviceEnumInfoList matchedDevList;
+    std::unordered_set<std::string> addedDeviceSNs;
+    for(const auto &item: addedDevList) {
+        const auto &sn  = item->getDeviceSn();
+        const auto  pid = item->getPid();
+        const auto  vid = item->getVid();
+        if(!isDeviceInOrbbecSeries(G305DevPids, vid, pid)) {
+            continue;
+        }
+        if(!sn.empty()) {
+            addedDeviceSNs.insert(sn);
+        }
+    }
+
+    if(!addedDeviceSNs.empty()) {
+        std::unordered_set<std::shared_ptr<const SourcePortInfo>> matchedPortInfo;
+
+        for(auto iter = deviceInfoList_.begin(); iter != deviceInfoList_.end();) {
+            const auto &deviceSn             = (*iter)->getDeviceSn();
+            const auto &deviceConnectionType = (*iter)->getConnectionType();
+            if(!deviceSn.empty() && addedDeviceSNs.count(deviceSn) && deviceConnectionType == "GMSL2") {
+                LOG_DEBUG("Found matching GMSL device with same SN: {} ({}), uid: {}", (*iter)->getName(), deviceSn, (*iter)->getUid());
+                matchedDevList.push_back(*iter);
+
+                const auto &sourcePortInfoList = (*iter)->getSourcePortInfoList();
+                for(const auto &portInfo: sourcePortInfoList) {
+                    matchedPortInfo.insert(portInfo);
+                }
+                iter = deviceInfoList_.erase(iter);
+            }
+            else {
+                ++iter;
+            }
+        }
+        if(!matchedPortInfo.empty()) {
+            currentUsbPortInfoList_.erase(
+                std::remove_if(currentUsbPortInfoList_.begin(), currentUsbPortInfoList_.end(),
+                               [&matchedPortInfo](const std::shared_ptr<const SourcePortInfo> &port) { return matchedPortInfo.count(port) > 0; }),
+                currentUsbPortInfoList_.end());
+        }
+    }
+    return matchedDevList;
+}
+
+}  // namespace libobsensor

@@ -1,0 +1,48 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "FemtoBoltDeviceInfo.hpp"
+#include "FemtoBoltDevice.hpp"
+#include "DevicePids.hpp"
+#include "utils/Utils.hpp"
+#if defined(BUILD_USB_PAL)
+#include "usb/UsbPortGroup.hpp"
+#endif
+namespace libobsensor {
+FemtoBoltDeviceInfo::FemtoBoltDeviceInfo(const SourcePortInfoList groupedInfoList) {
+    auto portInfo = std::dynamic_pointer_cast<const USBSourcePortInfo>(groupedInfoList.front());
+
+    name_               = "FemtoBolt";
+    fullName_           = "Orbbec " + name_;
+    pid_                = portInfo->pid;
+    vid_                = portInfo->vid;
+    uid_                = portInfo->uid;
+    deviceSn_           = portInfo->serial;
+    connectionType_     = portInfo->connSpec;
+    sourcePortInfoList_ = groupedInfoList;
+}
+
+FemtoBoltDeviceInfo::~FemtoBoltDeviceInfo() noexcept {}
+
+std::shared_ptr<IDevice> FemtoBoltDeviceInfo::createDevice(OBDeviceAccessMode accessMode) const {
+    (void)accessMode;  // access control is unsupported
+    return std::make_shared<FemtoBoltDevice>(shared_from_this());
+}
+
+#if defined(BUILD_USB_PAL)
+std::vector<std::shared_ptr<IDeviceEnumInfo>> FemtoBoltDeviceInfo::pickDevices(const SourcePortInfoList infoList) {
+    std::vector<std::shared_ptr<IDeviceEnumInfo>> femtoBoltDeviceInfos;
+    auto                                          remainder = FilterUSBPortInfoByVidPid(infoList, ORBBEC_DEVICE_VID, FemtoBoltDevPids);
+    auto                                          groups    = utils::groupVector<std::shared_ptr<const SourcePortInfo>>(remainder, GroupUSBSourcePortByUrl);
+    auto                                          iter      = groups.begin();
+    while(iter != groups.end()) {
+        if(iter->size() >= 2) {
+            auto info = std::make_shared<FemtoBoltDeviceInfo>(*iter);
+            femtoBoltDeviceInfos.push_back(info);
+        }
+        iter++;
+    }
+    return femtoBoltDeviceInfos;
+}
+#endif
+}  // namespace libobsensor

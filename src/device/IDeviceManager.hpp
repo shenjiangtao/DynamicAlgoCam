@@ -1,0 +1,80 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#pragma once
+#include "libobsensor/h/ObTypes.h"
+#include "IDevice.hpp"
+#include "ISourcePort.hpp"
+
+namespace libobsensor {
+class IDeviceManager;
+class IDeviceEnumInfo {
+public:
+    virtual ~IDeviceEnumInfo() = default;
+
+    virtual int                             getPid() const                                    = 0;
+    virtual int                             getVid() const                                    = 0;
+    virtual const std::string              &getUid() const                                    = 0;
+    virtual const std::string              &getConnectionType() const                         = 0;
+    virtual const std::string              &getName() const                                   = 0;
+    virtual const std::string              &getFullName() const                               = 0;
+    virtual const std::string              &getDeviceSn() const                               = 0;
+    virtual const SourcePortInfoList       &getSourcePortInfoList() const                     = 0;
+    virtual std::shared_ptr<IDevice>        createDevice(OBDeviceAccessMode accessMode) const = 0;
+    virtual std::shared_ptr<IDeviceManager> getDeviceManager() const                          = 0;
+
+    virtual bool operator==(const IDeviceEnumInfo &other) const = 0;
+};
+
+typedef std::vector<std::shared_ptr<const IDeviceEnumInfo>>                                     DeviceEnumInfoList;
+typedef std::function<void(const DeviceEnumInfoList &removed, const DeviceEnumInfoList &added)> DeviceChangedCallback;
+
+class IDeviceEnumerator {
+public:
+    virtual ~IDeviceEnumerator()                                                        = default;
+    virtual DeviceEnumInfoList getDeviceInfoList()                                      = 0;
+    virtual void               setDeviceChangedCallback(DeviceChangedCallback callback) = 0;
+    virtual void               stop()                                                   = 0;
+};
+
+class IDeviceManager {
+public:
+    virtual ~IDeviceManager() = default;
+
+    virtual std::shared_ptr<IDevice> createDevice(const std::shared_ptr<const IDeviceEnumInfo> &info, OBDeviceAccessMode accessMode) = 0;
+    virtual std::shared_ptr<IDevice> createNetDevice(std::string address, uint16_t port, OBDeviceAccessMode accessMode)              = 0;
+    virtual bool                     forceIpConfig(std::string deviceUid, const OBNetIpConfig &config)                               = 0;
+    virtual void                     setGvcpPortscheme(OBGvcpPortScheme scheme)                                                      = 0;
+    virtual OBGvcpPortScheme         getGvcpPortscheme() const                                                                       = 0;
+
+    virtual DeviceEnumInfoList getDeviceInfoList()                                           = 0;
+    virtual OBCallbackId       registerDeviceChangedCallback(DeviceChangedCallback callback) = 0;
+    virtual bool               unregisterDeviceChangedCallback(OBCallbackId id)              = 0;
+
+    virtual void enableNetDeviceEnumeration(bool enable) = 0;
+    virtual bool isNetDeviceEnumerationEnable() const    = 0;
+
+    /**
+     * @brief Start device clock synchronization
+     *
+     * @details Preemptive. A new call overrides any existing session
+     * @param[in] caller Unique identifier (e.g., object pointer)
+     * @param[in] repeatInterval Interval in ms. 0 for one-shot (sync), >0 for periodic (async)
+     */
+    virtual void  enableDeviceClockSync(void *caller, uint64_t repeatInterval) = 0;
+    virtual void  disableDeviceClockSync()                                     = 0;
+    virtual void *getDeviceClockSyncCaller()                                   = 0;
+};
+
+}  // namespace libobsensor
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct ob_device_list_t {
+    libobsensor::DeviceEnumInfoList              list;
+    std::shared_ptr<libobsensor::IDeviceManager> manager;
+};
+#ifdef __cplusplus
+}
+#endif

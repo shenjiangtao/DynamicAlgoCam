@@ -1,0 +1,57 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#pragma once
+#include "IDeviceManager.hpp"
+#include "IDeviceWatcher.hpp"
+#include "Platform.hpp"
+
+#include <memory>
+#include <unordered_set>
+
+namespace libobsensor {
+class UsbDeviceEnumerator : public IDeviceEnumerator, public std::enable_shared_from_this<IDeviceEnumerator> {
+public:
+    UsbDeviceEnumerator(DeviceChangedCallback callback);
+    ~UsbDeviceEnumerator() noexcept override;
+    DeviceEnumInfoList getDeviceInfoList() override;
+    void               setDeviceChangedCallback(DeviceChangedCallback callback) override;
+    void               stop() override;
+
+private:
+    bool               onPlatformDeviceChanged(OBDeviceChangedType changeType, std::string devUid);
+    DeviceEnumInfoList queryRemovedDevice(std::unordered_set<std::string> deviceRemovalUidSet);
+    DeviceEnumInfoList queryArrivalDevice(bool includeGmsl);
+
+    void               deviceArrivalHandleThreadFunc();
+    void               deviceRemovalHandleThreadFunc();
+    DeviceEnumInfoList findMatchingGmslDeviceByUsb(const DeviceEnumInfoList &addedDevList);
+
+    static DeviceEnumInfoList usbDeviceInfoMatch(const SourcePortInfoList infoList);
+
+private:
+    std::shared_ptr<Platform> platform_;
+    bool                      destroy_ = false;
+
+    std::shared_ptr<IDeviceWatcher> deviceWatcher_;
+
+    DeviceChangedCallback devChangedCallback_ = nullptr;
+    std::thread           devChangedCallbackThread_;
+
+    SourcePortInfoList      currentUsbPortInfoList_;
+    bool                    newUsbPortArrival_ = false;
+    std::condition_variable newUsbPortArrivalCV_;
+    std::thread             deviceArrivalHandleThread_;
+
+    // removal thread
+    std::condition_variable         deviceRemovalCV_;
+    std::mutex                      deviceRemovalMutex_;
+    std::unordered_set<std::string> deviceRemovalUidSet_;
+    std::thread                     deviceRemovalHandleThread_;
+
+    DeviceEnumInfoList   deviceInfoList_;
+    std::recursive_mutex deviceInfoListMutex_;
+
+    std::mutex callbackMutex_;
+};
+}  // namespace libobsensor

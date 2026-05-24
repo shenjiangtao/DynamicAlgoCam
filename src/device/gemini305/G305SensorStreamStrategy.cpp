@@ -1,0 +1,198 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "G305SensorStreamStrategy.hpp"
+#include "G305DepthWorkModeManager.hpp"
+#include "exception/ObException.hpp"
+#include <vector>
+#include <sstream>
+#include <memory>
+#include <algorithm>
+
+namespace libobsensor {
+
+#define ISP_FW_VER_KEY "IspFwVer"
+#define ISP_NEED_VER_KEY "IspNeedVer"
+
+G305SensorStreamStrategy::G305SensorStreamStrategy(IDevice *owner) : DeviceComponentBase(owner) {}
+
+G305SensorStreamStrategy::~G305SensorStreamStrategy() noexcept {}
+
+void G305SensorStreamStrategy::markStreamActivated(const std::shared_ptr<const StreamProfile> &profile) {
+    std::lock_guard<std::mutex> lock(startedStreamListMutex_);
+    auto                        streamType = profile->getType();
+    auto                        iter       = std::find_if(activatedStreamList_.begin(), activatedStreamList_.end(),
+                                                          [streamType](const std::shared_ptr<const StreamProfile> &sp) { return sp->getType() == streamType; });
+    if(iter != activatedStreamList_.end()) {
+        THROW_UNSUPPORTED_OPERATION_EXCEPTION(utils::string::to_string() << "The " << streamType << " has already been started.");
+    }
+
+    activatedStreamList_.push_back(profile);
+}
+
+void G305SensorStreamStrategy::markStreamDeactivated(const std::shared_ptr<const StreamProfile> &profile) {
+    std::lock_guard<std::mutex> lock(startedStreamListMutex_);
+    auto                        streamType = profile->getType();
+    auto                        iter       = std::find_if(activatedStreamList_.begin(), activatedStreamList_.end(),
+                                                          [streamType](const std::shared_ptr<const StreamProfile> &sp) { return sp->getType() == streamType; });
+    if(iter == activatedStreamList_.end()) {
+        THROW_UNSUPPORTED_OPERATION_EXCEPTION(utils::string::to_string() << "The " << streamType << " has not been started.");
+    }
+    activatedStreamList_.erase(iter);
+}
+
+void G305SensorStreamStrategy::validateStream(const std::shared_ptr<const StreamProfile> &profile) {
+    validateStream(std::vector<std::shared_ptr<const StreamProfile>>{ profile });
+}
+
+void G305SensorStreamStrategy::validateStream(const std::vector<std::shared_ptr<const StreamProfile>> &profiles) {
+    if(getOwner()->getFirmwareVersionInt() >= 10001) {
+        validateISPFirmwareVersion(profiles);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(startedStreamListMutex_);
+        for(auto profile: profiles) {
+            auto streamType = profile->getType();
+            auto iter       = std::find_if(activatedStreamList_.begin(), activatedStreamList_.end(),
+                                           [streamType](const std::shared_ptr<const StreamProfile> &sp) { return sp->getType() == streamType; });
+            if(iter != activatedStreamList_.end()) {
+                THROW_UNSUPPORTED_OPERATION_EXCEPTION(utils::string::to_string() << "The " << streamType << " has already been started.");
+            }
+        }
+    }
+    validateDepthAndIrStream(profiles);
+    validatePreset(profiles);
+    validateIRLeftAndColorStream(profiles);
+}
+
+void G305SensorStreamStrategy::validateISPFirmwareVersion(const std::vector<std::shared_ptr<const StreamProfile>> &profiles) {
+    bool rgbEnable = false;
+    for(auto profile: profiles) {
+        auto streamType = profile->getType();
+
+        if(streamType == OB_STREAM_COLOR) {
+            rgbEnable = true;
+            break;
+        }
+    }
+    if(rgbEnable) {
+        bool        needUpgrade = false;
+        std::string ispFwVer    = getOwner()->getExtensionInfo(ISP_FW_VER_KEY);
+        std::string ispNeedVer  = getOwner()->getExtensionInfo(ISP_NEED_VER_KEY);
+        if(!ispFwVer.empty() && !ispNeedVer.empty()) {
+            needUpgrade = ispNeedVer > ispFwVer;
+        }
+
+        if(needUpgrade) {
+            THROW_UNSUPPORTED_OPERATION_EXCEPTION("unexpected isp firmware version, please update your camera firmware before streaming data.");
+        }
+    }
+}
+
+void G305SensorStreamStrategy::validateDepthAndIrStream(const std::vector<std::shared_ptr<const StreamProfile>> &profiles) {
+    std::lock_guard<std::mutex> lock(startedStreamListMutex_);
+    auto                        tempStartedStreamList = activatedStreamList_;
+    for(auto &profile: profiles) {
+        auto streamType = profile->getType();
+        if(streamType != OB_STREAM_DEPTH && streamType != OB_STREAM_IR_LEFT && streamType != OB_STREAM_IR_RIGHT) {
+            continue;
+        }
+        auto vsp              = profile->as<VideoStreamProfile>();
+        auto decimationConfig = vsp->getDecimationConfig();
+        auto iter =
+            std::find_if(tempStartedStreamList.begin(), tempStartedStreamList.end(), [vsp, decimationConfig](const std::shared_ptr<const StreamProfile> &sp) {
+                auto cmpStreamType = sp->getType();
+                if(cmpStreamType != OB_STREAM_DEPTH && cmpStreamType != OB_STREAM_IR_LEFT && cmpStreamType != OB_STREAM_IR_RIGHT) {
+                    return false;
+                }
+                auto cmpVsp              = sp->as<VideoStreamProfile>();
+                auto cmpDecimationConfig = cmpVsp->getDecimationConfig();
+                return decimationConfig.originWidth != cmpDecimationConfig.originWidth || decimationConfig.originHeight != cmpDecimationConfig.originHeight
+                       || cmpVsp->getFps() != vsp->getFps();
+            });
+        if(iter != tempStartedStreamList.end()) {
+            THROW_UNSUPPORTED_OPERATION_EXCEPTION(utils::string::to_string()
+                                                  << "The depth/ir streams must have the same resolution and frame rate. " << profile);
+        }
+        tempStartedStreamList.push_back(profile);
+    }
+}
+
+void G305SensorStreamStrategy::validatePreset(const std::vector<std::shared_ptr<const StreamProfile>> &profiles) {
+    OBDepthWorkMode_Internal currentDepthMode{};
+
+    {
+        auto owner                = getOwner();
+        auto depthWorkModeManager = owner->getComponentT<G305DepthWorkModeManager>(OB_DEV_COMPONENT_DEPTH_WORK_MODE_MANAGER);
+        currentDepthMode          = depthWorkModeManager->getCurrentDepthWorkMode();
+    }
+
+    const char *FactoryMode = "Factory Calib";
+    if(strncmp(currentDepthMode.name, FactoryMode, strlen(FactoryMode) + 1) == 0) {
+        // Factory Calibration mode
+        for(auto profile: profiles) {
+            auto streamType = profile->getType();
+            switch(streamType) {
+            case OB_STREAM_IR_LEFT:
+            case OB_STREAM_IR_RIGHT: {
+                auto vsp    = profile->as<VideoStreamProfile>();
+                auto width  = vsp->getWidth();
+                auto height = vsp->getHeight();
+                auto format = vsp->getFormat();
+                if(!(((width == 1280 && height == 800)) && (format == OB_FORMAT_Y12 || format == OB_FORMAT_Y16))) {
+                    THROW_UNSUPPORTED_OPERATION_EXCEPTION("Preset is in Factory Calibration mode, only support IR streams at 1280x800@Y12/Y16");
+                }
+            } break;
+            case OB_STREAM_DEPTH:
+                THROW_UNSUPPORTED_OPERATION_EXCEPTION("Preset is in Factory Calibration mode, dose not support Depth stream");
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    else {
+        // Non-Factory Calibration mode
+        for(auto profile: profiles) {
+            auto streamType = profile->getType();
+            switch(streamType) {
+            case OB_STREAM_IR_LEFT:
+            case OB_STREAM_IR_RIGHT: {
+                auto format = profile->getFormat();
+                if(format == OB_FORMAT_Y12 || format == OB_FORMAT_Y16) {
+                    THROW_UNSUPPORTED_OPERATION_EXCEPTION("The current preset is not in Factory Calibration mode; IR Y12/Y16 formats are not supported");
+                }
+            } break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+void G305SensorStreamStrategy::validateIRLeftAndColorStream(const std::vector<std::shared_ptr<const StreamProfile>> &profiles) {
+    if(getOwner()->getInfo()->connectionType_ != "GMSL2") {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(startedStreamListMutex_);
+    for(auto &profile: profiles) {
+        auto streamType = profile->getType();
+        auto iter       = std::find_if(activatedStreamList_.begin(), activatedStreamList_.end(),
+                                 [streamType](const std::shared_ptr<const StreamProfile> &sp) {
+                                     if(streamType == OB_STREAM_IR_LEFT && sp->getType() == OB_STREAM_COLOR) {
+                                         return true;
+                                     }
+                                     if(streamType == OB_STREAM_COLOR && sp->getType() == OB_STREAM_IR_LEFT) {
+                                         return true;
+                                     }
+                                     return false;
+                                 });
+        if(iter != activatedStreamList_.end()) {
+            THROW_UNSUPPORTED_OPERATION_EXCEPTION("The left IR and the Color streams cannot be started simultaneously");
+        }
+    }
+}
+
+}  // namespace libobsensor

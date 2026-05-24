@@ -1,0 +1,469 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "DeviceManager.hpp"
+#include "utils/Utils.hpp"
+#include "IDeviceClockSynchronizer.hpp"
+#include "IDeviceActivityRecorder.hpp"
+#include "IFrameTimestamp.hpp"
+#include "DeviceBase.hpp"
+#include "IDeviceSyncConfigurator.hpp"
+#include "component/syncconfig/DeviceSyncConfigurator.hpp"
+
+#if defined(BUILD_USB_PAL)
+#include "UsbDeviceEnumerator.hpp"
+#endif
+
+#if defined(BUILD_NET_PAL)
+#include "NetDeviceEnumerator.hpp"
+#include "ethernet/EthernetPal.hpp"
+#endif
+
+namespace libobsensor {
+
+void printDeviceList(std::string title, const DeviceEnumInfoList &deviceList) {
+    LOG_INFO(title + ": ({})", deviceList.size());
+    for(auto &deviceInfo: deviceList) {
+        if(deviceInfo->getConnectionType() == "Ethernet") {
+            auto netPortInfo = std::dynamic_pointer_cast<const NetSourcePortInfo>(deviceInfo->getSourcePortInfoList().front());
+            LOG_INFO("\t- Name: {0}, PID: 0x{1:04x}, SN/ID: {2}, Connection: {3}, MAC:{4}, ip:{5}", deviceInfo->getName(), deviceInfo->getPid(),
+                     deviceInfo->getDeviceSn(), deviceInfo->getConnectionType(), netPortInfo->mac, netPortInfo->address);
+        }
+        else {
+            LOG_INFO("\t- Name: {0}, PID: 0x{1:04x}, SN/ID: {2}, Connection: {3}", deviceInfo->getName(), deviceInfo->getPid(), deviceInfo->getDeviceSn(),
+                     deviceInfo->getConnectionType());
+        }
+    }
+}
+
+std::weak_ptr<DeviceManager>   DeviceManager::instanceWeakPtr_;
+std::mutex                     DeviceManager::instanceMutex_;
+std::shared_ptr<DeviceManager> DeviceManager::getInstance() {
+    std::unique_lock<std::mutex> lock(instanceMutex_);
+    auto                         instance = instanceWeakPtr_.lock();
+    if(!instance) {
+        instance         = std::shared_ptr<DeviceManager>(new DeviceManager());
+        instanceWeakPtr_ = instance;
+    }
+    return instance;
+}
+
+DeviceManager::DeviceManager() : destroy_(false), callbackId_(INVALID_CALLBACK_ID), multiDeviceSyncIntervalMs_(0) {
+    LOG_DEBUG("DeviceManager init ...");
+
+    deviceActivityManager_ = std::make_shared<DeviceActivityManager>();
+    startDeviceActivitySync();
+
+#if defined(BUILD_USB_PAL)
+    LOG_DEBUG("Enable USB Device Enumerator ...");
+    BEGIN_TRY_EXECUTE({
+        auto usbDeviceEnumerator = /*  */
+            std::make_shared<UsbDeviceEnumerator>([&](const DeviceEnumInfoList &removed, const DeviceEnumInfoList &added) { onDeviceChanged(removed, added); });
+        deviceEnumerators_.emplace_back(usbDeviceEnumerator);
+    })
+    CATCH_EXCEPTION_AND_LOG(DEBUG, "USB device enumerator creation failed: USB devices not supported");
+#endif
+
+    // don't create net pal here, enable it by enableNetDeviceEnumeration
+    // #if defined(BUILD_NET_PAL)
+    //     LOG_DEBUG("Enable Net Device Enumerator ...");
+    //     auto netDeviceEnumerator =
+    //         std::make_shared<NetDeviceEnumerator>([&](const DeviceEnumInfoList &removed, const DeviceEnumInfoList &added) { onDeviceChanged(removed, added);
+    //         });
+    //     deviceEnumerators_.emplace_back(netDeviceEnumerator);
+    // #endif
+
+    auto deviceInfoList = getDeviceInfoList();
+    printDeviceList("Current found device(s)", deviceInfoList);
+    LOG_DEBUG("DeviceManager construct done!");
+}
+
+DeviceManager::~DeviceManager() noexcept {
+    LOG_DEBUG("DeviceManager destroy ...");
+    destroy_ = true;
+
+    disableDeviceClockSync();
+    stopDeviceActivitySync();
+
+    for(auto &enumerator: deviceEnumerators_) {
+        if(enumerator) {
+            enumerator->stop();
+        }
+    }
+    deviceEnumerators_.clear();
+
+    LOG_DEBUG("DeviceManager Destructors done");
+}
+
+std::shared_ptr<IDevice> DeviceManager::createNetDevice(std::string address, uint16_t port, OBDeviceAccessMode accessMode) {
+#if defined(BUILD_NET_PAL)
+    LOG_DEBUG("DeviceManager createNetDevice.... address={0}, port={1}", address, port);
+    DeviceEnumInfoList deviceInfoList;
+    for(auto &enumerator: deviceEnumerators_) {
+        auto infos = enumerator->getDeviceInfoList();
+        deviceInfoList.insert(deviceInfoList.end(), infos.begin(), infos.end());
+    }
+    for(auto &info: deviceInfoList) {
+        if(info->getConnectionType() == "Ethernet") {
+            auto netPortInfo = std::dynamic_pointer_cast<const NetSourcePortInfo>(info->getSourcePortInfoList().front());
+            LOG_INFO("\t- Name: {0}, PID: 0x{1:04x}, SN/ID: {2}, Connection: {3}, MAC:{4}, ip:{5}", info->getName(), info->getPid(), info->getDeviceSn(),
+                     info->getConnectionType(), netPortInfo->mac, netPortInfo->address);
+            if(netPortInfo->address == address && netPortInfo->port == port) {
+                return createDevice(info, accessMode);
+            }
+        }
+    }
+
+    auto deviceInfo = NetDeviceEnumerator::queryNetDevice(address, port);
+    if(!deviceInfo) {
+        THROW_INVALID_PARAM_EXCEPTION("Failed to query Net Device, address=" + address + ", port=" + std::to_string(port));
+    }
+    isCustomConnectedDevice_ = true;
+    auto device              = createDevice(deviceInfo, accessMode);
+    isCustomConnectedDevice_ = false;
+    {
+        std::unique_lock<std::mutex> lock(customConnectedDevicesMutex_);
+        auto                         iter = customConnectedDevices_.find(deviceInfo->getUid());
+        if(iter == customConnectedDevices_.end()) {
+            customConnectedDevices_.insert({ deviceInfo->getUid(), deviceInfo });
+        }
+    }
+
+    device->postInitialize();
+    return device;
+#else
+    utils::unusedVar(address);
+    utils::unusedVar(port);
+    THROW_UNSUPPORTED_OPERATION_EXCEPTION("The library currently compiled does not support network functions. "
+                                          "Please turn on the CMAKE \"BUILD_NET_PAL\" option and recompile.");
+#endif
+}
+
+std::shared_ptr<IDevice> DeviceManager::createDevice(const std::shared_ptr<const IDeviceEnumInfo> &info, OBDeviceAccessMode accessMode) {
+    LOG_DEBUG("DeviceManager createDevice with access mode: {}...", accessMode);
+    accessMode = DeviceBase::normalizeMode(accessMode);
+
+    // check if the device has been created
+    {
+        std::unique_lock<std::mutex> lock(createdDevicesMutex_);
+        auto                         iter = createdDevices_.begin();
+        for(; iter != createdDevices_.end(); ++iter) {
+            if(iter->first == info->getUid()) {
+                auto dev = iter->second.lock();
+                if(!dev) {
+                    createdDevices_.erase(iter);
+                    break;
+                }
+                auto devInfo = dev->getInfo();
+                if(!dev->isAccessModeMatch(accessMode)) {
+                    auto               currentAccessMode = dev->getAccessMode();
+                    std::ostringstream oss;
+                    oss << "Device has already been created with access mode: " << currentAccessMode << ", but acquire with new access mode : " << accessMode
+                        << "! Name: " << devInfo->name_ << ", SN/ID: " << devInfo->deviceSn_ << ", FW : " << devInfo->fwVersion_;
+                    THROW_ACCESS_DENIED_EXCEPTION(oss.str());
+                }
+                LOG_DEBUG("Device has already been created, return existing device! Name: {0}, PID: 0x{1:04x}, SN/ID: {2}, FW: {3}", devInfo->name_,
+                          devInfo->pid_, devInfo->deviceSn_, devInfo->fwVersion_);
+                return dev;
+            }
+        }
+    }
+
+    // create device
+    auto device = info->createDevice(accessMode);
+    if(!device->hasAccessControl()) {
+        LOG_DEBUG("Access control is not supported on this device. Access mode '{}' was ignored", accessMode);
+    }
+
+    // remove activity for the device
+    deviceActivityManager_->removeActivity(info->getUid());
+    // register callback for reboot
+    device->registerRebootCallback([&](const std::shared_ptr<IDevice> device) {
+        if(!destroy_ && device && deviceActivityManager_) {
+            deviceActivityManager_->notifyDeviceReboot(device->getInfo()->uid_);
+        }
+    });
+    // add to createdDevices_
+    {
+        std::unique_lock<std::mutex> lock(createdDevicesMutex_);
+        createdDevices_.insert({ info->getUid(), device });
+    }
+
+    if(!isCustomConnectedDevice_) {
+        // initialization that can only be performed after construction is complete
+        device->postInitialize();
+    }
+
+    auto devInfo = device->getInfo();
+    LOG_INFO("Device created successfully! Name: {0}, PID: 0x{1:04x}, SN/ID: {2} FW: {3}", devInfo->name_, devInfo->pid_, devInfo->deviceSn_,
+             devInfo->fwVersion_);
+    return device;
+}
+
+bool DeviceManager::forceIpConfig(std::string deviceUid, const OBNetIpConfig &config) {
+#if defined(BUILD_NET_PAL)
+    std::shared_ptr<NetDeviceEnumerator> netEnumerator;
+    for(auto &enumerator: deviceEnumerators_) {
+        netEnumerator = std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator);
+        if(netEnumerator) {
+            return netEnumerator->forceIpConfig(deviceUid, config);
+        }
+    }
+    return false;
+#else
+    utils::unusedVar(deviceUid);
+    utils::unusedVar(config);
+    return false;
+#endif
+}
+
+void DeviceManager::triggerDeviceOffline(std::string deviceUid, bool requery) {
+#if defined(BUILD_NET_PAL)
+    std::shared_ptr<NetDeviceEnumerator> netEnumerator;
+    for(auto &enumerator: deviceEnumerators_) {
+        netEnumerator = std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator);
+        if(netEnumerator) {
+            netEnumerator->triggerDeviceOffline(deviceUid, requery);
+            return;
+        }
+    }
+#else
+    utils::unusedVar(deviceUid);
+    utils::unusedVar(requery);
+#endif
+}
+
+void DeviceManager::setGvcpPortscheme(OBGvcpPortScheme scheme) {
+#if defined(BUILD_NET_PAL)
+    std::shared_ptr<NetDeviceEnumerator> netEnumerator;
+    for(auto &enumerator: deviceEnumerators_) {
+        netEnumerator = std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator);
+        if(netEnumerator) {
+            netEnumerator->setGvcpPortscheme(scheme);
+            return;
+        }
+    }
+    THROW_WRONG_API_CALL_SEQUENCE_EXCEPTION("Network device enumeration is disabled, please enable it first");
+#else
+    utils::unusedVar(scheme);
+#endif
+}
+
+OBGvcpPortScheme DeviceManager::getGvcpPortscheme() const {
+#if defined(BUILD_NET_PAL)
+    std::shared_ptr<NetDeviceEnumerator> netEnumerator;
+    for(auto &enumerator: deviceEnumerators_) {
+        netEnumerator = std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator);
+        if(netEnumerator) {
+            return netEnumerator->getGvcpPortscheme();
+        }
+    }
+    LOG_DEBUG("Network device enumeration is disabled now, return the default scheme");
+    return OB_GVCP_PORT_SCHEME_STANDARD;
+#endif
+}
+
+DeviceEnumInfoList DeviceManager::getDeviceInfoList() {
+    if(destroy_) {
+        return {};
+    }
+
+    DeviceEnumInfoList deviceInfoList;
+    for(auto &enumerator_: deviceEnumerators_) {
+        auto infos = enumerator_->getDeviceInfoList();
+        deviceInfoList.insert(deviceInfoList.end(), infos.begin(), infos.end());
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(customConnectedDevicesMutex_);
+        std::unique_lock<std::mutex> lock2(createdDevicesMutex_);
+        auto                         customIter = customConnectedDevices_.begin();
+        while(customIter != customConnectedDevices_.end()) {
+            auto createdIter = createdDevices_.find(customIter->first);
+            if(createdIter == createdDevices_.end()) {
+                customIter = customConnectedDevices_.erase(customIter);
+                continue;
+            }
+
+            if(createdIter->second.expired()) {
+                createdDevices_.erase(createdIter);
+                customIter = customConnectedDevices_.erase(customIter);
+                continue;
+            }
+
+            deviceInfoList.push_back(customIter->second);
+            ++customIter;
+        }
+    }
+
+    return deviceInfoList;
+}
+
+OBCallbackId DeviceManager::registerDeviceChangedCallback(DeviceChangedCallback callback) {
+    if(!callback) {
+        THROW_INVALID_PARAM_EXCEPTION("Device changed callback is nullptr!");
+    }
+
+    std::unique_lock<std::mutex> lock(callbackMutex_);
+    auto                         callbackId = ++callbackId_;
+    devChangedCallbacks_.emplace(callbackId, std::move(callback));
+    LOG_DEBUG("Add device changed callback, callback id = {}", callbackId);
+    return callbackId;
+}
+
+bool DeviceManager::unregisterDeviceChangedCallback(OBCallbackId id) {
+    std::unique_lock<std::mutex> lock(callbackMutex_);
+    auto                         erasedSize = devChangedCallbacks_.erase(id);
+    if(erasedSize > 0) {
+        LOG_DEBUG("Erase device changed callback, id = {}, erasedSize = {}", id, erasedSize);
+        return true;
+    }
+    else {
+        LOG_DEBUG("Try to erase device changed callback, id = {}, but not found", id);
+        return false;
+    }
+}
+
+void DeviceManager::onDeviceChanged(const DeviceEnumInfoList &removed, const DeviceEnumInfoList &added) {
+    if(destroy_) {
+        return;
+    }
+
+    LOG_INFO("Device changed! removed: {0}, added: {1}", removed.size(), added.size());
+    if(!removed.empty()) {
+        std::unique_lock<std::mutex> lock(createdDevicesMutex_);
+        for(const auto &info: removed) {
+            auto iter = createdDevices_.find(info->getUid());
+            if(iter != createdDevices_.end()) {
+                auto dev = iter->second.lock();
+                if(dev) {
+                    dev->registerRebootCallback(nullptr);
+                    dev->deactivate();
+                }
+                createdDevices_.erase(iter);
+            }
+            deviceActivityManager_->removeActivity(info->getUid());
+        }
+        printDeviceList("Removed device(s) list", removed);
+    }
+    auto deviceInfoList = getDeviceInfoList();
+    printDeviceList("Current device(s) list", deviceInfoList);
+
+    std::unique_lock<std::mutex> lock(callbackMutex_);
+    for(auto &it: devChangedCallbacks_) {
+        it.second(removed, added);
+    }
+}
+
+void DeviceManager::enableDeviceClockSync(void *caller, uint64_t repeatInterval) {
+    LOG_DEBUG("Enable multi-device clock sync, repeatInterval={0}ms", repeatInterval);
+
+    // stop previous thread
+    disableDeviceClockSync();
+
+    // create new thread
+    multiDeviceSyncStop_       = false;
+    multiDeviceSyncIntervalMs_ = repeatInterval;
+    multiDeviceSyncThread_     = std::thread([this]() {
+        do {
+            std::unique_lock<std::mutex> lock(createdDevicesMutex_);
+            if(!destroy_) {
+                for(auto &item: createdDevices_) {
+                    auto dev = item.second.lock();
+                    if(!dev) {
+                        continue;
+                    }
+                    auto synchronizer = dev->getComponentT<IDeviceClockSynchronizer>(OB_DEV_COMPONENT_DEVICE_CLOCK_SYNCHRONIZER, false);
+                    if(synchronizer) {
+                        TRY_EXECUTE({
+                            synchronizer->timerSyncWithHost();
+                            // ensure fitting after time sync
+                            auto globalTspFitter = dev->getComponentT<IGlobalTimestampFitter>(libobsensor::OB_DEV_COMPONENT_GLOBAL_TIMESTAMP_FILTER);
+                            globalTspFitter->reFitting(false);
+                            });
+                    }
+                }
+            }
+            multiDeviceSyncCv_.wait_for(lock, std::chrono::milliseconds(multiDeviceSyncIntervalMs_));
+        } while(multiDeviceSyncIntervalMs_ > 0 && !destroy_);
+    });
+    multiDeviceSyncCaller_.store(caller);
+}
+
+void DeviceManager::disableDeviceClockSync() {
+    multiDeviceSyncStop_       = true;
+    multiDeviceSyncIntervalMs_ = 0;
+    multiDeviceSyncCv_.notify_all();
+    if(multiDeviceSyncThread_.joinable()) {
+        multiDeviceSyncThread_.join();
+    }
+    multiDeviceSyncCaller_ = nullptr;
+}
+
+void DeviceManager::enableNetDeviceEnumeration(bool enable) {
+#if defined(BUILD_NET_PAL)
+    LOG_INFO("Enable net device enumeration: {0}", enable);
+    auto iter = std::find_if(deviceEnumerators_.begin(), deviceEnumerators_.end(), [](const std::shared_ptr<IDeviceEnumerator> &enumerator) {  //
+        return std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator) != nullptr;
+    });
+    if(enable && iter == deviceEnumerators_.end()) {
+        auto netDeviceEnumerator = std::make_shared<NetDeviceEnumerator>(
+            [&](DeviceEnumInfoList removed, DeviceEnumInfoList added) { onDeviceChanged(removed, added); }, deviceActivityManager_);
+        deviceEnumerators_.emplace_back(netDeviceEnumerator);
+        auto deviceInfoList = getDeviceInfoList();
+        printDeviceList("Current device(s) list", deviceInfoList);
+    }
+    else if(!enable && iter != deviceEnumerators_.end()) {
+        deviceEnumerators_.erase(iter);
+    }
+#else
+    utils::unusedVar(enable);
+#endif
+}
+
+bool DeviceManager::isNetDeviceEnumerationEnable() const {
+#if defined(BUILD_NET_PAL)
+    auto iter = std::find_if(deviceEnumerators_.begin(), deviceEnumerators_.end(), [](const std::shared_ptr<IDeviceEnumerator> &enumerator) {  //
+        return std::dynamic_pointer_cast<NetDeviceEnumerator>(enumerator) != nullptr;
+    });
+    return iter != deviceEnumerators_.end();
+#endif
+    return false;
+}
+
+void DeviceManager::startDeviceActivitySync() {
+    deviceActivitySyncStopped_ = false;
+    deviceActivitySyncThread_  = std::thread([this]() {
+        std::mutex                   mutex;
+        std::unique_lock<std::mutex> lock(mutex);
+        while(!deviceActivitySyncStopped_) {
+            deviceActivityCv_.wait_for(lock, std::chrono::milliseconds(1000), [&]() { return deviceActivitySyncStopped_.load(); });
+            if(deviceActivitySyncStopped_) {
+                break;
+            }
+
+            std::unique_lock<std::mutex> devLock(createdDevicesMutex_);
+            for(auto &devItem: createdDevices_) {
+                auto dev = devItem.second.lock();
+                if(!dev) {
+                    continue;
+                }
+                auto activityRecorder = dev->getComponentT<IDeviceActivityRecorder>(OB_DEV_COMPONENT_DEVICE_ACTIVITY_RECORDER, false);
+                if(activityRecorder) {
+                    deviceActivityManager_->update(devItem.first, activityRecorder.get());
+                }
+            }
+        }
+        deviceActivitySyncStopped_ = true;
+    });
+}
+
+void DeviceManager::stopDeviceActivitySync() {
+    deviceActivitySyncStopped_ = true;
+    deviceActivityCv_.notify_all();
+    if(deviceActivitySyncThread_.joinable()) {
+        deviceActivitySyncThread_.join();
+    }
+}
+
+}  // namespace libobsensor

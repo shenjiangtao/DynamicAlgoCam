@@ -1,37 +1,74 @@
-cmake_minimum_required(VERSION 3.1.15)
-project(OrbbecSDK-Samples LANGUAGES CXX C)
+# Copyright (c) Orbbec Inc. All Rights Reserved.
+# Licensed under the MIT License.
 
-if(UNIX)
-  set(CMAKE_CXX_FLAGS "-std=c++11 -pthread ${CMAKE_CXX_FLAGS}")
-endif()
+cmake_minimum_required(VERSION 3.10)
 
-if(NOT DEFINED OrbbecSDK_FOUND)
-    # set(OrbbecSDK_DIR "path/to/OrbbecSDK/lib" )
-    message(STATUS "OrbbecSDK_DIR: ${OrbbecSDK_DIR}")
-    find_package(OrbbecSDK REQUIRED)
-endif()
+file(GLOB subdirectories RELATIVE ${CMAKE_CURRENT_LIST_DIR} "*")
 
-# find opencv
-# set(OpenCV_DIR "your/path/to/opencv/lib")
+# dependecies
 find_package(OpenCV QUIET)
-
-if(UNIX)
-    set(CMAKE_SKIP_BUILD_RPATH FALSE)
-    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-    set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib")
-    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+if(NOT ${OpenCV_FOUND})
+    message(WARNING "OpenCV not found, some examples may not be built. Please install OpenCV or set OpenCV_DIR to the directory of your OpenCV installation.")
 endif()
 
-add_subdirectory(c)
-add_subdirectory(cpp)
+# utils
+add_subdirectory(utils)
 
-install(DIRECTORY
-  ${OrbbecSDK_LIBS_DIR}/ DESTINATION
-  bin
-  FILES_MATCHING PATTERN "*.so"
-  PATTERN "*.so.*"
-  PATTERN "*.dylib"
-  PATTERN "*.*.dylib"
-  PATTERN "*.dll"
-  PATTERN ".lib"
-  )
+# c examples
+add_subdirectory(c_examples)
+
+# cpp examples
+add_subdirectory(0.basic.enumerate)
+add_subdirectory(1.stream.imu)
+add_subdirectory(2.device.control)
+add_subdirectory(2.device.firmware_update)
+add_subdirectory(2.device.forceip)
+add_subdirectory(2.device.optional_depth_presets_update)
+add_subdirectory(2.device.record.nogui)
+add_subdirectory(2.device.hot_plugin)
+add_subdirectory(3.advanced.point_cloud)
+add_subdirectory(3.advanced.preset)
+add_subdirectory(4.misc.logger)
+add_subdirectory(4.misc.metadata)
+if(OB_BUILD_LINUX)
+    add_subdirectory(3.advanced.multi_devices_sync_gmsltrigger)
+endif()
+
+if (OB_BUILD_PCL_EXAMPLES)
+    add_subdirectory(5.wrapper.pcl)
+endif()
+
+if (OB_BUILD_OPEN3D_EXAMPLES)
+    add_subdirectory(5.wrapper.open3d)
+endif()
+
+# cpp examples with OpenCV Requirements
+if(${OpenCV_FOUND})
+    add_subdirectory(0.basic.quick_start)
+    add_subdirectory(1.stream.depth)
+    add_subdirectory(1.stream.color)
+    add_subdirectory(1.stream.confidence)
+    add_subdirectory(1.stream.infrared)
+    add_subdirectory(1.stream.callback)
+    add_subdirectory(1.stream.multi_streams)
+    add_subdirectory(1.stream.decimation)
+    add_subdirectory(2.device.record)
+    add_subdirectory(2.device.playback)
+    add_subdirectory(3.advanced.common_usages)
+    add_subdirectory(3.advanced.sync_align)
+    add_subdirectory(3.advanced.hw_d2c_align)
+    add_subdirectory(3.advanced.post_processing)
+    add_subdirectory(3.advanced.coordinate_transform)
+    add_subdirectory(3.advanced.hdr)
+    add_subdirectory(3.advanced.laser_interleave)
+    add_subdirectory(3.advanced.multi_devices)
+    add_subdirectory(3.advanced.multi_devices_sync)
+    add_subdirectory(4.misc.save_to_disk)
+    add_subdirectory(5.wrapper.opencv)
+endif()
+
+# lidar examples
+add_subdirectory(lidar_examples)
+
+# InstallRequiredSystemLibraries
+include(InstallRequiredSystemLibraries)

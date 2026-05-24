@@ -1,0 +1,730 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#pragma pack(push, 1)
+
+/**
+ *@brief device version information
+ */
+typedef struct {
+    char    firmwareVersion[16];   ///< Such as: 1.2.18
+    char    hardwareVersion[16];   ///< Such as: 1.0.18
+    char    sdkVersion[16];        ///< The lowest supported SDK version number, SDK version number: 2.3.2 (major.minor.revision)
+    char    depthChip[16];         ///< Such as：mx6000, mx6600
+    char    systemChip[16];        ///< Such as：ar9201
+    char    serialNumber[16];      ///< serial number
+    int32_t deviceType;            ///< 1:Monocular 2:binocular 3:tof. enumeration value
+    char    deviceName[16];        ///< device name，such as: astra+
+    char    subSystemVersion[16];  ///< For example，such as：Femto’s MCU firmware version 1.0.23
+    char    reserved[32];          ///< Reserved
+} OBVersionInfo;
+
+/**
+ *@brief device time
+ */
+typedef struct {
+    uint64_t time;  ///< sdk->dev: timing time; dev->sdk: current time of device;
+    uint64_t rtt;   ///< sdk->dev: command round-trip time, the device sets the time to time+rtt/2 after receiving it; dev->sdk: reserved; unit: ms
+} OBDeviceTime, ob_device_time;
+
+/**
+ *@brief Post-process parameters after depth align to color
+ *
+ */
+typedef struct {
+    float   depthScale;   // Depth frame scaling ratio
+    int16_t alignLeft;    // Depth aligned to left after Color
+    int16_t alignTop;     // Depth aligned to the top after Color
+    int16_t alignRight;   // Depth aligned to right after Color
+    int16_t alignBottom;  // Depth aligned to the bottom after Color
+} OBD2CPostProcessParam, ob_d2c_post_process_param;
+
+typedef enum {
+    ALIGN_UNSUPPORTED    = 0,
+    ALIGN_D2C_HW         = 1,
+    ALIGN_D2C_SW         = 2,
+    ALIGN_D2C_HW_SW_BOTH = 3,
+} OBAlignSupportedType,
+    ob_align_supported_type;
+
+/**
+ *@brief Supported depth align color profile
+ *
+ */
+typedef struct {
+    uint16_t colorWidth;
+    uint16_t colorHeight;
+    uint16_t depthWidth;
+    uint16_t depthHeight;
+    union {
+        uint8_t alignType;
+        struct {
+            uint8_t aligntypeVal : 3;  // lowest 3 bits represents the original  align type
+            uint8_t workModeVal : 4;   // middle 4 bits  represents the index of work mode
+            uint8_t enableFlag : 1;    // the enable bit of work mode
+        } mixedBits;
+    };
+    uint8_t               paramIndex;
+    OBD2CPostProcessParam postProcessParam;
+} OBD2CProfile, ob_d2c_supported_profile_info;
+
+typedef struct {
+    float   colorScale;
+    int16_t alignLeft;
+    int16_t alignTop;
+    int16_t alignRight;
+    int16_t alignBottom;
+} OBD2CPreProcessParam, ob_d2c_pre_process_param;
+
+typedef struct {
+    uint32_t             reserved;
+    OBD2CPreProcessParam preProcessParam;
+} OBD2CColorPreProcessProfile;
+
+typedef struct {
+    uint32_t depthMode;    ///< Monocular/Binocular
+    float    baseline;     ///< baseline distance
+    float    z0;           ///< Calibration distance
+    float    focalPix;     ///< Focal length used for depth calculation or focal length f after rectify
+    float    unit;         ///< Unit x1 mm, such as: unit=0.25, means 0.25*1mm=0.25mm
+    float    dispOffset;   ///< Parallax offset, real parallax = chip output parallax + disp_offset
+    int32_t  invalidDisp;  ///< Invalid parallax, usually 0; when the chip min_disp is not equal to 0 or -128, the invalid parallax is no longer equal to 0
+} OBDepthCalibrationParam;
+
+typedef enum {
+    OB_DISP_PACK_ORIGINAL         = 0,  // MX6000 Parallax
+    OB_DISP_PACK_OPENNI           = 1,  // OpenNI disparity
+    OB_DISP_PACK_ORIGINAL_NEW     = 2,  // MX6600 Parallax
+    OB_DISP_PACK_GEMINI2XL        = 3,  // Gemini2XL parallax
+    OB_DISP_PACK_MX6800_MONOCULAR = 4,  // MX6800 monocular
+} OBDisparityPackMode;
+
+/**
+ *@brief Structure for distortion parameters
+ */
+typedef struct {
+    float k1;  ///< Radial distortion factor 1
+    float k2;  ///< Radial distortion factor 2
+    float k3;  ///< Radial distortion factor 3
+    float k4;  ///< Radial distortion factor 4
+    float k5;  ///< Radial distortion factor 5
+    float k6;  ///< Radial distortion factor 6
+    float p1;  ///< Tangential distortion factor 1
+    float p2;  ///< Tangential distortion factor 2
+} OBCameraDistortion_Internal;
+
+typedef struct {
+    OBCameraIntrinsic           depthIntrinsic;   ///< Depth camera internal parameters
+    OBCameraIntrinsic           rgbIntrinsic;     ///< Color camera internal parameters
+    OBCameraDistortion_Internal depthDistortion;  ///< Depth camera distortion parameters
+
+    OBCameraDistortion_Internal rgbDistortion;  ///< Distortion parameters for color camera
+    OBD2CTransform              transform;      ///< Rotation/transformation matrix
+} OBCameraParam_Internal_V0;
+
+/**
+ * @brief Depth alignment rectify parameter
+ *
+ */
+typedef struct {
+    OBCameraIntrinsic           leftIntrin;
+    OBCameraDistortion_Internal leftDisto;
+    float                       leftRot[9];
+
+    OBCameraIntrinsic           rightIntrin;  // ref
+    OBCameraDistortion_Internal rightDisto;
+    float                       rightRot[9];
+
+    OBCameraIntrinsic leftVirtualIntrin;  // output intrinsics from rectification (and rotation)
+    OBCameraIntrinsic rightVirtualIntrin;
+} OBDERectifyD2CParams;
+
+typedef struct {
+    float rot[3];  // Euler,[rx,ry,rz]
+    float trans[3];
+} OBDETransformEuler;
+
+typedef struct {
+    OBExtrinsic        transform_vlr;
+    OBDETransformEuler transform_lr;
+    uint32_t           reserve[2];
+} OBDEIRTransformParam;
+
+typedef struct {
+    uint8_t  checksum[16];  ///< The camera depth mode corresponds to the hash binary array
+    char     name[32];      ///< name
+    uint32_t optionCode;    // OBDepthModeOptionCode
+} OBDepthWorkMode_Internal;
+
+typedef enum {
+    NORMAL                                = 0,           // Normal mode, no special processing required
+    MX6600_RIGHT_IR_FROM_DEPTH_CHANNEL    = 2,           // Gemini2 calibration mode, right IR data goes through the depth channel
+    RIGHT_IR_NO_FROM_DEPTH_CHANNEL        = 4,           // Gemini2XL, right IR goes to the right IR channel
+    MX6600_SINGLE_CAMERA_CALIBRATION_MODE = 4,           // Astra 2 calibration mode
+    CUSTOM_DEPTH_MODE_TAG                 = 0x01 << 6,   // Custom preset tag
+    INVALID                               = 0xffffffff,  // Invalid value
+} OBDepthModeOptionCode;
+
+// Orbbec Magnetometer model
+typedef struct {
+    double referenceTemp;    ///< Reference temperature
+    double tempSlope[9];     ///< Temperature slope (linear thermal drift coefficient)
+    double misalignment[9];  ///< Misalignment matrix
+    double softIron[9];      ///< Soft iron effect matrix
+    double scale[3];         ///< Scale vector
+    double hardIron[3];      ///< Hard iron bias
+} OBMagnetometerIntrinsic;
+
+// Single IMU parameters
+typedef struct {
+    char                    name[12];                   /// ＜ imu name
+    uint16_t                version;                    ///< IMU calibration library version number
+    uint16_t                imuModel;                   ///< IMU model
+    double                  body_to_gyroscope[9];       ///< Rotation from body coordinate system to gyroscope coordinate system
+    double                  acc_to_gyro_factor[9];      ///< Influence factor of accelerometer measurements on gyroscope measurements
+    OBAccelIntrinsic        acc;                        ///< Accelerometer model
+    OBGyroIntrinsic         gyro;                       ///< Gyroscope model
+    OBMagnetometerIntrinsic mag;                        ///< Magnetometer model
+    double                  timeshift_cam_to_imu;       ///< Time offset between camera and IMU
+    double                  imu_to_cam_extrinsics[16];  ///< Extrinsic parameters from IMU to Cam(Depth)
+} OBSingleIMUParams;
+
+// IMU Calibration Parameters
+typedef struct {
+    uint8_t           validNum;            ///< Number of valid IMUs
+    OBSingleIMUParams singleIMUParams[3];  ///< Array of single IMU parameter models
+} OBIMUCalibrateParams;
+
+/**
+ *@brief List of resolutions supported by the device in the current camera depth mode
+ *
+ */
+typedef struct {
+    OBSensorType sensorType;  ///< sensor type
+    OBFormat     format;      ///< Image format
+    uint32_t     width;       ///< image width
+    uint32_t     height;      ///< Image height
+    uint32_t     maxFps;      ///< Maximum supported frame rate
+} OBEffectiveStreamProfile, ob_effective_stream_profile;
+
+typedef struct {
+    uint16_t sensorType;  // enum value of OBSensorType
+    union Profile {
+        struct Video {  // This structure is used for Color, IR, and Depth
+            uint32_t width;
+            uint32_t height;
+            uint32_t fps;
+            uint32_t formatFourcc;  // Example: {'Y', 'U', 'Y', 'V'} // fourcc is a common concept in UVC
+        } video;
+        struct Accel {                // This structure is used for Accel
+            uint16_t fullScaleRange;  // enum value of OBAccelFullScaleRange
+            uint16_t sampleRate;      // enum value of OBAccelSampleRate
+        } accel;
+        struct Gyro {                 // This structure is used for Gyro
+            uint16_t fullScaleRange;  // enum value of OBGyroFullScaleRange
+            uint16_t sampleRate;      // enum value of OBGyroSampleRate
+        } gyro;
+    } profile;
+} OBInternalStreamProfile;
+
+typedef struct {
+    uint16_t sensorType;  // enum value of OBSensorType
+    uint32_t width;
+    uint32_t height;
+    uint32_t fps;
+    uint32_t formatFourcc;
+    uint16_t port;
+} OBInternalVideoStreamProfile;
+
+typedef struct RotateMatrix {
+    float r00;
+    float r01;
+    float r02;
+    float r10;
+    float r11;
+    float r12;
+    float r20;
+    float r21;
+    float r22;
+} RotateMatrix;
+
+typedef struct Intrinsic {
+    float fx;
+    float fy;
+    float cx;
+    float cy;
+} Intrinsic;
+
+typedef struct Translate {
+    float t0;
+    float t1;
+    float t2;
+} Translate;
+
+typedef struct Distortion {
+    float k0;
+    float k1;
+    float k2;
+    float k3;
+    float k4;
+} Distortion;
+
+// Mx6000 dual camera struct
+struct ObIntrinsicRefinement {
+    uint8_t refinement_[2016];
+};
+
+struct ObCameraIntrinsic {
+    uint32_t              vc_mode_;
+    uint32_t              img_height_;
+    uint32_t              img_width_;
+    float                 focal_x_;
+    float                 focal_y_;
+    float                 cx_;
+    float                 cy_;
+    float                 k1_;
+    float                 k2_;
+    float                 k3_;
+    float                 k4_;
+    float                 p1_;
+    float                 p2_;
+    ObIntrinsicRefinement refine_;  // refinement
+};
+
+struct ObRelativePose {
+    float rx_;
+    float ry_;
+    float rz_;
+    float tx_;
+    float ty_;
+    float tz_;
+};
+//
+typedef struct {
+    struct {
+        struct {
+            uint32_t buf_pos : 12;       // 0-11
+            uint32_t totalBufRows : 12;  // 12-23
+            uint32_t rsv0 : 6;           // 24-29
+            uint32_t dep_sign : 1;       // 30
+            uint32_t shft_dep : 1;       // 31
+
+            uint32_t iZ0;
+            uint32_t PBF;
+            uint32_t W[12];
+        } dep2color;
+        struct {
+            uint32_t k[9];
+            uint32_t r[9];
+            uint32_t fx;
+            uint32_t fy;
+            uint32_t cx;
+            uint32_t cy;
+        } mdlCamL;
+        struct {
+            uint32_t k[9];
+            uint32_t r[9];
+            uint32_t fx;
+            uint32_t fy;
+            uint32_t cx;
+            uint32_t cy;
+        } mdlCamR;
+        struct {
+            uint32_t dY;
+            uint32_t dT;
+            uint32_t iRow;
+            uint32_t img_size;
+        } mdlRef;
+        struct {
+            uint32_t cam : 16;
+            uint32_t ref : 16;
+        } startPixBuf;
+    } DPU;
+    struct {
+        struct {
+            uint32_t w, h;
+            float    fx, fy, cx, cy, bl;
+            float    rotL[3];
+            float    rotR[3];
+        } virCam;
+        struct {
+            ObCameraIntrinsic irL;
+            ObCameraIntrinsic irR;
+            ObCameraIntrinsic rgb;
+            ObRelativePose    irL_pose;
+            ObRelativePose    irR_pose;
+            ObRelativePose    rgb_pose;
+
+        } camera_params;
+        struct {
+            float d_intr_p[4];  //[fx,fy,cx,cy]
+            float c_intr_p[4];  //[fx,fy,cx,cy]
+            float d2c_r[9];     //[r00,r01,r02;r10,r11,r12;r20,r21,r22]
+            float d2c_t[3];     //[t1,t2,t3]
+            float d_k[5];       //[k1,k2,k3,p1,p2]
+            float c_k[5];
+            // float pixelsize;
+        } soft_d2c;
+    } HOST;
+
+} OBCalibrationParamContent;
+
+enum OBDeviceErrorCode : uint64_t {
+    // bit 0~31: error code
+    DEVICE_ERROR_RGB_SENSOR     = 1 << 0,   // RGB sensor error
+    DEVICE_ERROR_IRL_SENSOR     = 1 << 1,   // IR left sensor error
+    DEVICE_ERROR_IRR_SENSOR     = 1 << 2,   // IR right sensor error
+    DEVICE_ERROR_IMU_SENSOR     = 1 << 3,   // IMU sensor error
+    DEVICE_ERROR_LASER_MODULE   = 1 << 4,   // Laser module error
+    DEVICE_ERROR_FLOOD_MODULE   = 1 << 5,   // Flood module error
+    DEVICE_ERROR_LDP_SENSOR     = 1 << 6,   // LDP sensor error
+    DEVICE_ERROR_M_ADC_CHIP     = 1 << 7,   // M_ADC chip error
+    DEVICE_ERROR_S_ADC_CHIP     = 1 << 8,   // S_ADC chip error
+    DEVICE_ERROR_EEPROM_SENSOR  = 1 << 9,   // EEPROM sensor error
+    DEVICE_ERROR_CFG_PARAM      = 1 << 10,  // Configuration parameter error
+    DEVICE_ERROR_CALIB_PARAM    = 1 << 11,  // Calibration parameter error
+    DEVICE_ERROR_TEC_FUN        = 1 << 12,  // TEC function error
+    DEVICE_ERROR_MCU_FUN        = 1 << 13,  // MCU function error
+    DEVICE_ERROR_DSP_MODULE     = 1 << 14,  // DSP module error
+    DEVICE_ERROR_OVER_LOAD      = 1 << 15,  // Overload error
+    DEVICE_ERROR_ISP_MODULE     = 1 << 16,  // ISP sensor error
+    DEVICE_ERROR_TRB_EXHAUSTION = 1 << 17,  // TRB exhaustion
+    DEVICE_ERROR_OVF_MODULE     = 1 << 18,  // Overflow error
+    DEVICE_ERROR_RGB_STREAM     = 1 << 19,  // RGB pipeline data stream failure
+    DEVICE_ERROR_IRL_STREAM     = 1 << 20,  // IRL pipeline data stream failure
+    DEVICE_ERROR_IRR_STREAM     = 1 << 21,  // IRR pipeline data stream failure
+    DEVICE_ERROR_DEP_STREAM     = 1 << 22,  // Depth pipeline data stream failure
+    DEVICE_ERROR_IRL_SNS_STREAM = 1 << 23,  // IRL sensor data stream failure
+    DEVICE_ERROR_IRR_SNS_STREAM = 1 << 24,  // IRR sensor data stream failure
+
+    // bit 32~63: warning
+    DEVICE_WARNING_PERMISSION        = 1ULL << 32,  // Permission warning
+    DEVICE_WARNING_IR_TEMPERATURE    = 1ULL << 33,  // IR temperature warning
+    DEVICE_WARNING_RGB_TEMPERATURE   = 1ULL << 34,  // RGB temperature warning
+    DEVICE_WARNING_LASER_TEMPERATURE = 1ULL << 35,  // Laser temperature warning
+    DEVICE_WARNING_CPU_TEMPERATURE   = 1ULL << 36,  // CPU temperature warning
+    DEVICE_WARNING_RES_MISMATCH      = 1ULL << 37,  // Resolution mismatch warning
+    DEVICE_WARNING_FPS_MISMATCH      = 1ULL << 38,  // FPS mismatch warning
+    DEVICE_WARNING_D2C_UNSPPOURT     = 1ULL << 39,  // D2C unsupported warning
+
+    DEVICE_WARNING_USB_LOG      = 1ULL << 62,  // USB log warning
+    DEVICE_WARNING_LOG_OVERFLOW = 1ULL << 63,  // State info cache flag
+};
+
+typedef struct {
+    uint64_t errorCode;  // Same with heartbeat state. See OBDeviceErrorCode for details
+} OBDeviceErrorState;
+
+/**
+ * @brief Camera extension parameters (mainly used for disparity to depth conversion)
+ */
+typedef struct {
+    float fDCmosEmitterDistance;  // baseline
+    float fDCmosRCmosDistance;    // dual baseline
+    float fReferenceDistance;     // zpd baseline
+    float fReferencePixelSize;    // zpps baseline
+} OBExtensionParam;
+
+typedef struct {
+    float d_intr_p[4];  // Depth camera intrinsic parameters: [fx, fy, cx, cy]
+    float c_intr_p[4];  // Color camera intrinsic parameters: [fx, fy, cx, cy]
+    float d2c_r[9];     // Rotation matrix from depth camera to color camera: [r00, r01, r02; r10, r11, r12; r20, r21, r22]
+    float d2c_t[3];     // Translation matrix from depth camera to color camera: [t1, t2, t3]
+    float d_k[5];       // Depth camera distortion parameters: [k1, k2, p1, p2, k3]
+    float c_k[5];       // Color camera distortion parameters: [k1, k2, p1, p2, k3]
+} OBInternalCameraParam;
+
+typedef struct OpenNIFrameProcessParam {
+    float scale;
+    int   xCut;
+    int   yCut;
+    int   xSet;
+    int   ySet;
+    int   dstWidth;
+    int   dstHeight;
+} OpenNIFrameProcessParam;
+
+typedef struct FrameInterleaveParam {
+    int depthExposureTime;  // exposure
+    int depthGain;          // gain
+    int depthBrightness;    // target brightness
+    int depthMaxExposure;   // max exposure
+    int laserSwitch;        // laser on/off switch
+} FrameInterleaveParam;
+
+/**
+ * @brief LiDAR profile info
+ */
+typedef struct LiDARProfileInfo {
+    OBFrameType frameType;        // frame type
+    OBFormat    format;           // frame data format
+    int32_t     scanSpeed;        // related to OBLiDARScanRate
+    uint32_t    maxDataBlockNum;  // data block num per frame, related to scan speed
+    uint16_t    pointsNum;        // points num per block
+    uint16_t    dataBlockSize;    // data block size per block
+    uint32_t    frameSize;        // frame data size
+
+    LiDARProfileInfo()
+        : frameType(OB_FRAME_UNKNOWN), format(OB_FORMAT_UNKNOWN), scanSpeed(0), maxDataBlockNum(0), pointsNum(0), dataBlockSize(0), frameSize(0) {}
+
+    void clear() {
+        frameType       = OB_FRAME_UNKNOWN;
+        format          = OB_FORMAT_UNKNOWN;
+        scanSpeed       = 0;
+        maxDataBlockNum = 0;
+        pointsNum       = 0;
+        dataBlockSize   = 0;
+        frameSize       = 0;
+    }
+} LiDARProfileInfo;
+
+/**
+ * @brief Cartesian coordinate system point
+ */
+typedef struct {
+    int16_t x;             ///< X coordinate, unit 2mm
+    int16_t y;             ///< Y coordinate, unit 2mm
+    int16_t z;             ///< Z coordinate, unit 2mm
+    uint8_t reflectivity;  ///< reflectivity
+    uint8_t tag;           ///< tag
+} LiDARPoint;
+
+/**
+ * @brief 3D point structure with LiDAR information
+ */
+typedef struct {
+    uint16_t distance;      ///< distance, unit: 2mm
+    int16_t  theta;         ///< azimuth angle, unit: 0.01 degrees
+    int16_t  phi;           ///< zenith angle, unit: 0.01 degrees
+    uint8_t  reflectivity;  ///< reflectivity
+    uint8_t  tag;           ///< tag
+} LiDARSpherePoint;
+
+typedef struct {
+    int8_t left;
+    int8_t top;
+    int8_t right;
+    int8_t bottom;
+} OBPresetResolutionCrop;
+
+typedef struct {
+    int16_t  width;                ///< width
+    int16_t  height;               ///< height
+    uint16_t irDecimationFlag;     ///< ir decimation flag. Bit 0 corresponds to the original resolution, bit 1 to 1/2 resolution, etc. A set bit indicates the
+                                   ///< availability of that downsampling factor.
+    uint16_t depthDecimationFlag;  ///< depth decimation flag. Bit 0 corresponds to the original resolution, bit 1 to 1/2 resolution, etc. A set bit indicates
+                                   ///< the availability of that downsampling factor.
+    OBPresetResolutionCrop crop[4];  ///< preset resolution crop list.
+} OBPresetResolutionMask;
+
+// Comprehensive Filter
+typedef enum NoiseRemoveType {
+    NR_LUT     = 0,  // SPLIT
+    NR_OVERALL = 1,  // NON_SPLIT
+} NoiseRemoveType;
+
+typedef struct NoiseRemoveFilterParams {
+    bool            enabled;
+    uint16_t        width;
+    uint16_t        height;
+    uint16_t        max_size;
+    uint16_t        min_diff;  // based on disparity, fraction:8
+    uint8_t         fraction_bit_size;
+    NoiseRemoveType type;
+} NoiseRemoveFilterParams;
+
+typedef struct SpatialFastFilterParams {
+    bool    enabled;
+    uint8_t win_size;
+} SpatialFastFilterParams;
+
+typedef struct SpatialModerateFilterParams {
+    bool     enabled;
+    uint8_t  win_size;
+    uint8_t  magnitude;
+    uint16_t disp_diff;
+} SpatialModerateFilterParams;
+
+typedef struct SpatialAdvancedFilterParams {
+    bool     enabled;
+    uint8_t  magnitude;
+    uint8_t  radius;
+    float    alpha;
+    uint16_t disp_diff;
+} SpatialAdvancedFilterParams;
+
+typedef struct TemporalFilterParams {
+    bool  enabled;
+    float diff_scale;
+    float weight;
+} TemporalFilterParams;
+
+typedef enum HoleFillingType {
+    HOLE_FILL_TOP     = 0,
+    HOLE_FILL_NEAREST = 1,  // "max" means farest for depth, and nearest for disparity
+    HOLE_FILL_FAREST  = 2,
+} HoleFillingType;
+
+typedef struct HoleFillingFilterParams {
+    bool            enabled;
+    HoleFillingType hole_filling_mode;
+} HoleFillingFilterParams;
+
+typedef enum EdgeNoiseRemoveType {
+    MG_FILTER  = 0,
+    MGH_FILTER = 1,  // horizontal MG
+    MGA_FILTER = 2,  // asym MG
+    MGC_FILTER = 3,
+} EdgeNoiseRemoveType;
+
+typedef struct EdgeNoiseRemoveFilterParams {
+    bool                enabled;
+    bool                enable_vertical_direction;
+    EdgeNoiseRemoveType type;
+    uint16_t            width;
+    uint16_t            height;
+    uint16_t            margin_x_th;
+    uint16_t            margin_y_th;
+    uint16_t            limit_x_th;
+    uint16_t            limit_y_th;
+} EdgeNoiseRemoveFilterParams;
+
+// Based on the original speckleFilter filtering parameters
+typedef struct GlobalFilterParams {
+    uint16_t width;
+    uint16_t height;
+    uint16_t new_val;
+    uint16_t max_size;
+    uint16_t depth_gap;
+    uint16_t array[20];
+} GlobalParams;
+
+// Pre-rotation image parameters
+typedef struct RotImageParams {
+    bool    is_rot_enable;
+    uint8_t clock_rot_90_times;
+} RotImageParams;
+
+// Filtering parameters for horizontally misgrown noise starting from the edges of the object
+typedef struct EdgeBleedNoiseParams {
+    bool     is_edgeBleedNoise_enable;
+    uint16_t bleed_num;
+    uint16_t set_both_ends_num;
+    uint16_t max_depth;
+    float    min_x_ratio;
+    float    max_x_ratio;
+    float    min_y_ratio;
+    float    max_y_ratio;
+    float    max_x_zero_ratio;
+} EdgeBleedNoiseParams;
+
+// Weak texture noise filtering parameters
+typedef struct TextureSparsityNoiseParams {
+    bool     is_textureSparsityNoise_enable;
+    uint16_t max_size;
+    uint16_t max_depth;
+    float    min_x_ratio;
+    float    max_x_ratio;
+    float    min_y_ratio;
+    float    max_y_ratio;
+    float    max_x_ratio_extra;
+    float    max_w_ratio;
+    float    max_h_ratio;
+    float    size_ratio_0;
+    float    size_ratio_1;
+    float    size_ratio_2;
+    float    size_ratio_3;
+    float    down_break_ratio_0;
+    float    down_break_ratio_1;
+    float    down_break_ratio_2;
+    float    down_break_ratio_3;
+    float    non_up_non_zero_ratio_0;
+    float    non_up_non_zero_ratio_1;
+    float    non_up_non_zero_ratio_2;
+    float    non_up_non_zero_ratio_3;
+} TextureSparsityNoiseParams;
+
+// Repeating texture noise filtering parameters
+typedef struct PatternAmbiguityNoiseParams {
+    bool     is_patternAmbiguityNoise_enable;
+    uint16_t max_size;
+    uint16_t max_depth;
+    uint16_t max_bg_depth;
+    float    min_x_ratio;
+    float    max_x_ratio;
+    float    min_y_ratio;
+    float    max_y_ratio;
+    float    conti_ratio;
+    float    search_ratio;
+    uint16_t score_array[20];
+} PatternAmbiguityNoiseParams;
+
+// Subsurface noise filtering parameters
+typedef struct GroundBelowNoiseParams {
+    bool     is_groundBelowNoise_enable;
+    uint16_t max_size;
+    float    min_y_ratio;
+    float    fx;
+    float    fy;
+    float    cx;
+    float    cy;
+    float    coef_a;
+    float    coef_b;
+    float    coef_c;
+    float    coef_d;
+} GroundBelowNoiseParams;
+
+// Local area noise judgment parameters
+typedef struct BoxSelectedNoiseParams {
+    bool     is_boxSelectedNoise_enable;
+    uint16_t max_size;
+    float    min_x_ratio;
+    float    max_x_ratio;
+    float    min_y_ratio;
+    float    max_y_ratio;
+} BoxSelectedNoiseParams;
+
+// FalsePositive filter params
+typedef struct FalsePositiveFilterParams {
+    bool                        enabled;
+    GlobalParams                global_params;
+    RotImageParams              rot_image_params;
+    EdgeBleedNoiseParams        edge_bleed_params;
+    TextureSparsityNoiseParams  texture_sparsity_params;
+    PatternAmbiguityNoiseParams pattern_ambiguity_params;
+    GroundBelowNoiseParams      ground_below_params;
+    BoxSelectedNoiseParams      box_select_params;
+} FalsePositiveFilterParams;
+
+typedef struct DepthPostFilterHeader {
+    uint8_t  magic[4];  // must be 'D','P','A','H',meaning Depth PostFilter Algorithm Header
+    uint32_t header_size;
+    uint32_t data_size;
+    uint32_t version;
+    uint32_t checksum;
+    uint8_t  reversed[4];
+} DepthPostFilterHeader;
+
+typedef struct DepthPostFilterParams {
+    DepthPostFilterHeader       header;
+    uint8_t                     post_filter_desc[8];
+    NoiseRemoveFilterParams     noise_rem_params;
+    SpatialFastFilterParams     spat_fast_filter_params;
+    SpatialModerateFilterParams spat_mod_filter_params;
+    SpatialAdvancedFilterParams spat_adv_filter_params;
+    TemporalFilterParams        temp_filter_params;
+    HoleFillingFilterParams     hole_fill_filter_params;
+    EdgeNoiseRemoveFilterParams edge_noise_rem_filter_params;
+    FalsePositiveFilterParams   fp_filter_params;
+} DepthPostFilterParams;
+
+enum PostFilterParamsVersion {
+    POSTFILTER_PARAMS_VERSION_0102 = 0x0102,
+};
+
+#pragma pack(pop)

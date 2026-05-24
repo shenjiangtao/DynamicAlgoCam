@@ -1,0 +1,396 @@
+// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Licensed under the MIT License.
+
+#include "EthernetPal.hpp"
+#include "exception/ObException.hpp"
+#include "utils/Utils.hpp"
+#include "mDNS/MDNSDiscovery.hpp"
+#include "LiDARDataStreamPort.hpp"
+#include "RTPStreamPort.hpp"
+#include "logger/Logger.hpp"
+#include "gvcp/GVCPRuntimeConfig.hpp"
+#include <future>
+
+namespace libobsensor {
+
+const uint16_t DEFAULT_CMD_PORT                           = 8090;
+const uint16_t DEVICE_WATCHER_POLLING_INTERVAL_MSEC       = 3000;
+const uint16_t DEVICE_WATCHER_POLLING_SHORT_INTERVAL_MSEC = 1000;
+
+namespace {
+
+template <typename DeviceInfo, typename UpdateSourceInfoFunc>
+void restoreRemovedDeviceAndDropNewSameMac(const DeviceInfo &removedDevice, std::vector<DeviceInfo> &currentList, std::vector<DeviceInfo> &addedDevices,
+                                           UpdateSourceInfoFunc updateSourceInfo) {
+    std::vector<DeviceInfo> droppedAddedDevices;
+    auto                    droppedFromCurrentList = std::remove_if(currentList.begin(), currentList.end(), [&](const DeviceInfo &currentInfo) {
+        if(currentInfo.mac == removedDevice.mac) {
+            droppedAddedDevices.push_back(currentInfo);
+            return true;
+        }
+        return false;
+    });
+    // std::remove_if only partitions kept elements to the front; erase shrinks the vector.
+    currentList.erase(droppedFromCurrentList, currentList.end());
+
+    if(!droppedAddedDevices.empty()) {
+        addedDevices.erase(
+            std::remove_if(addedDevices.begin(), addedDevices.end(), [&](const DeviceInfo &addedInfo) { return addedInfo.mac == removedDevice.mac; }),
+            addedDevices.end());
+        updateSourceInfo(std::vector<DeviceInfo>{}, droppedAddedDevices);
+    }
+
+    currentList.push_back(removedDevice);
+    updateSourceInfo(std::vector<DeviceInfo>{ removedDevice }, std::vector<DeviceInfo>{});
+}
+
+}  // namespace
+
+EthernetPal::EthernetPal() {
+    gvcpRuntimeConfig_ = GVCPRuntimeConfig::getInstance();
+    mdnsDiscovery_     = MDNSDiscovery::getInstance();
+    gvcpClient_        = std::make_shared<GVCPClient>();
+}
+
+EthernetPal::~EthernetPal() noexcept {
+    if(!stopWatch_) {
+        stop();
+    }
+    mdnsDiscovery_.reset();
+    gvcpClient_.reset();
+}
+
+void EthernetPal::queryGvcpDevice(bool singleShot) {
+    while(!stopWatch_) {
+        std::unique_lock<std::mutex> lock(gvcpMutex_);
+
+        auto list    = gvcpClient_->queryNetDeviceList();
+        auto start   = utils::getSteadyTimeMs();
+        auto added   = utils::subtract_sets(list, netDevInfoList_);
+        auto removed = utils::subtract_sets(netDevInfoList_, list);
+        updateSourcePortInfoList(added, removed);
+
+        for(auto &&info: removed) {
+            if(!callback_(OB_DEVICE_REMOVED, info.mac)) {
+                // If the device is still online, keep the old record and discard newly scanned entries with the same MAC.
+                restoreRemovedDeviceAndDropNewSameMac(
+                    info, list, added, [this](const std::vector<GVCPDeviceInfo> &addedDevices, const std::vector<GVCPDeviceInfo> &removedDevices) {
+                        updateSourcePortInfoList(addedDevices, removedDevices);
+                    });
+            }
+        }
+        for(auto &&info: added) {
+            (void)callback_(OB_DEVICE_ARRIVAL, info.mac);
+        }
+        // update info list
+        netDevInfoList_ = list;
+        if(singleShot) {
+            break;
+        }
+
+        // calc the interval
+        int64_t interval = DEVICE_WATCHER_POLLING_INTERVAL_MSEC;
+        if(netDevInfoList_.empty()) {
+            // Speed up discovery when no devices are found
+            interval = DEVICE_WATCHER_POLLING_SHORT_INTERVAL_MSEC;
+        }
+        auto now = utils::getSteadyTimeMs();
+        if(now >= start + interval) {
+            // Prevent prolonged locking of gvcpMutex_ so that threads requiring GVCP can acquire the lock
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            // Callback takes too long, query the device list immediately for optimization
+            continue;
+        }
+        interval = start + interval - now;
+        condVar_.wait_for(lock, std::chrono::milliseconds(interval), [&]() { return stopWatch_.load(); });
+    }
+}
+
+void EthernetPal::start(deviceChangedCallback callback) {
+    callback_  = callback;
+    stopWatch_ = false;
+
+    // GVCP device
+    deviceWatchThread_ = std::thread([&]() { queryGvcpDevice(false); });
+
+    // mDNS device
+    mdnsWatchThread_ = std::thread([&]() {
+        std::mutex                   mutex;
+        std::unique_lock<std::mutex> lock(mutex);
+        int                          socketRefreshCounter    = 0;
+        const int                    SOCKET_REFRESH_INTERVAL = 3;
+
+        while(!stopWatch_) {
+            auto list    = mdnsDiscovery_->queryDeviceList();
+            auto start   = utils::getSteadyTimeMs();
+            auto added   = utils::subtract_sets(list, mdnsDevInfoList_);
+            auto removed = utils::subtract_sets(mdnsDevInfoList_, list);
+            updateMDNSDeviceSourceInfo(added, removed);
+
+            for(auto &&info: removed) {
+                if(!callback_(OB_DEVICE_REMOVED, info.mac)) {
+                    // If the device is still online, keep the old record and discard newly scanned entries with the same MAC.
+                    restoreRemovedDeviceAndDropNewSameMac(
+                        info, list, added, [this](const std::vector<MDNSDeviceInfo> &addedDevices, const std::vector<MDNSDeviceInfo> &removedDevices) {
+                            updateMDNSDeviceSourceInfo(addedDevices, removedDevices);
+                        });
+                }
+            }
+            for(auto &&info: added) {
+                callback_(OB_DEVICE_ARRIVAL, info.mac);
+            }
+
+            // refresh sockets periodically
+            if(++socketRefreshCounter >= SOCKET_REFRESH_INTERVAL) {
+                mdnsDiscovery_->refreshQuery();
+                socketRefreshCounter = 0;
+            }
+
+            mdnsDevInfoList_ = list;
+
+            // calc the interval
+            int64_t interval = DEVICE_WATCHER_POLLING_INTERVAL_MSEC;
+            if(netDevInfoList_.empty()) {
+                // Speed up discovery when no devices are found
+                interval = DEVICE_WATCHER_POLLING_SHORT_INTERVAL_MSEC;
+            }
+            auto now = utils::getSteadyTimeMs();
+            if(now >= start + interval) {
+                // Callback takes too long, query the device list immediately for optimization
+                continue;
+            }
+            interval = start + interval - now;
+            mdnsCondVar_.wait_for(lock, std::chrono::milliseconds(interval), [&]() { return stopWatch_.load(); });
+        }
+
+        mdnsDiscovery_->refreshQuery();
+    });
+}
+
+void EthernetPal::stop() {
+    stopWatch_ = true;
+    condVar_.notify_all();
+    mdnsCondVar_.notify_all();
+    if(deviceWatchThread_.joinable()) {
+        deviceWatchThread_.join();
+    }
+    if(mdnsWatchThread_.joinable()) {
+        mdnsWatchThread_.join();
+    }
+}
+
+std::shared_ptr<ISourcePort> EthernetPal::getSourcePort(std::shared_ptr<const SourcePortInfo> portInfo) {
+    std::unique_lock<std::mutex> lock(sourcePortMapMutex_);
+    std::shared_ptr<ISourcePort> port;
+    // clear expired weak_ptr
+    for(auto it = sourcePortMap_.begin(); it != sourcePortMap_.end();) {
+        if(it->second.expired()) {
+            it = sourcePortMap_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+
+    // check if the port already exists in the map
+    for(const auto &pair: sourcePortMap_) {
+        if(pair.first == portInfo) {
+            port = pair.second.lock();
+            if(port != nullptr) {
+                return port;
+            }
+        }
+    }
+
+    const auto &portType = portInfo->portType;
+    switch(portType) {
+    case SOURCE_PORT_NET_VENDOR:
+        port = std::make_shared<VendorNetDataPort>(std::dynamic_pointer_cast<const NetSourcePortInfo>(portInfo));
+        break;
+    case SOURCE_PORT_NET_VENDOR_STREAM:
+        port = std::make_shared<NetDataStreamPort>(std::dynamic_pointer_cast<const NetDataStreamPortInfo>(portInfo));
+        break;
+    case SOURCE_PORT_NET_LIDAR_VENDOR_STREAM:
+        port = std::make_shared<LiDARDataStreamPort>(std::dynamic_pointer_cast<const LiDARDataStreamPortInfo>(portInfo));
+        break;
+    case SOURCE_PORT_NET_RTSP:
+        port = std::make_shared<RTSPStreamPort>(std::dynamic_pointer_cast<const RTSPStreamPortInfo>(portInfo));
+        break;
+    case SOURCE_PORT_NET_RTP:
+        port = std::make_shared<RTPStreamPort>(std::dynamic_pointer_cast<const RTPStreamPortInfo>(portInfo));
+        break;
+    default:
+        THROW_INVALID_PARAM_EXCEPTION("Invalid port type!");
+    }
+    sourcePortMap_.insert(std::make_pair(portInfo, port));
+    return port;
+}
+
+void EthernetPal::updateMDNSDeviceSourceInfo(const std::vector<MDNSDeviceInfo> &added, const std::vector<MDNSDeviceInfo> &removed) {
+    std::lock_guard<std::mutex> lock(sourcePortInfoMutex_);
+    // Only re-query port information for newly online devices
+    for(auto &&info: added) {
+        auto portInfo              = std::make_shared<NetSourcePortInfo>(SOURCE_PORT_NET_VENDOR);
+        portInfo->netInterfaceName = "unknown";
+        portInfo->localMac         = "unknown";
+        portInfo->localAddress     = "unknown";
+        portInfo->address          = info.ip;
+        portInfo->port             = info.port;
+        portInfo->mac              = info.mac;
+        portInfo->serialNumber     = info.sn;
+        portInfo->pid              = info.pid;
+        portInfo->vid              = ORBBEC_DEVICE_VID;
+        sourcePortInfoList_.push_back(portInfo);
+    }
+
+    // Delete devices that have been offline from the list
+    for(auto &&info: removed) {
+        auto iter = sourcePortInfoList_.begin();
+        while(iter != sourcePortInfoList_.end()) {
+            auto item = std::dynamic_pointer_cast<const NetSourcePortInfo>(*iter);
+            if(item->address == info.ip && item->mac == info.mac && item->serialNumber == info.sn) {
+                iter = sourcePortInfoList_.erase(iter);
+            }
+            else {
+                ++iter;
+            }
+        }
+    }
+}
+
+void EthernetPal::updateSourcePortInfoList(const std::vector<GVCPDeviceInfo> &added, const std::vector<GVCPDeviceInfo> &removed) {
+    std::lock_guard<std::mutex> lock(sourcePortInfoMutex_);
+    // Only re-query port information for newly online devices
+    for(auto &&info: added) {
+        auto portInfo               = std::make_shared<NetSourcePortInfo>(SOURCE_PORT_NET_VENDOR);
+        portInfo->netInterfaceName  = info.netInterfaceName;
+        portInfo->localMac          = info.localMac;
+        portInfo->localAddress      = info.localIp;
+        portInfo->address           = info.ip;
+        portInfo->port              = DEFAULT_CMD_PORT;
+        portInfo->mac               = info.mac;
+        portInfo->serialNumber      = info.sn;
+        portInfo->pid               = info.pid;
+        portInfo->vid               = info.vid;
+        portInfo->mask              = info.mask;
+        portInfo->gateway           = info.gateway;
+        portInfo->localSubnetLength = info.localSubnetLength;
+        portInfo->localGateway      = info.localGateway;
+        portInfo->devVersion        = info.devVersion;
+        portInfo->curIpConfig       = utils::parseGevCurIpConfig(info.curIpConfig);
+        portInfo->userName          = info.userName;
+        sourcePortInfoList_.push_back(portInfo);
+    }
+
+    // Delete devices that have been offline from the list
+    for(auto &&info: removed) {
+        auto iter = sourcePortInfoList_.begin();
+        while(iter != sourcePortInfoList_.end()) {
+            auto item = std::dynamic_pointer_cast<const NetSourcePortInfo>(*iter);
+            if(item->localAddress == info.localIp && item->address == info.ip && item->mac == info.mac && item->serialNumber == info.sn) {
+                iter = sourcePortInfoList_.erase(iter);
+            }
+            else {
+                ++iter;
+            }
+        }
+    }
+}
+
+void EthernetPal::ensureDiscoveryIfNeeded() {
+    // 1. Start GVCP query asynchronously if the watcher thread is not running
+    std::future<std::vector<GVCPDeviceInfo>> gvcpFuture;
+    bool                                     shouldQueryGVCP = !deviceWatchThread_.joinable();
+    if(shouldQueryGVCP) {
+        gvcpFuture = std::async(std::launch::async, [this]() { return gvcpClient_->queryNetDeviceList(); });
+    }
+
+    // 2. Start mDNS query asynchronously if the watcher thread is not running
+    std::future<std::vector<MDNSDeviceInfo>> mdnsFuture;
+    bool                                     shouldQueryMDNS = !mdnsWatchThread_.joinable();
+    if(shouldQueryMDNS) {
+        mdnsFuture = std::async(std::launch::async, [this]() { return mdnsDiscovery_->queryDeviceList(); });
+    }
+
+    // 3. Collect GVCP results and update
+    if(shouldQueryGVCP) {
+        auto list       = gvcpFuture.get();  // Waits for GVCP task to complete
+        auto added      = utils::subtract_sets(list, netDevInfoList_);
+        auto removed    = utils::subtract_sets(netDevInfoList_, list);
+        netDevInfoList_ = list;
+        updateSourcePortInfoList(added, removed);
+    }
+
+    // 4. Collect mDNS results and update
+    if(shouldQueryMDNS) {
+        auto list        = mdnsFuture.get();  // Waits for mDNS task to complete
+        auto added       = utils::subtract_sets(list, mdnsDevInfoList_);
+        auto removed     = utils::subtract_sets(mdnsDevInfoList_, list);
+        mdnsDevInfoList_ = list;
+        updateMDNSDeviceSourceInfo(added, removed);
+    }
+}
+
+SourcePortInfoList EthernetPal::querySourcePortInfos() {
+    ensureDiscoveryIfNeeded();
+
+    std::lock_guard<std::mutex> lock(sourcePortInfoMutex_);
+    return sourcePortInfoList_;
+}
+
+std::shared_ptr<IDeviceWatcher> EthernetPal::createDeviceWatcher() const {
+    auto self_nonconst = std::const_pointer_cast<EthernetPal>(shared_from_this());
+    return std::static_pointer_cast<IDeviceWatcher>(self_nonconst);
+    // return std::make_shared<NetDeviceWatcher>();
+}
+
+std::shared_ptr<IPal> createNetPal() {
+    return std::make_shared<EthernetPal>();
+}
+
+void EthernetPal::triggerDeviceOffline(std::string macAddress, bool requery) {
+    {
+        std::unique_lock<std::mutex> lock(gvcpMutex_);
+        for(auto &&info: netDevInfoList_) {
+            if(info.mac == macAddress) {
+                GVCPDeviceInfo removedInfo = info;
+                netDevInfoList_.erase(
+                    std::remove_if(netDevInfoList_.begin(), netDevInfoList_.end(), [macAddress](const GVCPDeviceInfo &info) { return info.mac == macAddress; }),
+                    netDevInfoList_.end());
+                updateSourcePortInfoList({}, { removedInfo });
+                if(callback_) {
+                    LOG_DEBUG("remove device {} from list", removedInfo.mac);
+                    callback_(OB_DEVICE_REMOVED, removedInfo.mac);
+                }
+                break;
+            }
+        }
+    }
+    
+    if (requery) {
+        condVar_.notify_one();
+    }
+}
+
+bool EthernetPal::forceIpConfig(std::string macAddress, const OBNetIpConfig &config) {
+    auto result = gvcpClient_->forceIpConfig(macAddress, config);
+    if(result) {
+        LOG_DEBUG("force ip command succeeded, remove device {} from list", macAddress);
+        triggerDeviceOffline(macAddress);
+        // std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    return result;
+}
+
+void EthernetPal::setGvcpPortscheme(OBGvcpPortScheme scheme) {
+    gvcpRuntimeConfig_->setGvcpPortscheme(scheme);
+    // re-query gvcp device
+    queryGvcpDevice(true);
+}
+
+OBGvcpPortScheme EthernetPal::getGvcpPortscheme() const {
+    return gvcpRuntimeConfig_->getGvcpPortscheme();
+}
+
+}  // namespace libobsensor
