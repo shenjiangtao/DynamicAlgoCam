@@ -41,6 +41,7 @@ endif()
 if (OB_BUILD_OPEN3D_EXAMPLES)
     add_subdirectory(5.wrapper.open3d)
 endif()
+add_subdirectory(6.nio.multi_capture)
 
 # cpp examples with OpenCV Requirements
 if(${OpenCV_FOUND})
