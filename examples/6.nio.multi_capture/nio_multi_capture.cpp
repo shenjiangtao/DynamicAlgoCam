@@ -919,53 +919,52 @@ try {
     std::cout << "Recording " << captures.size() << " device(s)" << std::endl;
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
 
-    auto startTime = ob_smpl::getNowTimesMs();
-    uint32_t waitTime = 1000;
+auto lastReportTime = ob_smpl::getNowTimesMs();
+uint32_t waitTime = 1000;
 
-    while(g_running) {
-        auto key = ob_smpl::waitForKeyPressed(waitTime);
-        if(key == ESC_KEY || key == 'q' || key == 'Q') {
-            g_running = false;
-            break;
-        }
-
-        auto currentTime = ob_smpl::getNowTimesMs();
-        if(currentTime >= startTime + waitTime) {
-            for(auto &cap : captures) {
-                std::map<OBFrameType, uint64_t> tempCounts;
-                uint64_t duration;
-                {
-                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
-                    currentTime = ob_smpl::getNowTimesMs();
-                    duration = currentTime - startTime;
-                    if(!cap->sensorFiles->frameCounts.empty()) {
-                        startTime = currentTime;
-                        tempCounts = cap->sensorFiles->frameCounts;
-                        for(auto &item : cap->sensorFiles->frameCounts) {
-                            item.second = 0;
-                        }
-                    }
-                }
-
-                std::cout << "[" << cap->deviceName << "] ";
-                if(tempCounts.empty()) {
-                    std::cout << "Recording... waiting for frames";
-                } else {
-                    std::cout << "Recording... FPS: ";
-                    std::string sep;
-                    for(const auto &item : tempCounts) {
-                        auto name = ob::TypeHelper::convertOBFrameTypeToString(item.first);
-                        float rate = item.second / (duration / 1000.0f);
-                        std::cout << std::fixed << std::setprecision(1)
-                                  << sep << name << "=" << rate;
-                        sep = ", ";
-                    }
-                }
-                std::cout << std::endl;
-            }
-            waitTime = 2000;
-        }
+while(g_running) {
+    auto key = ob_smpl::waitForKeyPressed(waitTime);
+    if(key == ESC_KEY || key == 'q' || key == 'Q') {
+        g_running = false;
+        break;
     }
+
+    auto currentTime = ob_smpl::getNowTimesMs();
+    if(currentTime >= lastReportTime + waitTime) {
+        uint64_t reportDuration = currentTime - lastReportTime;
+        lastReportTime = currentTime;
+
+        for(auto &cap : captures) {
+            std::map<OBFrameType, uint64_t> tempCounts;
+            {
+                std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                if(!cap->sensorFiles->frameCounts.empty()) {
+                    tempCounts = cap->sensorFiles->frameCounts;
+                    for(auto &item : cap->sensorFiles->frameCounts) {
+                        item.second = 0;
+                    }
+                }
+            }
+
+            std::cout << "[" << cap->deviceName << "] ";
+            if(tempCounts.empty()) {
+                std::cout << "Recording... waiting for frames";
+            } else {
+                std::cout << "Recording... FPS: ";
+                std::string sep;
+                for(const auto &item : tempCounts) {
+                    auto name = ob::TypeHelper::convertOBFrameTypeToString(item.first);
+                    float rate = (reportDuration > 0) ? (item.second / (reportDuration / 1000.0f)) : 0.0f;
+                    std::cout << std::fixed << std::setprecision(1)
+                              << sep << name << "=" << rate;
+                    sep = ", ";
+                }
+            }
+            std::cout << std::endl;
+        }
+        waitTime = 2000;
+    }
+}
 
     std::cout << "\n=== Stopping recording ===" << std::endl;
 
