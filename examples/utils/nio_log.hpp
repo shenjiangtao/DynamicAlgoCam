@@ -1,0 +1,175 @@
+#pragma once
+
+#include <string>
+#include <fstream>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <ctime>
+#include <sstream>
+#include <iomanip>
+#include <iostream>
+#include <thread>
+#include <sys/stat.h>
+#include <cstring>
+
+namespace nio {
+
+enum class LogLevel {
+    TRACE = 0,
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4,
+    FATAL = 5
+};
+
+class Logger {
+public:
+    static Logger &instance() {
+        static Logger logger;
+        return logger;
+    }
+
+    bool init(const std::string &processName, const std::string &outputDir) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(initialized_) return true;
+        processName_ = processName;
+        outputDir_ = outputDir;
+        mkdirp(outputDir_);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        logFilePath_ = outputDir_ + "/" + processName_ + "_log_" + std::to_string(ms) + ".log";
+        logFile_.open(logFilePath_, std::ios::out | std::ios::app);
+        if(!logFile_.is_open()) {
+            std::cerr << "[NIO_LOG] FATAL: Cannot open log file: " << logFilePath_ << std::endl;
+            return false;
+        }
+        initialized_ = true;
+        logFile_ << "# NIO Log Start | process=" << processName_
+                 << " | log_file=" << logFilePath_ << "\n";
+        logFile_.flush();
+        return true;
+    }
+
+    void setLevel(LogLevel level) {
+        level_.store(level, std::memory_order_relaxed);
+    }
+
+    LogLevel getLevel() const {
+        return level_.load(std::memory_order_relaxed);
+    }
+
+    void log(LogLevel level, const char *file, int line, const char *func, const std::string &msg) {
+        if(level < level_.load(std::memory_order_relaxed)) return;
+        std::string lineStr = formatLine(level, file, line, func, msg);
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            if(logFile_.is_open()) {
+                logFile_ << lineStr << "\n";
+                logFile_.flush();
+            }
+        }
+        if(level >= LogLevel::WARN) {
+            std::cerr << lineStr << std::endl;
+        } else if(level >= LogLevel::INFO) {
+            std::cout << lineStr << std::endl;
+        }
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(logFile_.is_open()) logFile_.flush();
+    }
+
+    void shutdown() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(logFile_.is_open()) {
+            logFile_ << "# NIO Log End | process=" << processName_ << "\n";
+            logFile_.flush();
+            logFile_.close();
+        }
+        initialized_ = false;
+    }
+
+    const std::string &getLogFilePath() const { return logFilePath_; }
+    bool isInitialized() const { return initialized_; }
+
+private:
+    Logger() : level_(LogLevel::TRACE), initialized_(false) {}
+    ~Logger() { shutdown(); }
+    Logger(const Logger &) = delete;
+    Logger &operator=(const Logger &) = delete;
+
+    static void mkdirp(const std::string &path) {
+        size_t pos = 0;
+        std::string tmp;
+        while((pos = path.find('/', pos + 1)) != std::string::npos) {
+            tmp = path.substr(0, pos);
+            mkdir(tmp.c_str(), 0755);
+        }
+        mkdir(path.c_str(), 0755);
+    }
+
+    static const char *levelStr(LogLevel level) {
+        switch(level) {
+        case LogLevel::TRACE: return "TRACE";
+        case LogLevel::DEBUG: return "DEBUG";
+        case LogLevel::INFO:  return "INFO";
+        case LogLevel::WARN:  return "WARN";
+        case LogLevel::ERROR: return "ERROR";
+        case LogLevel::FATAL: return "FATAL";
+        default: return "?????";
+        }
+    }
+
+    std::string formatLine(LogLevel level, const char *file, int line, const char *func, const std::string &msg) {
+        auto now = std::chrono::system_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        time_t secs = static_cast<time_t>(ms / 1000);
+        int millis = static_cast<int>(ms % 1000);
+        struct tm t;
+        localtime_r(&secs, &t);
+        char timeBuf[64];
+        snprintf(timeBuf, sizeof(timeBuf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+                 t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                 t.tm_hour, t.tm_min, t.tm_sec, millis);
+        const char *basename = strrchr(file, '/');
+        basename = basename ? basename + 1 : file;
+        std::ostringstream oss;
+        oss << timeBuf << " " << levelStr(level) << " "
+            << "[" << std::this_thread::get_id() << "] "
+            << basename << ":" << line << " " << func << " | " << msg;
+        return oss.str();
+    }
+
+    std::mutex mtx_;
+    std::ofstream logFile_;
+    std::string processName_;
+    std::string outputDir_;
+    std::string logFilePath_;
+    std::atomic<LogLevel> level_;
+    bool initialized_;
+};
+
+} // namespace nio
+
+#define NIO_LOG_INIT(processName, outputDir) ::nio::Logger::instance().init(processName, outputDir)
+#define NIO_LOG_SET_LEVEL(level) ::nio::Logger::instance().setLevel(level)
+#define NIO_LOG_SHUTDOWN() ::nio::Logger::instance().shutdown()
+#define NIO_LOG_FLUSH() ::nio::Logger::instance().flush()
+#define NIO_LOG_PATH() ::nio::Logger::instance().getLogFilePath()
+
+#define NIO_LOG_TRACE(msg) ::nio::Logger::instance().log(::nio::LogLevel::TRACE, __FILE__, __LINE__, __func__, msg)
+#define NIO_LOG_DEBUG(msg) ::nio::Logger::instance().log(::nio::LogLevel::DEBUG, __FILE__, __LINE__, __func__, msg)
+#define NIO_LOG_INFO(msg)  ::nio::Logger::instance().log(::nio::LogLevel::INFO,  __FILE__, __LINE__, __func__, msg)
+#define NIO_LOG_WARN(msg)  ::nio::Logger::instance().log(::nio::LogLevel::WARN,  __FILE__, __LINE__, __func__, msg)
+#define NIO_LOG_ERROR(msg) ::nio::Logger::instance().log(::nio::LogLevel::ERROR, __FILE__, __LINE__, __func__, msg)
+#define NIO_LOG_FATAL(msg) ::nio::Logger::instance().log(::nio::LogLevel::FATAL, __FILE__, __LINE__, __func__, msg)
+
+#define NIO_LOG_TRACE_S(msg) do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_TRACE(_nio_ss.str()); } while(0)
+#define NIO_LOG_DEBUG_S(msg) do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_DEBUG(_nio_ss.str()); } while(0)
+#define NIO_LOG_INFO_S(msg)  do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_INFO(_nio_ss.str()); }  while(0)
+#define NIO_LOG_WARN_S(msg)  do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_WARN(_nio_ss.str()); }  while(0)
+#define NIO_LOG_ERROR_S(msg) do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_ERROR(_nio_ss.str()); } while(0)
+#define NIO_LOG_FATAL_S(msg) do { std::ostringstream _nio_ss; _nio_ss << msg; NIO_LOG_FATAL(_nio_ss.str()); } while(0)

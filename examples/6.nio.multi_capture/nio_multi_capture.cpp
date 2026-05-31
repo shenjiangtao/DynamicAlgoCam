@@ -1,5 +1,6 @@
 #include <libobsensor/ObSensor.hpp>
 #include "utils.hpp"
+#include "nio_log.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -95,6 +96,7 @@ public:
         const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_H264);
         if(!codec) {
             std::cerr << "H264 encoder not found" << std::endl;
+            NIO_LOG_ERROR_S("H264 encoder not found, format=" << srcFormat << " " << width << "x" << height);
             return false;
         }
 
@@ -119,6 +121,7 @@ public:
 
         if(avcodec_open2(codecCtx_, codec, nullptr) < 0) {
             std::cerr << "Failed to open H264 encoder" << std::endl;
+            NIO_LOG_ERROR_S("Failed to open H264 encoder, format=" << srcFormat << " " << width << "x" << height);
             avcodec_free_context(&codecCtx_);
             return false;
         }
@@ -150,6 +153,7 @@ public:
         case OB_FORMAT_MJPG: srcFmt = AV_PIX_FMT_YUV420P; break;
         default:
             std::cerr << "Unsupported format for H264 encoding: " << srcFormat << std::endl;
+            NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << srcFormat << " " << width << "x" << height);
             close();
             return false;
         }
@@ -164,6 +168,7 @@ public:
             SWS_BILINEAR, nullptr, nullptr, nullptr);
         if(!swsCtx_) {
             std::cerr << "Failed to create sws context" << std::endl;
+            NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << srcFormat);
             close();
             return false;
         }
@@ -374,8 +379,9 @@ static std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string &fil
 
     se->encoder = std::make_shared<H264Encoder>();
     if(!se->encoder->init(w, h, fps, format)) {
-        std::cerr << "  Failed to init H264 encoder for format=" << format
-                  << " " << w << "x" << h << std::endl;
+        std::cerr << " Failed to init H264 encoder for format=" << format
+            << " " << w << "x" << h << std::endl;
+        NIO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << format << " " << w << "x" << h << "@" << fps);
         se->encoder.reset();
         se->file = std::make_shared<std::ofstream>(filePath, std::ios::binary);
         return se;
@@ -488,29 +494,39 @@ int main(int argc, char **argv) try {
 
     auto deviceFilter = parseDeviceNames(argc, argv);
 
+    NIO_LOG_INIT("nio_multi_capture", "capture_output");
+    NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
+    NIO_LOG_INFO_S("Process started, argc=" << argc << " device_filter_count=" << deviceFilter.size());
+    for(size_t i = 0; i < deviceFilter.size(); i++) {
+        NIO_LOG_DEBUG_S("Device filter[" << i << "]=" << deviceFilter[i]);
+    }
+
     ob::Context context;
 
     auto deviceList = context.queryDeviceList();
     if(deviceList->getCount() < 1) {
         std::cerr << "No Orbbec device found!" << std::endl;
+        NIO_LOG_FATAL("No Orbbec device found!");
         return -1;
     }
 
     std::string sessionTimestamp = getTimestampMs();
     std::string outputRootDir = "capture_output/" + sessionTimestamp;
     mkdirp(outputRootDir);
+    NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
     {
         std::ifstream usbfsFile("/sys/module/usbcore/parameters/usbfs_memory_mb");
         if(usbfsFile.is_open()) {
             int usbfsMb = 0;
             usbfsFile >> usbfsMb;
-            if(usbfsMb < 128 && deviceList->getCount() > 1) {
-                std::cerr << "WARNING: usbfs_memory_mb=" << usbfsMb << "MB is too low for "
-                    << deviceList->getCount() << " devices. Recommend >= 128MB." << std::endl;
-                std::cerr << "Fix: echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb" << std::endl;
-                std::cerr << "Or:  sudo modprobe usbcore usbfs_memory_mb=256" << std::endl;
-            }
+        if(usbfsMb < 128 && deviceList->getCount() > 1) {
+            std::cerr << "WARNING: usbfs_memory_mb=" << usbfsMb << "MB is too low for "
+                << deviceList->getCount() << " devices. Recommend >= 128MB." << std::endl;
+            std::cerr << "Fix: echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb" << std::endl;
+            std::cerr << "Or: sudo modprobe usbcore usbfs_memory_mb=256" << std::endl;
+            NIO_LOG_WARN_S("usbfs_memory_mb=" << usbfsMb << "MB is too low for " << deviceList->getCount() << " devices, recommend >= 128MB");
+        }
         }
     }
 
@@ -523,20 +539,25 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
 
         if(!deviceMatches(name, deviceFilter)) {
             std::cout << "Skipping device: " << name << std::endl;
+            NIO_LOG_DEBUG_S("Skipping device: " << name << " (does not match filter)");
             continue;
         }
 
         std::cout << "Found device: " << name
-                  << " (SN: " << devInfo->getSerialNumber()
-                  << ", PID: 0x" << std::hex << std::setw(4) << std::setfill('0')
-                  << devInfo->getPid() << std::dec
-                  << ", " << devInfo->getConnectionType() << ")" << std::endl;
+            << " (SN: " << devInfo->getSerialNumber()
+            << ", PID: 0x" << std::hex << std::setw(4) << std::setfill('0')
+            << devInfo->getPid() << std::dec
+            << ", " << devInfo->getConnectionType() << ")" << std::endl;
+        NIO_LOG_INFO_S("Found device: " << name << " SN=" << devInfo->getSerialNumber()
+            << " PID=0x" << std::hex << devInfo->getPid() << std::dec
+            << " conn=" << devInfo->getConnectionType());
 
         auto safeName = name;
         std::replace(safeName.begin(), safeName.end(), ' ', '_');
 
         std::string deviceOutputDir = outputRootDir + "/" + safeName;
         mkdirp(deviceOutputDir);
+        NIO_LOG_DEBUG_S("Created output dir: " << deviceOutputDir);
 
     auto cap = std::make_shared<DeviceCapture>();
     cap->deviceName = safeName;
@@ -548,6 +569,7 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
         try { device->timerSyncWithHost(); }
         catch(ob::Error &e) {
             std::cerr << "Timer sync warning: " << e.what() << std::endl;
+            NIO_LOG_WARN_S("Timer sync failed for " << safeName << ": " << e.what());
         }
 
         if(device->isGlobalTimestampSupported()) {
@@ -613,10 +635,11 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
             } else {
                 hasColor = false;
             }
-            if(hasColor) {
-                std::cout << " Color: " << colorW << "x" << colorH
-                    << "@" << colorFps << " format=" << colorFormat << std::endl;
-            }
+        if(hasColor) {
+            std::cout << " Color: " << colorW << "x" << colorH
+                << "@" << colorFps << " format=" << colorFormat << std::endl;
+            NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps << " format=" << colorFormat);
+        }
             break;
         case OB_SENSOR_DEPTH:
             hasDepth = true;
@@ -647,11 +670,12 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
             } else {
                 hasDepth = false;
             }
-            if(hasDepth) {
-                std::cout << " Depth: " << depthW << "x" << depthH
-                    << "@" << depthFps << " format=" << depthFormat << std::endl;
-            }
-                try {
+        if(hasDepth) {
+            std::cout << " Depth: " << depthW << "x" << depthH
+                << "@" << depthFps << " format=" << depthFormat << std::endl;
+            NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps << " format=" << depthFormat);
+        }
+        try {
                     auto depthSensorInfo = sensorList->getSensor(s);
                     (void)depthSensorInfo;
                 } catch(...) {}
@@ -664,7 +688,8 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
                     case 3: cap->depthScale = 0.0001f; break;
                     default: cap->depthScale = 0.001f; break;
                     }
-                    std::cout << "  Depth scale: " << cap->depthScale << " (precision level " << precisionLevel << ")" << std::endl;
+            std::cout << " Depth scale: " << cap->depthScale << " (precision level " << precisionLevel << ")" << std::endl;
+            NIO_LOG_INFO_S("Depth scale: " << cap->depthScale << " precision_level=" << precisionLevel);
                 } catch(...) {
                     cap->depthScale = 0.001f;
                     std::cout << "  Depth scale: 0.001 (default)" << std::endl;
@@ -683,10 +708,11 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
             } else {
                 hasIR = false;
             }
-            if(hasIR) {
-                std::cout << " IR: " << irW << "x" << irH
-                    << "@" << irFps << " format=" << irFormat << std::endl;
-            }
+        if(hasIR) {
+            std::cout << " IR: " << irW << "x" << irH
+                << "@" << irFps << " format=" << irFormat << std::endl;
+            NIO_LOG_INFO_S("IR stream: " << irW << "x" << irH << "@" << irFps << " format=" << irFormat);
+        }
             break;
         case OB_SENSOR_IR_LEFT:
             hasIRLeft = true;
@@ -701,10 +727,11 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
             } else {
                 hasIRLeft = false;
             }
-            if(hasIRLeft) {
-                std::cout << " IR Left: " << irLW << "x" << irLH
-                    << "@" << irLFps << " format=" << irLeftFormat << std::endl;
-            }
+        if(hasIRLeft) {
+            std::cout << " IR Left: " << irLW << "x" << irLH
+                << "@" << irLFps << " format=" << irLeftFormat << std::endl;
+            NIO_LOG_INFO_S("IR Left stream: " << irLW << "x" << irLH << "@" << irLFps << " format=" << irLeftFormat);
+        }
             break;
         case OB_SENSOR_IR_RIGHT:
             hasIRRight = true;
@@ -719,10 +746,11 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
             } else {
                 hasIRRight = false;
             }
-            if(hasIRRight) {
-                std::cout << " IR Right: " << irRW << "x" << irRH
-                    << "@" << irRFps << " format=" << irRightFormat << std::endl;
-            }
+        if(hasIRRight) {
+            std::cout << " IR Right: " << irRW << "x" << irRH
+                << "@" << irRFps << " format=" << irRightFormat << std::endl;
+            NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps << " format=" << irRightFormat);
+        }
             break;
         case OB_SENSOR_ACCEL: hasAccel = true; break;
             case OB_SENSOR_GYRO:  hasGyro = true; break;
@@ -731,41 +759,48 @@ for(uint32_t i = 0; i < deviceList->getCount(); i++) {
         }
 
         if(ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
-            config->disableStream(OB_SENSOR_IR_LEFT);
-            hasIRLeft = false;
-            std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
+        config->disableStream(OB_SENSOR_IR_LEFT);
+        hasIRLeft = false;
+        std::cout << " Gemini 305g: disabled IR_LEFT" << std::endl;
+        NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
         }
 
         auto sf = cap->sensorFiles;
 
-        if(hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
-            sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264",
-                                            colorFormat, colorW, colorH, colorFps);
-        }
-        if(hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
-            sf->depth = createStreamEncoder(baseName + "_depth_" + startTs + ".h264",
-                                            depthFormat, depthW, depthH, depthFps);
-            sf->depthRawFile = std::make_shared<std::ofstream>(
-                baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
-        }
-        if(hasIR && irFormat != OB_FORMAT_UNKNOWN) {
-            sf->ir = createStreamEncoder(baseName + "_ir_" + startTs + ".h264",
-                                         irFormat, irW, irH, irFps);
-        }
-        if(hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
-            sf->irLeft = createStreamEncoder(baseName + "_ir_left_" + startTs + ".h264",
-                                             irLeftFormat, irLW, irLH, irLFps);
-        }
-        if(hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
-            sf->irRight = createStreamEncoder(baseName + "_ir_right_" + startTs + ".h264",
-                                              irRightFormat, irRW, irRH, irRFps);
-        }
-        if(hasAccel || hasGyro) {
-            sf->imuFile = std::make_shared<std::ofstream>(
-                baseName + "_imu_" + startTs + ".txt");
-            *sf->imuFile << "# host_ts_ms,type,device_ts_us,x,y,z,temperature\n";
-            sf->imuFile->flush();
-        }
+    if(hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
+        sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264",
+            colorFormat, colorW, colorH, colorFps);
+        NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264" << " fmt=" << colorFormat);
+    }
+    if(hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
+        sf->depth = createStreamEncoder(baseName + "_depth_" + startTs + ".h264",
+            depthFormat, depthW, depthH, depthFps);
+        sf->depthRawFile = std::make_shared<std::ofstream>(
+            baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
+        NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
+    }
+    if(hasIR && irFormat != OB_FORMAT_UNKNOWN) {
+        sf->ir = createStreamEncoder(baseName + "_ir_" + startTs + ".h264",
+            irFormat, irW, irH, irFps);
+        NIO_LOG_INFO_S("IR output: " << baseName + "_ir_" + startTs + ".h264");
+    }
+    if(hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
+        sf->irLeft = createStreamEncoder(baseName + "_ir_left_" + startTs + ".h264",
+            irLeftFormat, irLW, irLH, irLFps);
+        NIO_LOG_INFO_S("IR Left output: " << baseName + "_ir_left_" + startTs + ".h264");
+    }
+    if(hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
+        sf->irRight = createStreamEncoder(baseName + "_ir_right_" + startTs + ".h264",
+            irRightFormat, irRW, irRH, irRFps);
+        NIO_LOG_INFO_S("IR Right output: " << baseName + "_ir_right_" + startTs + ".h264");
+    }
+    if(hasAccel || hasGyro) {
+        sf->imuFile = std::make_shared<std::ofstream>(
+            baseName + "_imu_" + startTs + ".txt");
+        *sf->imuFile << "# host_ts_ms,type,device_ts_us,x,y,z,temperature\n";
+        sf->imuFile->flush();
+        NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
+    }
 
 auto depthFrameIdx = std::make_shared<std::atomic<uint64_t>>(0);
 
@@ -837,6 +872,7 @@ try {
         });
     } catch(ob::Error &e) {
         std::cerr << " Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
+        NIO_LOG_ERROR_S("Pipeline start failed for " << safeName << ": " << e.what());
         cap->videoPipeline.reset();
         continue;
     }
@@ -844,7 +880,8 @@ try {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     cap->hasIMU = (hasAccel && hasGyro);
-        if(cap->hasIMU) {
+    if(cap->hasIMU) {
+        NIO_LOG_INFO_S("Starting IMU pipeline for " << safeName);
             auto imuDev = cap->videoPipeline->getDevice();
             cap->imuPipeline = std::make_shared<ob::Pipeline>(imuDev);
             std::shared_ptr<ob::Config> imuConfig = std::make_shared<ob::Config>();
@@ -904,6 +941,7 @@ try {
 
     if(captures.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
+        NIO_LOG_FATAL("No matching devices found!");
         if(!deviceFilter.empty()) {
             std::cerr << "Available devices:" << std::endl;
             for(uint32_t i = 0; i < deviceList->getCount(); i++) {
@@ -918,6 +956,8 @@ try {
     std::cout << "Output directory: " << outputRootDir << "/" << std::endl;
     std::cout << "Recording " << captures.size() << " device(s)" << std::endl;
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
+    NIO_LOG_INFO_S("=== Recording started === devices=" << captures.size() << " outputDir=" << outputRootDir);
+    NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
 
 auto lastReportTime = ob_smpl::getNowTimesMs();
 uint32_t waitTime = 1000;
@@ -955,9 +995,10 @@ while(g_running) {
                 for(const auto &item : tempCounts) {
                     auto name = ob::TypeHelper::convertOBFrameTypeToString(item.first);
                     float rate = (reportDuration > 0) ? (item.second / (reportDuration / 1000.0f)) : 0.0f;
-                    std::cout << std::fixed << std::setprecision(1)
-                              << sep << name << "=" << rate;
-                    sep = ", ";
+                        std::cout << std::fixed << std::setprecision(1)
+                            << sep << name << "=" << rate;
+                        sep = ", ";
+                        NIO_LOG_TRACE_S("[" << cap->deviceName << "] " << name << "=" << std::fixed << std::setprecision(1) << rate);
                 }
             }
             std::cout << std::endl;
@@ -967,6 +1008,7 @@ while(g_running) {
 }
 
     std::cout << "\n=== Stopping recording ===" << std::endl;
+    NIO_LOG_INFO("=== Stopping recording ===");
 
 for(auto &cap : captures) {
     if(cap->videoPipeline) cap->videoPipeline->stop();
@@ -988,17 +1030,24 @@ for(auto &cap : captures) {
         if(sf->imuFile) sf->imuFile->close();
 
         std::cout << "Stopped: " << cap->deviceName << std::endl;
+        NIO_LOG_INFO_S("Stopped device: " << cap->deviceName);
     }
 
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
+    NIO_LOG_INFO_S("All recordings saved to: " << outputRootDir << "/");
+    NIO_LOG_SHUTDOWN();
     return 0;
 }
 catch(ob::Error &e) {
-    std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what()
-              << "\n  status: " << e.getStatus() << std::endl;
+    std::cerr << "OB Error: " << e.getFunction() << "\n " << e.what()
+        << "\n status: " << e.getStatus() << std::endl;
+    NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
+    NIO_LOG_SHUTDOWN();
     return -1;
 }
 catch(std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
+    NIO_LOG_FATAL_S("Exception: " << e.what());
+    NIO_LOG_SHUTDOWN();
     return -1;
 }

@@ -42,6 +42,9 @@ if (OB_BUILD_OPEN3D_EXAMPLES)
     add_subdirectory(5.wrapper.open3d)
 endif()
 add_subdirectory(6.nio.multi_capture)
+add_subdirectory(6.nio.d2c_fusion)
+add_subdirectory(6.nio.3d_render)
+add_subdirectory(6.nio.multi_sensor_fusion)
 
 # cpp examples with OpenCV Requirements
 if(${OpenCV_FOUND})

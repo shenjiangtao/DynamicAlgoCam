@@ -362,3 +362,89 @@ echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 - `device_ts_us`：设备时间戳（微秒）
 - `x/y/z`：三轴数据
 - `temperature`：传感器温度（℃）
+
+---
+
+## nio.d2c_fusion — Depth-to-Color Fusion Tool
+
+### 概述
+
+**nio_d2c_fusion** 是一个实时深度-彩色融合工具。它使用 Orbbec SDK 的 `ob::Align(OB_STREAM_COLOR)` 滤镜将深度帧对齐到彩色帧坐标系，然后将深度数据着色（jet colormap）并与彩色帧 alpha 混合，最终编码为 H.264 裸流输出。
+
+源码位于 `examples/7.nio.d2c_fusion/nio_d2c_fusion.cpp`。
+
+### 工作流程
+
+```
+设备 → Pipeline(color+depth) → FrameSet
+  → ob::Align(OB_STREAM_COLOR) → aligned FrameSet
+    → color frame (decode MJPG/RGB/etc → RGB24)
+    → aligned depth frame (Y16, same resolution as color after D2C)
+  → depth Y16 → normalize by depth range → jet colormap → RGB24
+  → alpha blend: fused = (1-α)*color + α*depth_colored
+  → H264Encoder (FFmpeg libx264 ultrafast) → .h264 file
+```
+
+### 用法
+
+```bash
+# 所有设备，默认参数 (alpha=0.5, 0.3m-5.0m)
+./nio_d2c_fusion
+
+# 按设备名过滤
+./nio_d2c_fusion 336L
+
+# 自定义 alpha 和深度范围
+./nio_d2c_fusion --alpha 0.7 --depth-min 0.2 --depth-max 3.0
+
+# 组合过滤 + 参数
+./nio_d2c_fusion 336L 335L --alpha 0.6 --depth-max 8.0
+
+# 查看帮助
+./nio_d2c_fusion --help
+```
+
+### 命令行参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `[device_filter...]` | 无(全部设备) | 按设备名子串过滤 |
+| `--alpha VALUE` | 0.5 | 深度叠加透明度 (0.0=纯彩色, 1.0=纯深度着色) |
+| `--depth-min M` | 0.3 | 着色最小深度 (米)，低于此值的像素显示原始彩色 |
+| `--depth-max M` | 5.0 | 着色最大深度 (米)，高于此值的像素显示原始彩色 |
+| `--help` | - | 显示帮助信息 |
+
+### 输出目录结构
+
+```
+fusion_output/<session_timestamp>/
+  <device_name>/
+    <device_name>_d2c_fused_<timestamp>.h264
+```
+
+### 构建与运行
+
+```bash
+cd build && cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build . --target nio_d2c_fusion -j$(nproc)
+
+# 运行
+./linux_x86_64/bin/nio_d2c_fusion
+```
+
+### 播放输出
+
+```bash
+# 直接播放 H264 裸流
+ffplay -f h264 -framerate 30 <fused_file>.h264
+
+# 封装为 MP4 后播放
+ffmpeg -y -fflags +genpts -r 30 -i <fused_file>.h264 -c copy output.mp4
+ffplay output.mp4
+```
+
+### 已知限制
+
+- **3 设备同时融合**：偶尔可能出现某设备 FPS=0（USB 带宽竞争），建议将设备分布到不同 USB 控制器
+- **CPU 开销**：每帧需执行 MJPG 解码 + RGB 转换 + 逐像素深度着色 + alpha 混合 + H264 编码，多设备时 CPU 负载较高
+- **深度范围**：Gemini 305 有大量 65535mm 饱和值，`--depth-max` 设为 5.0 可过滤这些噪声

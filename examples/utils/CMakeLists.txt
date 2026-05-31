@@ -5,10 +5,11 @@ cmake_minimum_required(VERSION 3.10)
 project(ob_examples_utils)
 
 add_library(ob_examples_utils STATIC
-    ${CMAKE_CURRENT_LIST_DIR}/utils_c.c
-    ${CMAKE_CURRENT_LIST_DIR}/utils_c.h
-    ${CMAKE_CURRENT_LIST_DIR}/utils.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/utils.hpp
+${CMAKE_CURRENT_LIST_DIR}/utils_c.c
+${CMAKE_CURRENT_LIST_DIR}/utils_c.h
+${CMAKE_CURRENT_LIST_DIR}/utils.cpp
+${CMAKE_CURRENT_LIST_DIR}/utils.hpp
+${CMAKE_CURRENT_LIST_DIR}/nio_log.hpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC ob::${OB_SDK_LIB_NAME})
