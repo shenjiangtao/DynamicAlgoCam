@@ -535,11 +535,11 @@ int main(int argc, char **argv) try {
                         auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
                         auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
 
-        if(colorFrame && depthFrame) {
-            uint64_t colorTsUs = colorFrame->getTimeStampUs();
-            (void)colorTsUs;
+                        if(colorFrame && depthFrame) {
+                            uint64_t colorTsUs = colorFrame->getTimeStampUs();
+                            (void)colorTsUs;
 
-            int w = cap->colorW;
+                            int w = cap->colorW;
                             int h = cap->colorH;
 
                             bool colorOk = decodeColorToRGB(
@@ -619,75 +619,75 @@ int main(int argc, char **argv) try {
                                 memcpy(cap->fusedRGBBuf->data(), cap->colorRGBBuf->data(), w * h * 3);
                             }
 
-            cap->fusedEncoder->encodeRGB(
-                cap->fusedRGBBuf->data(), *cap->fusedFile, cap->fusedMtx, depthFrame->getTimeStampUs());
+                            cap->fusedEncoder->encodeRGB(
+                            cap->fusedRGBBuf->data(), *cap->fusedFile, cap->fusedMtx, depthFrame->getTimeStampUs());
                             (*cap->fusedFrameCount)++;
                         }
                     }
 
-        if(hasColor) {
-            auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-            if(colorFrame) {
-                writeStreamFrame(sf->color.get(), colorFrame->getData(),
-                    colorFrame->getDataSize(), colorFrame->getTimeStampUs());
-                std::lock_guard<std::mutex> lock(sf->countMtx);
-                sf->frameCounts[OB_FRAME_COLOR]++;
-            }
-        }
-
-        if(hasDepth) {
-            auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-            if(depthFrame) {
-                auto format = depthFrame->getFormat();
-                auto data = depthFrame->getData();
-                auto size = depthFrame->getDataSize();
-
-                if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                    if(sf->depthRawFile && sf->depthRawFile->is_open()) {
-                        uint64_t idx = depthFrameIdx->fetch_add(1);
-                        writeDepthRawWithHeader(*sf->depthRawFile, data, size,
-                            cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
-                            cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
-                            cap->depthScale, idx, sf->depthRawMtx,
-                            depthFrame->getTimeStampUs());
+                    if(hasColor) {
+                        auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+                        if(colorFrame) {
+                            writeStreamFrame(sf->color.get(), colorFrame->getData(),
+                                colorFrame->getDataSize(), colorFrame->getTimeStampUs());
+                            std::lock_guard<std::mutex> lock(sf->countMtx);
+                            sf->frameCounts[OB_FRAME_COLOR]++;
+                        }
                     }
-                }
 
-                writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
-                std::lock_guard<std::mutex> lock(sf->countMtx);
-                sf->frameCounts[OB_FRAME_DEPTH]++;
-            }
-        }
+                    if(hasDepth) {
+                        auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+                        if(depthFrame) {
+                            auto format = depthFrame->getFormat();
+                            auto data = depthFrame->getData();
+                            auto size = depthFrame->getDataSize();
 
-        if(hasIR) {
-            auto irFrame = frameSet->getFrame(OB_FRAME_IR);
-            if(irFrame) {
-                writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize(),
-                    irFrame->getTimeStampUs());
-                std::lock_guard<std::mutex> lock(sf->countMtx);
-                sf->frameCounts[OB_FRAME_IR]++;
-            }
-        }
+                            if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+                                if(sf->depthRawFile && sf->depthRawFile->is_open()) {
+                                    uint64_t idx = depthFrameIdx->fetch_add(1);
+                                    writeDepthRawWithHeader(*sf->depthRawFile, data, size,
+                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
+                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
+                                        cap->depthScale, idx, sf->depthRawMtx,
+                                        depthFrame->getTimeStampUs());
+                                }
+                            }
 
-        if(hasIRLeft) {
-            auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
-            if(irLeftFrame) {
-                writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize(),
-                    irLeftFrame->getTimeStampUs());
-                std::lock_guard<std::mutex> lock(sf->countMtx);
-                sf->frameCounts[OB_FRAME_IR_LEFT]++;
-            }
-        }
+                            writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
+                            std::lock_guard<std::mutex> lock(sf->countMtx);
+                            sf->frameCounts[OB_FRAME_DEPTH]++;
+                        }
+                    }
 
-        if(hasIRRight) {
-            auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
-            if(irRightFrame) {
-                writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize(),
-                    irRightFrame->getTimeStampUs());
-                std::lock_guard<std::mutex> lock(sf->countMtx);
-                sf->frameCounts[OB_FRAME_IR_RIGHT]++;
-            }
-        }
+                    if(hasIR) {
+                        auto irFrame = frameSet->getFrame(OB_FRAME_IR);
+                        if(irFrame) {
+                            writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize(),
+                                irFrame->getTimeStampUs());
+                            std::lock_guard<std::mutex> lock(sf->countMtx);
+                            sf->frameCounts[OB_FRAME_IR]++;
+                        }
+                    }
+
+                    if(hasIRLeft) {
+                        auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
+                        if(irLeftFrame) {
+                            writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize(),
+                                irLeftFrame->getTimeStampUs());
+                            std::lock_guard<std::mutex> lock(sf->countMtx);
+                            sf->frameCounts[OB_FRAME_IR_LEFT]++;
+                        }
+                    }
+
+                    if(hasIRRight) {
+                        auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
+                        if(irRightFrame) {
+                            writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize(),
+                                irRightFrame->getTimeStampUs());
+                            std::lock_guard<std::mutex> lock(sf->countMtx);
+                            sf->frameCounts[OB_FRAME_IR_RIGHT]++;
+                        }
+                    }
                 });
         } catch(ob::Error &e) {
             std::cerr << " Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
