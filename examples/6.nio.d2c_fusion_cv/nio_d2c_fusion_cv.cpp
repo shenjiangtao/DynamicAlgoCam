@@ -1,9 +1,9 @@
 // Copyright (c) NIO Inc. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// nio_d2c_fusion.cpp — Depth-to-color fusion example. Composites depth
-// (jet-colored) and color into a 2×2 quad view, encoded to H.264.
-// Uses shared nio:: utilities from examples/utils/.
+// nio_d2c_fusion_cv.cpp — Depth-to-color fusion with OpenCV display.
+// Composites depth (colorized) and color into a BGR frame, encoded to
+// H.264 and shown via cv::imshow. Uses shared nio:: utilities.
 
 #include <libobsensor/ObSensor.hpp>
 #include "utils.hpp"
@@ -11,8 +11,8 @@
 #include "nio_common.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_stream_io.hpp"
-#include "nio_color_convert.hpp"
-
+#include "nio_color_convert_cv.hpp"
+#include <opencv2/opencv.hpp>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -37,8 +37,6 @@ struct DeviceFusion {
     std::shared_ptr<std::ofstream> fusedFile;
     std::mutex fusedMtx;
 
-    std::shared_ptr<MjpgDecoderRes> mjpgRes;
-
     int colorW;
     int colorH;
     int fps;
@@ -48,20 +46,10 @@ struct DeviceFusion {
     float depthMaxM;
 
     std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount;
-};
 
-static void printUsage() {
-    std::cout << "Usage: nio_d2c_fusion [device_name_filter...] [options]\n"
-              << "Options:\n"
-              << "  --alpha VALUE    Depth overlay opacity 0.0-1.0 (default: 0.5)\n"
-              << "  --depth-min M    Min depth in meters for colormap (default: 0.3)\n"
-              << "  --depth-max M    Max depth in meters for colormap (default: 5.0)\n"
-              << "  --help           Show this help\n"
-              << "\nExample:\n"
-              << "  nio_d2c_fusion                     # all devices, default alpha=0.5\n"
-              << "  nio_d2c_fusion 336L --alpha 0.7    # device with '336L' in name\n"
-              << std::endl;
-}
+    cv::Mat fusedBGR;
+    std::mutex displayMtx;
+};
 
 struct FusionConfig {
     float alpha = 0.5f;
@@ -69,6 +57,19 @@ struct FusionConfig {
     float depthMaxM = 5.0f;
     std::vector<std::string> deviceFilter;
 };
+
+static void printUsage() {
+    std::cout << "Usage: nio_d2c_fusion_cv [device_name_filter...] [options]\n"
+              << "Options:\n"
+              << "  --alpha VALUE   Depth overlay opacity 0.0-1.0 (default: 0.5)\n"
+              << "  --depth-min M   Min depth in meters for colormap (default: 0.3)\n"
+              << "  --depth-max M   Max depth in meters for colormap (default: 5.0)\n"
+              << "  --help          Show this help\n"
+              << "\nExample:\n"
+              << "  nio_d2c_fusion_cv                       # all devices, default alpha=0.5\n"
+              << "  nio_d2c_fusion_cv 336L --alpha 0.7      # device with '336L' in name\n"
+              << std::endl;
+}
 
 static FusionConfig parseArgs(int argc, char **argv) {
     FusionConfig cfg;
@@ -97,10 +98,10 @@ int main(int argc, char **argv) try {
 
     FusionConfig cfg = parseArgs(argc, argv);
 
-    NIO_LOG_INIT("nio_d2c_fusion", "fusion_output");
+    NIO_LOG_INIT("nio_d2c_fusion_cv", "fusion_cv_output");
     NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
     NIO_LOG_INFO_S("Process started, alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM
-                    << " depthMax=" << cfg.depthMaxM << " device_filter_count=" << cfg.deviceFilter.size());
+                   << " depthMax=" << cfg.depthMaxM << " device_filter_count=" << cfg.deviceFilter.size());
 
     ob::Context context;
 
@@ -112,7 +113,7 @@ int main(int argc, char **argv) try {
     }
 
     std::string sessionTimestamp = getTimestampMs();
-    std::string outputRootDir = "fusion_output/" + sessionTimestamp;
+    std::string outputRootDir = "fusion_cv_output/" + sessionTimestamp;
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
@@ -135,8 +136,8 @@ int main(int argc, char **argv) try {
                   << devInfo->getPid() << std::dec
                   << ", " << devInfo->getConnectionType() << ")" << std::endl;
         NIO_LOG_INFO_S("Found device: " << name << " SN=" << devInfo->getSerialNumber()
-                        << " PID=0x" << std::hex << devInfo->getPid() << std::dec
-                        << " conn=" << devInfo->getConnectionType());
+                       << " PID=0x" << std::hex << devInfo->getPid() << std::dec
+                       << " conn=" << devInfo->getConnectionType());
 
         auto safeName = name;
         std::replace(safeName.begin(), safeName.end(), ' ', '_');
@@ -163,7 +164,6 @@ int main(int argc, char **argv) try {
 
         df->pipeline = std::make_shared<ob::Pipeline>(device);
         auto config = std::make_shared<ob::Config>();
-
         config->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
 
         auto sensorList = device->getSensorList();
@@ -212,7 +212,8 @@ int main(int argc, char **argv) try {
                 if(hasColor) {
                     std::cout << "  Color: " << colorW << "x" << colorH
                               << "@" << colorFps << " format=" << colorFormat << std::endl;
-                    NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps << " format=" << colorFormat);
+                    NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH
+                                   << "@" << colorFps << " format=" << colorFormat);
                 }
                 break;
             case OB_SENSOR_DEPTH:
@@ -247,8 +248,8 @@ int main(int argc, char **argv) try {
                 if(hasDepth) {
                     std::cout << "  Depth: " << depthW << "x" << depthH
                               << "@" << depthFps << " format=" << depthFormat << std::endl;
-                    NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps
-                                    << " format=" << depthFormat);
+                    NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH
+                                   << "@" << depthFps << " format=" << depthFormat);
                 }
                 try {
                     int32_t precisionLevel = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
@@ -276,13 +277,14 @@ int main(int argc, char **argv) try {
             std::cerr << "  Device " << safeName
                       << " needs both color+depth for D2C fusion, skipping" << std::endl;
             NIO_LOG_WARN_S(safeName << " needs both color+depth for D2C fusion, hasColor="
-                            << hasColor << " hasDepth=" << hasDepth << ", skipping");
+                           << hasColor << " hasDepth=" << hasDepth << ", skipping");
             continue;
         }
 
         df->colorW = colorW;
         df->colorH = colorH;
         df->fps = std::min(colorFps, depthFps);
+        df->fusedBGR = cv::Mat::zeros(colorH, colorW, CV_8UC3);
 
         auto alignFilter = std::make_shared<ob::Align>(OB_STREAM_COLOR);
 
@@ -291,19 +293,12 @@ int main(int argc, char **argv) try {
         df->fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
 
         df->fusedEncoder = std::make_shared<H264Encoder>();
-        if(!df->fusedEncoder->initRGB(colorW, colorH, df->fps)) {
+        if(!df->fusedEncoder->initBGR(colorW, colorH, df->fps)) {
             std::cerr << "  Failed to init fused H264 encoder for " << safeName << std::endl;
             NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName
-                             << " " << colorW << "x" << colorH << "@" << df->fps);
+                            << " " << colorW << "x" << colorH << "@" << df->fps);
             continue;
         }
-
-        df->mjpgRes = std::make_shared<MjpgDecoderRes>();
-        df->mjpgRes->init(colorW, colorH, colorFormat);
-
-        int bufSize = colorW * colorH * 3;
-        auto colorRGB = std::make_shared<std::vector<uint8_t>>(bufSize, 0);
-        auto fusedRGB = std::make_shared<std::vector<uint8_t>>(bufSize, 0);
 
         auto pid = devInfo->getPid();
         auto vid = devInfo->getVid();
@@ -311,14 +306,11 @@ int main(int argc, char **argv) try {
             config->disableStream(OB_SENSOR_IR_LEFT);
         }
 
-        try {
-            df->pipeline->enableFrameSync();
-        } catch(...) {}
+        try { df->pipeline->enableFrameSync(); } catch(...) {}
 
         try {
             df->pipeline->start(config,
-                [df, alignFilter, colorRGB, fusedRGB, colorFormat]
-                (std::shared_ptr<ob::FrameSet> frameSet) {
+                [df, alignFilter](std::shared_ptr<ob::FrameSet> frameSet) {
                     if(!frameSet) return;
 
                     auto alignedFrame = alignFilter->process(frameSet);
@@ -331,88 +323,38 @@ int main(int argc, char **argv) try {
 
                     auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
                     auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
-
                     if(!colorFrame || !depthFrame) return;
 
-                    int w = df->colorW;
-                    int h = df->colorH;
-
-                    bool colorOk = decodeColorToRGB(
-                        colorFrame->getData(), colorFrame->getDataSize(), colorFormat,
-                        w, h, colorRGB->data(), df->mjpgRes);
-
-                    if(!colorOk) {
-                        memset(colorRGB->data(), 128, w * h * 3);
-                    }
-
-                    auto depthData = depthFrame->getData();
-                    auto depthSize = depthFrame->getDataSize();
-                    auto depthFmt = depthFrame->getFormat();
+                    cv::Mat colorBGR = frameToBGR(colorFrame);
+                    if(colorBGR.empty()) return;
 
                     float scale = df->depthScale;
                     try {
                         auto depthF = depthFrame->as<ob::DepthFrame>();
-                        if(depthF) {
-                            scale = depthF->getValueScale();
-                        }
+                        if(depthF) scale = depthF->getValueScale();
                     } catch(...) {}
 
-                    int depthW = w;
-                    int depthH = h;
-                    try {
-                        auto depthVF = depthFrame->as<ob::VideoFrame>();
-                        if(depthVF) {
-                            depthW = static_cast<int>(depthVF->getWidth());
-                            depthH = static_cast<int>(depthVF->getHeight());
-                        }
-                    } catch(...) {}
-
-                    float minDist = df->depthMinM;
-                    float maxDist = df->depthMaxM;
-                    float alpha = df->alpha;
-
-                    if(depthFmt == OB_FORMAT_Y16 && depthData && depthSize >= (uint32_t)(depthW * depthH * 2)) {
-                        const uint16_t *depthPtr = reinterpret_cast<const uint16_t *>(depthData);
-                        int blendW = std::min(w, depthW);
-                        int blendH = std::min(h, depthH);
-
-                        for(int y = 0; y < blendH; y++) {
-                            for(int x = 0; x < blendW; x++) {
-                                uint16_t rawVal = depthPtr[y * depthW + x];
-                                float distM = rawVal * scale / 1000.0f;
-
-                                if(rawVal == 0 || distM < minDist || distM > maxDist) {
-                                    int idx = (y * w + x) * 3;
-                                    (*fusedRGB)[idx + 0] = (*colorRGB)[idx + 0];
-                                    (*fusedRGB)[idx + 1] = (*colorRGB)[idx + 1];
-                                    (*fusedRGB)[idx + 2] = (*colorRGB)[idx + 2];
-                                } else {
-                                    float norm = (distM - minDist) / (maxDist - minDist);
-                                    norm = std::max(0.0f, std::min(1.0f, norm));
-                                    uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-                                    uint8_t cr, cg, cb;
-                                    jetColormap(v, cr, cg, cb);
-
-                                    int idx = (y * w + x) * 3;
-                                    float inv = 1.0f - alpha;
-                                    (*fusedRGB)[idx + 0] = static_cast<uint8_t>(
-                                        inv * (*colorRGB)[idx + 0] + alpha * cr + 0.5f);
-                                    (*fusedRGB)[idx + 1] = static_cast<uint8_t>(
-                                        inv * (*colorRGB)[idx + 1] + alpha * cg + 0.5f);
-                                    (*fusedRGB)[idx + 2] = static_cast<uint8_t>(
-                                        inv * (*colorRGB)[idx + 2] + alpha * cb + 0.5f);
-                                }
-                            }
-                        }
-                        for(int y = blendH; y < h; y++) {
-                            memcpy(fusedRGB->data() + y * w * 3,
-                                   colorRGB->data() + y * w * 3, w * 3);
-                        }
+                    cv::Mat depthColor = colorizeDepth(depthFrame, scale, df->depthMinM, df->depthMaxM);
+                    if(depthColor.empty()) {
+                        std::lock_guard<std::mutex> lock(df->displayMtx);
+                        colorBGR.copyTo(df->fusedBGR);
                     } else {
-                        memcpy(fusedRGB->data(), colorRGB->data(), w * h * 3);
+                        if(depthColor.size() != colorBGR.size()) {
+                            cv::resize(depthColor, depthColor, colorBGR.size());
+                        }
+
+                        cv::Mat blended;
+                        cv::addWeighted(colorBGR, 1.0 - df->alpha, depthColor, df->alpha, 0.0, blended);
+
+                        std::lock_guard<std::mutex> lock(df->displayMtx);
+                        blended.copyTo(df->fusedBGR);
                     }
 
-                    df->fusedEncoder->encodeRGB(fusedRGB->data(), *df->fusedFile, df->fusedMtx, getTimestampMsInt());
+                    {
+                        std::lock_guard<std::mutex> lock(df->displayMtx);
+                        df->fusedEncoder->encodeBGR(df->fusedBGR.data, *df->fusedFile,
+                                                    df->fusedMtx, getTimestampMsInt());
+                    }
                     (*df->fusedFrameCount)++;
                 });
         } catch(ob::Error &e) {
@@ -439,21 +381,55 @@ int main(int argc, char **argv) try {
         return -1;
     }
 
-    std::cout << "\n=== D2C Fusion recording started ===" << std::endl;
+    std::cout << "\n=== D2C Fusion+CV recording started ===" << std::endl;
     std::cout << "Output directory: " << outputRootDir << "/" << std::endl;
     std::cout << "Recording " << fusions.size() << " device(s)" << std::endl;
     std::cout << "Alpha: " << cfg.alpha << ", Depth range: "
               << cfg.depthMinM << "m - " << cfg.depthMaxM << "m" << std::endl;
     std::cout << "Press Ctrl+C or 'q' to stop.\n" << std::endl;
-    NIO_LOG_INFO_S("=== D2C Fusion recording started === devices=" << fusions.size()
-                    << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM << "m-" << cfg.depthMaxM << "m");
+    NIO_LOG_INFO_S("=== D2C Fusion+CV recording started === devices=" << fusions.size()
+                   << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM << "m-" << cfg.depthMaxM << "m");
     NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
+
+    cv::namedWindow("D2C Fusion", cv::WINDOW_NORMAL);
 
     auto lastReportTime = ob_smpl::getNowTimesMs();
 
     while(g_running) {
-        auto key = ob_smpl::waitForKeyPressed(2000);
-        if(key == ESC_KEY || key == 'q' || key == 'Q') {
+        {
+            cv::Mat display;
+            if(fusions.size() == 1) {
+                std::lock_guard<std::mutex> lock(fusions[0]->displayMtx);
+                fusions[0]->fusedBGR.copyTo(display);
+            } else {
+                std::vector<cv::Mat> mats;
+                for(auto &df : fusions) {
+                    std::lock_guard<std::mutex> lock(df->displayMtx);
+                    mats.push_back(df->fusedBGR.clone());
+                }
+                if(!mats.empty()) cv::hconcat(mats, display);
+            }
+
+            if(!display.empty()) {
+                auto now = std::chrono::system_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()).count();
+                time_t secs = static_cast<time_t>(ms / 1000);
+                struct tm t;
+                localtime_r(&secs, &t);
+                char timeBuf[64];
+                snprintf(timeBuf, sizeof(timeBuf), "%04d-%02d-%02d %02d:%02d:%02d",
+                         t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                         t.tm_hour, t.tm_min, t.tm_sec);
+                std::string overlay = std::string(timeBuf) + " alpha=" + std::to_string(cfg.alpha).substr(0, 4);
+                cv::putText(display, overlay, cv::Point(8, 24),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+                cv::imshow("D2C Fusion", display);
+            }
+        }
+
+        int key = cv::waitKey(1);
+        if(key == 27 || key == 'q' || key == 'Q') {
             g_running = false;
             break;
         }
@@ -468,10 +444,13 @@ int main(int argc, char **argv) try {
                 float rate = (reportDuration > 0) ? (count / (reportDuration / 1000.0f)) : 0.0f;
                 std::cout << "[" << df->deviceName << "] Fusion FPS: "
                           << std::fixed << std::setprecision(1) << rate << std::endl;
-                NIO_LOG_TRACE_S("[" << df->deviceName << "] Fusion FPS: " << std::fixed << std::setprecision(1) << rate);
+                NIO_LOG_TRACE_S("[" << df->deviceName << "] Fusion FPS: "
+                                << std::fixed << std::setprecision(1) << rate);
             }
         }
     }
+
+    cv::destroyAllWindows();
 
     std::cout << "\n=== Stopping fusion recording ===" << std::endl;
     NIO_LOG_INFO("=== Stopping fusion recording ===");
@@ -480,7 +459,6 @@ int main(int argc, char **argv) try {
         if(df->pipeline) df->pipeline->stop();
         if(df->fusedEncoder) df->fusedEncoder->close();
         if(df->fusedFile) df->fusedFile->close();
-        df->mjpgRes.reset();
         std::cout << "Stopped: " << df->deviceName << std::endl;
         NIO_LOG_INFO_S("Stopped device: " << df->deviceName);
     }

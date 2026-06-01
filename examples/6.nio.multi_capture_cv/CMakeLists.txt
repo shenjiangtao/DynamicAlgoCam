@@ -1,13 +1,13 @@
 # Copyright (c) NIO Inc. All Rights Reserved.
 # Licensed under the MIT License.
 #
-# nio_3d_render — Software 3D point-cloud renderer example.
-# FFmpeg deps are inherited via PUBLIC link from ob_examples_utils.
+# nio_multi_capture_cv — Multi-device capture with OpenCV display.
+# FFmpeg/OpenCV deps are inherited via PUBLIC link from ob_examples_utils.
 
 cmake_minimum_required(VERSION 3.10)
-project(nio_3d_render)
+project(nio_multi_capture_cv)
 
-add_executable(${PROJECT_NAME} nio_3d_render.cpp)
+add_executable(${PROJECT_NAME} nio_multi_capture_cv.cpp)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)

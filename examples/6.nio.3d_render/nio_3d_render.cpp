@@ -1,11 +1,21 @@
+// Copyright (c) NIO Inc. All Rights Reserved.
+// Licensed under the MIT License.
+//
+// nio_3d_render.cpp — Software 3D point-cloud renderer with IMU-based
+// camera pose tracking. Fuses color + depth into a rendered view,
+// encoded to H.264. Uses shared nio:: utilities from examples/utils/.
+
 #include <libobsensor/ObSensor.hpp>
 #include "utils.hpp"
 #include "nio_log.hpp"
+#include "nio_common.hpp"
+#include "nio_h264_encoder.hpp"
+#include "nio_stream_io.hpp"
+#include "nio_color_convert.hpp"
 
 #include <iostream>
 #include <iomanip>
 #include <sstream>
-#include <fstream>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -15,92 +25,11 @@
 #include <algorithm>
 #include <cstring>
 #include <csignal>
-#include <sys/stat.h>
 #include <chrono>
 #include <cmath>
 #include <numeric>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/opt.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-}
-
-static std::atomic<bool> g_running{true};
-static void signalHandler(int) { g_running = false; }
-
-static std::string getTimestampMs() {
-    auto now = std::chrono::system_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    return std::to_string(ms);
-}
-
-static uint64_t getTimestampMsInt() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-}
-
-static const char *SEI_COPYRIGHT = "Copyright jiangtao.shen@nio.com";
-
-static void writeSEINalUnit(std::ofstream &outFile, const std::string &payload, std::mutex &mtx) {
-    std::vector<uint8_t> rbsp;
-    const char *uuid = "nio@orbbec-fusio";
-    for(int i = 0; i < 16; i++) rbsp.push_back(static_cast<uint8_t>(uuid[i]));
-    for(size_t i = 0; i < payload.size(); i++) rbsp.push_back(static_cast<uint8_t>(payload[i]));
-
-    size_t payloadSize = rbsp.size();
-
-    std::vector<uint8_t> nal;
-    nal.push_back(0x00); nal.push_back(0x00);
-    nal.push_back(0x00); nal.push_back(0x01);
-    nal.push_back(0x06);
-    nal.push_back(0x05);
-
-    while(payloadSize >= 255) { nal.push_back(0xFF); payloadSize -= 255; }
-    nal.push_back(static_cast<uint8_t>(payloadSize));
-
-    int zeroCount = 0;
-    for(size_t i = 0; i < rbsp.size(); i++) {
-        uint8_t b = rbsp[i];
-        if(zeroCount >= 2 && b <= 0x03) {
-            nal.push_back(0x03);
-            zeroCount = 0;
-        }
-        nal.push_back(b);
-        if(b == 0x00) zeroCount++; else zeroCount = 0;
-    }
-
-    nal.push_back(0x80);
-
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        outFile.write(reinterpret_cast<const char *>(nal.data()), nal.size());
-    }
-}
-
-static void mkdirp(const std::string &path) {
-    size_t pos = 0;
-    std::string tmp;
-    while((pos = path.find('/', pos + 1)) != std::string::npos) {
-        tmp = path.substr(0, pos);
-        mkdir(tmp.c_str(), 0755);
-    }
-    mkdir(path.c_str(), 0755);
-}
-
-static void jetColormap(uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
-    float t = v / 255.0f;
-    float rv, gv, bv;
-    if(t < 0.125f) { rv = 0.0f; gv = 0.0f; bv = 0.5f + t * 4.0f; }
-    else if(t < 0.375f) { rv = 0.0f; gv = (t - 0.125f) * 4.0f; bv = 1.0f; }
-    else if(t < 0.625f) { rv = (t - 0.375f) * 4.0f; gv = 1.0f; bv = 1.0f - (t - 0.375f) * 4.0f; }
-    else if(t < 0.875f) { rv = 1.0f; gv = 1.0f - (t - 0.625f) * 4.0f; bv = 0.0f; }
-    else { rv = 1.0f - (t - 0.875f) * 4.0f; gv = 0.0f; bv = 0.0f; }
-    r = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, rv * 255.0f)));
-    g = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, gv * 255.0f)));
-    b = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, bv * 255.0f)));
-}
+using namespace nio;
 
 struct Vec3 {
     float x, y, z;
@@ -135,8 +64,8 @@ struct Mat3x3 {
     static Mat3x3 rotationY(float angleRad) {
         Mat3x3 r;
         float c = std::cos(angleRad), s = std::sin(angleRad);
-        r.m[0][0]=c;  r.m[0][1]=0; r.m[0][2]=s;
-        r.m[1][0]=0;  r.m[1][1]=1; r.m[1][2]=0;
+        r.m[0][0]=c; r.m[0][1]=0; r.m[0][2]=s;
+        r.m[1][0]=0; r.m[1][1]=1; r.m[1][2]=0;
         r.m[2][0]=-s; r.m[2][1]=0; r.m[2][2]=c;
         return r;
     }
@@ -144,8 +73,8 @@ struct Mat3x3 {
         Mat3x3 r;
         float c = std::cos(angleRad), s = std::sin(angleRad);
         r.m[0][0]=c; r.m[0][1]=-s; r.m[0][2]=0;
-        r.m[1][0]=s; r.m[1][1]=c;  r.m[1][2]=0;
-        r.m[2][0]=0; r.m[2][1]=0;  r.m[2][2]=1;
+        r.m[1][0]=s; r.m[1][1]=c; r.m[1][2]=0;
+        r.m[2][0]=0; r.m[2][1]=0; r.m[2][2]=1;
         return r;
     }
     Mat3x3 operator*(const Mat3x3 &o) const {
@@ -177,244 +106,6 @@ struct Camera3D {
     Vec3 up() const { return rot * Vec3(0, 1, 0); }
     Vec3 right() const { return rot * Vec3(1, 0, 0); }
 };
-
-struct MjpgDecoderRes {
-    AVCodecContext *ctx = nullptr;
-    AVPacket *pkt = nullptr;
-    AVFrame *decFrame = nullptr;
-    SwsContext *sws = nullptr;
-
-    MjpgDecoderRes() : pkt(nullptr), decFrame(nullptr), sws(nullptr) {}
-
-    ~MjpgDecoderRes() {
-        if(sws) sws_freeContext(sws);
-        if(decFrame) av_frame_free(&decFrame);
-        if(pkt) av_packet_free(&pkt);
-        if(ctx) avcodec_free_context(&ctx);
-    }
-
-    bool init(int w, int h, OBFormat fmt) {
-        pkt = av_packet_alloc();
-        decFrame = av_frame_alloc();
-        if(fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
-            auto codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
-            if(codec) {
-                ctx = avcodec_alloc_context3(codec);
-                if(ctx) {
-                    ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-                    ctx->width = w;
-                    ctx->height = h;
-                    if(avcodec_open2(ctx, codec, nullptr) < 0) {
-                        avcodec_free_context(&ctx);
-                        ctx = nullptr;
-                    }
-                }
-            }
-            sws = sws_getContext(w, h, AV_PIX_FMT_YUV420P,
-                w, h, AV_PIX_FMT_RGB24,
-                SWS_BILINEAR, nullptr, nullptr, nullptr);
-        }
-        return true;
-    }
-};
-
-class H264Encoder {
-public:
-    H264Encoder() : codecCtx_(nullptr), frame_(nullptr), pkt_(nullptr), swsCtx_(nullptr),
-        pts_(0), width_(0), height_(0), initialized_(false), seiWritten_(false) {}
-    ~H264Encoder() { close(); }
-
-    bool init(int width, int height, int fps) {
-        width_ = width; height_ = height;
-        const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-        if(!codec) return false;
-        codecCtx_ = avcodec_alloc_context3(codec);
-        if(!codecCtx_) return false;
-        codecCtx_->bit_rate = 6000000;
-        codecCtx_->width = width;
-        codecCtx_->height = height;
-        AVRational tb = {1, fps}; AVRational fr = {fps, 1};
-        codecCtx_->time_base = tb; codecCtx_->framerate = fr;
-        codecCtx_->gop_size = fps;
-        codecCtx_->max_b_frames = 0;
-        codecCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
-        codecCtx_->qmin = 10; codecCtx_->qmax = 30;
-        av_opt_set(codecCtx_->priv_data, "preset", "ultrafast", 0);
-        av_opt_set(codecCtx_->priv_data, "tune", "zerolatency", 0);
-        if(avcodec_open2(codecCtx_, codec, nullptr) < 0) {
-            avcodec_free_context(&codecCtx_); codecCtx_ = nullptr; return false;
-        }
-        frame_ = av_frame_alloc();
-        if(!frame_) { close(); return false; }
-        frame_->format = AV_PIX_FMT_YUV420P;
-        frame_->width = width; frame_->height = height;
-        if(av_frame_get_buffer(frame_, 0) < 0) { close(); return false; }
-        pkt_ = av_packet_alloc();
-        if(!pkt_) { close(); return false; }
-        swsCtx_ = sws_getContext(width, height, AV_PIX_FMT_RGB24,
-            width, height, AV_PIX_FMT_YUV420P,
-            SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if(!swsCtx_) { close(); return false; }
-        initialized_ = true;
-        return true;
-    }
-
-    void close() {
-        if(swsCtx_) { sws_freeContext(swsCtx_); swsCtx_ = nullptr; }
-        if(frame_) av_frame_free(&frame_);
-        if(pkt_) av_packet_free(&pkt_);
-        if(codecCtx_) avcodec_free_context(&codecCtx_);
-        initialized_ = false;
-    }
-
-    bool encodeRGB(const uint8_t *rgbData, std::ofstream &outFile, std::mutex &mtx,
-                   uint64_t frameTimestampMs) {
-        if(!initialized_ || !codecCtx_ || !swsCtx_) return false;
-        int srcStride = width_ * 3;
-        const uint8_t *srcSlice[1] = { rgbData };
-        if(av_frame_make_writable(frame_) < 0) return false;
-        sws_scale(swsCtx_, srcSlice, &srcStride, 0, height_,
-            frame_->data, frame_->linesize);
-        frame_->pts = pts_++;
-        int ret = avcodec_send_frame(codecCtx_, frame_);
-        if(ret < 0) return false;
-
-        if(!seiWritten_) {
-            writeSEINalUnit(outFile, SEI_COPYRIGHT, mtx);
-            seiWritten_ = true;
-        }
-        std::ostringstream tsStr;
-        tsStr << "ts=" << frameTimestampMs;
-        writeSEINalUnit(outFile, tsStr.str(), mtx);
-
-        bool wrote = false;
-        while(ret >= 0) {
-            ret = avcodec_receive_packet(codecCtx_, pkt_);
-            if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-            if(ret < 0) break;
-            { std::lock_guard<std::mutex> lock(mtx);
-              outFile.write(reinterpret_cast<const char *>(pkt_->data), pkt_->size);
-              outFile.flush(); }
-            wrote = true;
-            av_packet_unref(pkt_);
-        }
-        return wrote;
-    }
-
-private:
-    AVCodecContext *codecCtx_; AVFrame *frame_; AVPacket *pkt_;
-    SwsContext *swsCtx_; int64_t pts_; int width_, height_;
-    bool initialized_; bool seiWritten_;
-};
-
-static bool decodeColorToRGB(const uint8_t *data, uint32_t size, OBFormat format,
-    int w, int h, uint8_t *rgbBuf, std::shared_ptr<MjpgDecoderRes> mjpg) {
-    if(format == OB_FORMAT_RGB) { memcpy(rgbBuf, data, w*h*3); return true; }
-    if(format == OB_FORMAT_BGR) {
-        for(int i=0; i<w*h; i++) { rgbBuf[i*3]=data[i*3+2]; rgbBuf[i*3+1]=data[i*3+1]; rgbBuf[i*3+2]=data[i*3+0]; }
-        return true;
-    }
-    if(format == OB_FORMAT_MJPG || format == OB_FORMAT_MJPEG) {
-        if(!mjpg->ctx || !mjpg->sws) return false;
-        mjpg->pkt->data = const_cast<uint8_t *>(data); mjpg->pkt->size = size;
-        if(avcodec_send_packet(mjpg->ctx, mjpg->pkt) < 0) return false;
-        if(avcodec_receive_frame(mjpg->ctx, mjpg->decFrame) < 0) return false;
-        AVFrame *tmp = av_frame_alloc();
-        if(!tmp) return false;
-        tmp->format = AV_PIX_FMT_RGB24; tmp->width = w; tmp->height = h;
-        if(av_frame_get_buffer(tmp, 0) < 0) { av_frame_free(&tmp); return false; }
-        sws_scale(mjpg->sws, mjpg->decFrame->data, mjpg->decFrame->linesize, 0, h, tmp->data, tmp->linesize);
-        for(int row=0; row<h; row++) memcpy(rgbBuf+row*w*3, tmp->data[0]+row*tmp->linesize[0], w*3);
-        av_frame_free(&tmp);
-        return true;
-    }
-    return false;
-}
-
-static std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(
-    std::shared_ptr<ob::StreamProfileList> profiles, OBFormat preferredFormat) {
-    std::shared_ptr<ob::VideoStreamProfile> best;
-    int bestScore = -1;
-    for(uint32_t i = 0; i < profiles->getCount(); i++) {
-        try {
-            auto sp = profiles->getProfile(i); if(!sp) continue;
-            auto vsp = sp->as<ob::VideoStreamProfile>(); if(!vsp) continue;
-            int score = 0;
-            if(vsp->getFormat() == preferredFormat) score += 1000;
-            if(vsp->getWidth() == 640) score += 100;
-            else if(vsp->getWidth() == 848) score += 90;
-            else if(vsp->getWidth() == 1280) score += 80;
-            if(vsp->getFps() == 30) score += 50;
-            else if(vsp->getFps() == 25) score += 45;
-            if(score > bestScore) { bestScore = score; best = vsp; }
-        } catch(...) { continue; }
-    }
-    if(!best && profiles->getCount() > 0) {
-        try { best = profiles->getProfile(0)->as<ob::VideoStreamProfile>(); } catch(...) {}
-    }
-    return best;
-}
-
-struct RenderConfig {
-    int outW, outH, outFps;
-    float autoRotateSpeed;
-    float camOrbitRadius;
-    float camHeight;
-    float camFov;
-    float depthMinM, depthMaxM;
-    float depthAlpha;
-    int pointSkip;
-    std::vector<std::string> deviceFilter;
-};
-
-static RenderConfig parseArgs(int argc, char **argv) {
-    RenderConfig cfg;
-    cfg.outW = 1280; cfg.outH = 720; cfg.outFps = 30;
-    cfg.autoRotateSpeed = 0.3f;
-    cfg.camOrbitRadius = 2.5f;
-    cfg.camHeight = 0.5f;
-    cfg.camFov = 70.0f;
-    cfg.depthMinM = 0.1f; cfg.depthMaxM = 8.0f;
-    cfg.depthAlpha = 0.6f;
-    cfg.pointSkip = 2;
-    for(int i=1; i<argc; i++) {
-        std::string arg = argv[i];
-        if(arg == "--out-w" && i+1<argc) cfg.outW = std::stoi(argv[++i]);
-        else if(arg == "--out-h" && i+1<argc) cfg.outH = std::stoi(argv[++i]);
-        else if(arg == "--out-fps" && i+1<argc) cfg.outFps = std::stoi(argv[++i]);
-        else if(arg == "--rotate-speed" && i+1<argc) cfg.autoRotateSpeed = std::stof(argv[++i]);
-        else if(arg == "--orbit-radius" && i+1<argc) cfg.camOrbitRadius = std::stof(argv[++i]);
-        else if(arg == "--cam-height" && i+1<argc) cfg.camHeight = std::stof(argv[++i]);
-        else if(arg == "--depth-min" && i+1<argc) cfg.depthMinM = std::stof(argv[++i]);
-        else if(arg == "--depth-max" && i+1<argc) cfg.depthMaxM = std::stof(argv[++i]);
-        else if(arg == "--depth-alpha" && i+1<argc) cfg.depthAlpha = std::stof(argv[++i]);
-        else if(arg == "--point-skip" && i+1<argc) cfg.pointSkip = std::stoi(argv[++i]);
-        else if(arg == "--no-rotate") cfg.autoRotateSpeed = 0.0f;
-        else if(arg == "--help") {
-            std::cout << "Usage: nio_3d_render [device_filter...] [options]\n"
-                << "  --out-w W          Output width (default: 1280)\n"
-                << "  --out-h H          Output height (default: 720)\n"
-                << "  --out-fps FPS      Output FPS (default: 30)\n"
-                << "  --rotate-speed SPD Auto-rotate speed rad/s (default: 0.3)\n"
-                << "  --no-rotate        Disable auto-rotation\n"
-                << "  --orbit-radius R   Camera orbit radius m (default: 2.5)\n"
-                << "  --cam-height H     Camera height m (default: 0.5)\n"
-                << "  --depth-min M      Min depth m (default: 0.1)\n"
-                << "  --depth-max M      Max depth m (default: 8.0)\n"
-                << "  --depth-alpha A    Depth color alpha 0-1 (default: 0.6)\n"
-                << "  --point-skip N     Skip every N-th point (default: 2)\n";
-            exit(0);
-        }
-        else if(arg.substr(0,2) != "--") cfg.deviceFilter.push_back(arg);
-    }
-    return cfg;
-}
-
-static bool deviceMatches(const std::string &name, const std::vector<std::string> &filter) {
-    if(filter.empty()) return true;
-    for(const auto &f : filter) if(name.find(f) != std::string::npos) return true;
-    return false;
-}
 
 struct IMUState {
     std::mutex mtx;
@@ -468,10 +159,22 @@ struct DeviceRender {
     int latestIRRightW, latestIRRightH;
 
     DeviceRender() : hasIMU(false), depthScale(0.001f), colorFormat(OB_FORMAT_UNKNOWN),
-        colorW(0), colorH(0), depthW(0), depthH(0), hasIntrinsics(false),
-        latestDataReady(false), latestDepthW(0), latestDepthH(0), latestScale(0.001f),
-        latestColorW(0), latestColorH(0), latestIRLeftW(0), latestIRLeftH(0),
-        latestIRRightW(0), latestIRRightH(0) {}
+    colorW(0), colorH(0), depthW(0), depthH(0), hasIntrinsics(false),
+    latestDataReady(false), latestDepthW(0), latestDepthH(0), latestScale(0.001f),
+    latestColorW(0), latestColorH(0), latestIRLeftW(0), latestIRLeftH(0),
+    latestIRRightW(0), latestIRRightH(0) {}
+};
+
+struct RenderConfig {
+    int outW, outH, outFps;
+    float autoRotateSpeed;
+    float camOrbitRadius;
+    float camHeight;
+    float camFov;
+    float depthMinM, depthMaxM;
+    float depthAlpha;
+    int pointSkip;
+    std::vector<std::string> deviceFilter;
 };
 
 struct ScenePoint {
@@ -683,7 +386,7 @@ private:
         float halfW, float halfH) {
         int steps = 60;
         for(int i = 0; i < steps; i++) {
-        float t0 = (float)i / steps;
+            float t0 = (float)i / steps;
             Vec3 wp = p0 * (1.0f - t0) + p1 * t0;
             Vec3 rel = wp - camera_.pos;
             float zc = rel.dot(camFwd);
@@ -717,65 +420,65 @@ private:
 
     void drawChar5x7(int x0, int y0, char c, uint8_t r, uint8_t g, uint8_t b) {
         static const uint8_t font5x7[][5] = {
-            {0x00,0x00,0x00,0x00,0x00}, // space
-            {0x00,0x00,0x5F,0x00,0x00}, // !
-            {0x00,0x03,0x00,0x03,0x00}, // "
-            {0x14,0x3E,0x14,0x3E,0x14}, // #
-            {0x24,0x2A,0x7F,0x2A,0x12}, // $
-            {0x23,0x13,0x08,0x64,0x62}, // %
-            {0x36,0x49,0x55,0x22,0x50}, // &
-            {0x00,0x05,0x03,0x00,0x00}, // '
-            {0x00,0x1C,0x22,0x41,0x00}, // (
-            {0x00,0x41,0x22,0x1C,0x00}, // )
-            {0x08,0x2A,0x1C,0x2A,0x08}, // *
-            {0x08,0x08,0x3E,0x08,0x08}, // +
-            {0x00,0x50,0x30,0x00,0x00}, // ,
-            {0x08,0x08,0x08,0x08,0x08}, // -
-            {0x00,0x60,0x60,0x00,0x00}, // .
-            {0x20,0x10,0x08,0x04,0x02}, // /
-            {0x3E,0x51,0x49,0x45,0x3E}, // 0
-            {0x00,0x42,0x7F,0x40,0x00}, // 1
-            {0x42,0x61,0x51,0x49,0x46}, // 2
-            {0x21,0x41,0x45,0x4B,0x31}, // 3
-            {0x18,0x14,0x12,0x7F,0x10}, // 4
-            {0x27,0x45,0x45,0x45,0x39}, // 5
-            {0x3C,0x4A,0x49,0x49,0x30}, // 6
-            {0x01,0x71,0x09,0x05,0x03}, // 7
-            {0x36,0x49,0x49,0x49,0x36}, // 8
-            {0x06,0x49,0x49,0x29,0x1E}, // 9
-            {0x00,0x36,0x36,0x00,0x00}, // :
-            {0x00,0x56,0x36,0x00,0x00}, // ;
-            {0x00,0x08,0x14,0x22,0x41}, // <
-            {0x14,0x14,0x14,0x14,0x14}, // =
-            {0x41,0x22,0x14,0x08,0x00}, // >
-            {0x02,0x01,0x51,0x09,0x06}, // ?
-            {0x32,0x49,0x79,0x41,0x3E}, // @
-            {0x7E,0x09,0x09,0x09,0x7E}, // A
-            {0x7F,0x49,0x49,0x49,0x36}, // B
-            {0x3E,0x41,0x41,0x41,0x22}, // C
-            {0x7F,0x41,0x41,0x22,0x1C}, // D
-            {0x7F,0x49,0x49,0x49,0x41}, // E
-            {0x7F,0x09,0x09,0x01,0x01}, // F
-            {0x3E,0x41,0x41,0x49,0x3A}, // G
-            {0x7F,0x08,0x08,0x08,0x7F}, // H
-            {0x00,0x41,0x7F,0x41,0x00}, // I
-            {0x20,0x40,0x41,0x3F,0x01}, // J
-            {0x7F,0x08,0x14,0x22,0x41}, // K
-            {0x7F,0x40,0x40,0x40,0x40}, // L
-            {0x7F,0x02,0x04,0x02,0x7F}, // M
-            {0x7F,0x04,0x08,0x10,0x7F}, // N
-            {0x3E,0x41,0x41,0x41,0x3E}, // O
-            {0x7F,0x09,0x09,0x09,0x06}, // P
-            {0x3E,0x41,0x51,0x21,0x5E}, // Q
-            {0x7F,0x09,0x09,0x19,0x66}, // R
-            {0x26,0x49,0x49,0x49,0x32}, // S
-            {0x01,0x01,0x7F,0x01,0x01}, // T
-            {0x3F,0x40,0x40,0x40,0x3F}, // U
-            {0x1F,0x20,0x40,0x20,0x1F}, // V
-            {0x7F,0x20,0x10,0x20,0x7F}, // W
-            {0x63,0x14,0x08,0x14,0x63}, // X
-            {0x07,0x08,0x70,0x08,0x07}, // Y
-            {0x61,0x51,0x49,0x45,0x43}, // Z
+            {0x00,0x00,0x00,0x00,0x00},
+            {0x00,0x00,0x5F,0x00,0x00},
+            {0x00,0x03,0x00,0x03,0x00},
+            {0x14,0x3E,0x14,0x3E,0x14},
+            {0x24,0x2A,0x7F,0x2A,0x12},
+            {0x23,0x13,0x08,0x64,0x62},
+            {0x36,0x49,0x55,0x22,0x50},
+            {0x00,0x05,0x03,0x00,0x00},
+            {0x00,0x1C,0x22,0x41,0x00},
+            {0x00,0x41,0x22,0x1C,0x00},
+            {0x08,0x2A,0x1C,0x2A,0x08},
+            {0x08,0x08,0x3E,0x08,0x08},
+            {0x00,0x50,0x30,0x00,0x00},
+            {0x08,0x08,0x08,0x08,0x08},
+            {0x00,0x60,0x60,0x00,0x00},
+            {0x20,0x10,0x08,0x04,0x02},
+            {0x3E,0x51,0x49,0x45,0x3E},
+            {0x00,0x42,0x7F,0x40,0x00},
+            {0x42,0x61,0x51,0x49,0x46},
+            {0x21,0x41,0x45,0x4B,0x31},
+            {0x18,0x14,0x12,0x7F,0x10},
+            {0x27,0x45,0x45,0x45,0x39},
+            {0x3C,0x4A,0x49,0x49,0x30},
+            {0x01,0x71,0x09,0x05,0x03},
+            {0x36,0x49,0x49,0x49,0x36},
+            {0x06,0x49,0x49,0x29,0x1E},
+            {0x00,0x36,0x36,0x00,0x00},
+            {0x00,0x56,0x36,0x00,0x00},
+            {0x00,0x08,0x14,0x22,0x41},
+            {0x14,0x14,0x14,0x14,0x14},
+            {0x41,0x22,0x14,0x08,0x00},
+            {0x02,0x01,0x51,0x09,0x06},
+            {0x32,0x49,0x79,0x41,0x3E},
+            {0x7E,0x09,0x09,0x09,0x7E},
+            {0x7F,0x49,0x49,0x49,0x36},
+            {0x3E,0x41,0x41,0x41,0x22},
+            {0x7F,0x41,0x41,0x22,0x1C},
+            {0x7F,0x49,0x49,0x49,0x41},
+            {0x7F,0x09,0x09,0x01,0x01},
+            {0x3E,0x41,0x41,0x49,0x3A},
+            {0x7F,0x08,0x08,0x08,0x7F},
+            {0x00,0x41,0x7F,0x41,0x00},
+            {0x20,0x40,0x41,0x3F,0x01},
+            {0x7F,0x08,0x14,0x22,0x41},
+            {0x7F,0x40,0x40,0x40,0x40},
+            {0x7F,0x02,0x04,0x02,0x7F},
+            {0x7F,0x04,0x08,0x10,0x7F},
+            {0x3E,0x41,0x41,0x41,0x3E},
+            {0x7F,0x09,0x09,0x09,0x06},
+            {0x3E,0x41,0x51,0x21,0x5E},
+            {0x7F,0x09,0x09,0x19,0x66},
+            {0x26,0x49,0x49,0x49,0x32},
+            {0x01,0x01,0x7F,0x01,0x01},
+            {0x3F,0x40,0x40,0x40,0x3F},
+            {0x1F,0x20,0x40,0x20,0x1F},
+            {0x7F,0x20,0x10,0x20,0x7F},
+            {0x63,0x14,0x08,0x14,0x63},
+            {0x07,0x08,0x70,0x08,0x07},
+            {0x61,0x51,0x49,0x45,0x43},
         };
         int idx = c - ' ';
         if(idx < 0 || idx >= (int)(sizeof(font5x7)/sizeof(font5x7[0]))) return;
@@ -803,6 +506,49 @@ private:
     std::vector<ScenePoint> points_;
     Mat3x3 imuOrientation_;
 };
+
+static RenderConfig parseArgs(int argc, char **argv) {
+    RenderConfig cfg;
+    cfg.outW = 1280; cfg.outH = 720; cfg.outFps = 30;
+    cfg.autoRotateSpeed = 0.3f;
+    cfg.camOrbitRadius = 2.5f;
+    cfg.camHeight = 0.5f;
+    cfg.camFov = 70.0f;
+    cfg.depthMinM = 0.1f; cfg.depthMaxM = 8.0f;
+    cfg.depthAlpha = 0.6f;
+    cfg.pointSkip = 2;
+    for(int i=1; i<argc; i++) {
+        std::string arg = argv[i];
+        if(arg == "--out-w" && i+1<argc) cfg.outW = std::stoi(argv[++i]);
+        else if(arg == "--out-h" && i+1<argc) cfg.outH = std::stoi(argv[++i]);
+        else if(arg == "--out-fps" && i+1<argc) cfg.outFps = std::stoi(argv[++i]);
+        else if(arg == "--rotate-speed" && i+1<argc) cfg.autoRotateSpeed = std::stof(argv[++i]);
+        else if(arg == "--orbit-radius" && i+1<argc) cfg.camOrbitRadius = std::stof(argv[++i]);
+        else if(arg == "--cam-height" && i+1<argc) cfg.camHeight = std::stof(argv[++i]);
+        else if(arg == "--depth-min" && i+1<argc) cfg.depthMinM = std::stof(argv[++i]);
+        else if(arg == "--depth-max" && i+1<argc) cfg.depthMaxM = std::stof(argv[++i]);
+        else if(arg == "--depth-alpha" && i+1<argc) cfg.depthAlpha = std::stof(argv[++i]);
+        else if(arg == "--point-skip" && i+1<argc) cfg.pointSkip = std::stoi(argv[++i]);
+        else if(arg == "--no-rotate") cfg.autoRotateSpeed = 0.0f;
+        else if(arg == "--help") {
+            std::cout << "Usage: nio_3d_render [device_filter...] [options]\n"
+                << "  --out-w W          Output width (default: 1280)\n"
+                << "  --out-h H          Output height (default: 720)\n"
+                << "  --out-fps FPS      Output FPS (default: 30)\n"
+                << "  --rotate-speed SPD Auto-rotate speed rad/s (default: 0.3)\n"
+                << "  --no-rotate        Disable auto-rotation\n"
+                << "  --orbit-radius R   Camera orbit radius m (default: 2.5)\n"
+                << "  --cam-height H     Camera height m (default: 0.5)\n"
+                << "  --depth-min M      Min depth m (default: 0.1)\n"
+                << "  --depth-max M      Max depth m (default: 8.0)\n"
+                << "  --depth-alpha A    Depth color alpha 0-1 (default: 0.6)\n"
+                << "  --point-skip N     Skip every N-th point (default: 2)\n";
+            exit(0);
+        }
+        else if(arg.substr(0,2) != "--") cfg.deviceFilter.push_back(arg);
+    }
+    return cfg;
+}
 
 int main(int argc, char **argv) try {
     std::signal(SIGINT, signalHandler);
@@ -907,8 +653,8 @@ int main(int argc, char **argv) try {
                         colorW = colorProfile->getWidth(); colorH = colorProfile->getHeight(); colorFps = colorProfile->getFps();
                     } else { hasColor = false; }
                 } else { hasColor = false; }
-        if(hasColor) std::cout << " Color: " << colorW << "x" << colorH << "@" << colorFps << " fmt=" << colorFormat << std::endl;
-        if(hasColor) NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps << " fmt=" << colorFormat);
+                if(hasColor) std::cout << "  Color: " << colorW << "x" << colorH << "@" << colorFps << " fmt=" << colorFormat << std::endl;
+                if(hasColor) NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps << " fmt=" << colorFormat);
                 break;
             case OB_SENSOR_DEPTH:
                 hasDepth = true;
@@ -927,9 +673,9 @@ int main(int argc, char **argv) try {
                         depthW = depthProfile->getWidth(); depthH = depthProfile->getHeight(); depthFps = depthProfile->getFps();
                     } else { hasDepth = false; }
                 } else { hasDepth = false; }
-        if(hasDepth) std::cout << " Depth: " << depthW << "x" << depthH << "@" << depthFps << " fmt=" << depthFormat << std::endl;
-        if(hasDepth) NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps << " fmt=" << depthFormat
-            << " scale=" << dr->depthScale);
+                if(hasDepth) std::cout << "  Depth: " << depthW << "x" << depthH << "@" << depthFps << " fmt=" << depthFormat << std::endl;
+                if(hasDepth) NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps << " fmt=" << depthFormat
+                    << " scale=" << dr->depthScale);
                 try {
                     int32_t pl = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     switch(pl) { case 0: dr->depthScale=0.001f; break; case 1: dr->depthScale=0.0005f; break;
@@ -946,8 +692,8 @@ int main(int argc, char **argv) try {
                     config->enableStream(irLeftProfile);
                     irLW = irLeftProfile->getWidth(); irLH = irLeftProfile->getHeight(); irLFps = irLeftProfile->getFps();
                 } else { hasIRLeft = false; }
-        if(hasIRLeft) std::cout << " IR Left: " << irLW << "x" << irLH << "@" << irLFps << " fmt=" << irLeftFormat << std::endl;
-        if(hasIRLeft) NIO_LOG_INFO_S("IR Left stream: " << irLW << "x" << irLH << "@" << irLFps << " fmt=" << irLeftFormat);
+                if(hasIRLeft) std::cout << "  IR Left: " << irLW << "x" << irLH << "@" << irLFps << " fmt=" << irLeftFormat << std::endl;
+                if(hasIRLeft) NIO_LOG_INFO_S("IR Left stream: " << irLW << "x" << irLH << "@" << irLFps << " fmt=" << irLeftFormat);
                 break;
             case OB_SENSOR_IR_RIGHT:
                 hasIRRight = true;
@@ -958,8 +704,8 @@ int main(int argc, char **argv) try {
                     config->enableStream(irRightProfile);
                     irRW = irRightProfile->getWidth(); irRH = irRightProfile->getHeight(); irRFps = irRightProfile->getFps();
                 } else { hasIRRight = false; }
-        if(hasIRRight) std::cout << " IR Right: " << irRW << "x" << irRH << "@" << irRFps << " fmt=" << irRightFormat << std::endl;
-        if(hasIRRight) NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps << " fmt=" << irRightFormat);
+                if(hasIRRight) std::cout << "  IR Right: " << irRW << "x" << irRH << "@" << irRFps << " fmt=" << irRightFormat << std::endl;
+                if(hasIRRight) NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps << " fmt=" << irRightFormat);
                 break;
             case OB_SENSOR_ACCEL: hasAccel = true; break;
             case OB_SENSOR_GYRO: hasGyro = true; break;
@@ -971,14 +717,14 @@ int main(int argc, char **argv) try {
         if(ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
             config->disableStream(OB_SENSOR_IR_LEFT);
             hasIRLeft = false;
-        std::cout << " Gemini 305g: disabled IR_LEFT" << std::endl;
-        NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
+            std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
+            NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
         }
 
-    if(!hasDepth) {
-        std::cerr << " " << safeName << " has no depth sensor, skipping" << std::endl;
-        NIO_LOG_WARN_S(safeName << " has no depth sensor, skipping 3D render");
-        continue;
+        if(!hasDepth) {
+            std::cerr << "  " << safeName << " has no depth sensor, skipping" << std::endl;
+            NIO_LOG_WARN_S(safeName << " has no depth sensor, skipping 3D render");
+            continue;
         }
 
         dr->colorFormat = colorFormat;
@@ -992,56 +738,56 @@ int main(int argc, char **argv) try {
             dr->alignFilter = std::make_shared<ob::Align>(OB_STREAM_COLOR);
         }
 
-try {
-    OBCalibrationParam calibParam = {};
-    bool gotCalib = false;
-    try {
-        calibParam = dr->videoPipeline->getCalibrationParam(config);
-        gotCalib = true;
-    } catch(...) {}
+        try {
+            OBCalibrationParam calibParam = {};
+            bool gotCalib = false;
+            try {
+                calibParam = dr->videoPipeline->getCalibrationParam(config);
+                gotCalib = true;
+            } catch(...) {}
 
-    if(gotCalib) {
-        dr->depthIntrinsic = calibParam.intrinsics[OB_SENSOR_DEPTH];
-        dr->depthDistortion = calibParam.distortion[OB_SENSOR_DEPTH];
-        dr->depthToColorExtrinsic = calibParam.extrinsics[OB_SENSOR_DEPTH][OB_SENSOR_COLOR];
-    } else {
-        auto camParam = dr->videoPipeline->getCameraParam();
-        dr->depthIntrinsic = camParam.depthIntrinsic;
-        dr->depthDistortion = camParam.depthDistortion;
-        dr->depthToColorExtrinsic = camParam.transform;
-    }
-    if(dr->depthIntrinsic.fx < 1.0f || dr->depthIntrinsic.fy < 1.0f) {
-            std::cout << " WARNING: Zero/invalid intrinsics from SDK, using computed defaults" << std::endl;
-            NIO_LOG_WARN_S("Zero/invalid intrinsics from SDK for " << safeName << ", using computed defaults: fx=" << dr->depthIntrinsic.fx);
-        dr->depthIntrinsic.fx = depthW * 0.5f / std::tan(70.0f * 3.14159265f / 360.0f);
-        dr->depthIntrinsic.fy = dr->depthIntrinsic.fx;
-        dr->depthIntrinsic.cx = depthW * 0.5f;
-        dr->depthIntrinsic.cy = depthH * 0.5f;
-        memset(dr->depthToColorExtrinsic.rot, 0, sizeof(dr->depthToColorExtrinsic.rot));
-        dr->depthToColorExtrinsic.rot[0] = 1; dr->depthToColorExtrinsic.rot[4] = 1; dr->depthToColorExtrinsic.rot[8] = 1;
-        memset(dr->depthToColorExtrinsic.trans, 0, sizeof(dr->depthToColorExtrinsic.trans));
-    }
-    dr->hasIntrinsics = true;
-        std::cout << " Intrinsics: depth fx=" << dr->depthIntrinsic.fx
-            << " fy=" << dr->depthIntrinsic.fy
-            << " cx=" << dr->depthIntrinsic.cx
-            << " cy=" << dr->depthIntrinsic.cy << std::endl;
-        NIO_LOG_INFO_S("Depth intrinsics: fx=" << dr->depthIntrinsic.fx
-            << " fy=" << dr->depthIntrinsic.fy
-            << " cx=" << dr->depthIntrinsic.cx
-            << " cy=" << dr->depthIntrinsic.cy);
-    } catch(...) {
-        std::cout << " WARNING: Could not get camera intrinsics, using defaults" << std::endl;
-        NIO_LOG_WARN_S("Could not get camera intrinsics for " << safeName << ", using defaults");
-    dr->depthIntrinsic.fx = depthW * 0.5f / std::tan(70.0f * 3.14159265f / 360.0f);
-    dr->depthIntrinsic.fy = dr->depthIntrinsic.fx;
-    dr->depthIntrinsic.cx = depthW * 0.5f;
-    dr->depthIntrinsic.cy = depthH * 0.5f;
-    memset(dr->depthToColorExtrinsic.rot, 0, sizeof(dr->depthToColorExtrinsic.rot));
-    dr->depthToColorExtrinsic.rot[0] = 1; dr->depthToColorExtrinsic.rot[4] = 1; dr->depthToColorExtrinsic.rot[8] = 1;
-    memset(dr->depthToColorExtrinsic.trans, 0, sizeof(dr->depthToColorExtrinsic.trans));
-    dr->hasIntrinsics = true;
-}
+            if(gotCalib) {
+                dr->depthIntrinsic = calibParam.intrinsics[OB_SENSOR_DEPTH];
+                dr->depthDistortion = calibParam.distortion[OB_SENSOR_DEPTH];
+                dr->depthToColorExtrinsic = calibParam.extrinsics[OB_SENSOR_DEPTH][OB_SENSOR_COLOR];
+            } else {
+                auto camParam = dr->videoPipeline->getCameraParam();
+                dr->depthIntrinsic = camParam.depthIntrinsic;
+                dr->depthDistortion = camParam.depthDistortion;
+                dr->depthToColorExtrinsic = camParam.transform;
+            }
+            if(dr->depthIntrinsic.fx < 1.0f || dr->depthIntrinsic.fy < 1.0f) {
+                std::cout << "  WARNING: Zero/invalid intrinsics from SDK, using computed defaults" << std::endl;
+                NIO_LOG_WARN_S("Zero/invalid intrinsics from SDK for " << safeName << ", using computed defaults: fx=" << dr->depthIntrinsic.fx);
+                dr->depthIntrinsic.fx = depthW * 0.5f / std::tan(70.0f * 3.14159265f / 360.0f);
+                dr->depthIntrinsic.fy = dr->depthIntrinsic.fx;
+                dr->depthIntrinsic.cx = depthW * 0.5f;
+                dr->depthIntrinsic.cy = depthH * 0.5f;
+                memset(dr->depthToColorExtrinsic.rot, 0, sizeof(dr->depthToColorExtrinsic.rot));
+                dr->depthToColorExtrinsic.rot[0] = 1; dr->depthToColorExtrinsic.rot[4] = 1; dr->depthToColorExtrinsic.rot[8] = 1;
+                memset(dr->depthToColorExtrinsic.trans, 0, sizeof(dr->depthToColorExtrinsic.trans));
+            }
+            dr->hasIntrinsics = true;
+            std::cout << "  Intrinsics: depth fx=" << dr->depthIntrinsic.fx
+                << " fy=" << dr->depthIntrinsic.fy
+                << " cx=" << dr->depthIntrinsic.cx
+                << " cy=" << dr->depthIntrinsic.cy << std::endl;
+            NIO_LOG_INFO_S("Depth intrinsics: fx=" << dr->depthIntrinsic.fx
+                << " fy=" << dr->depthIntrinsic.fy
+                << " cx=" << dr->depthIntrinsic.cx
+                << " cy=" << dr->depthIntrinsic.cy);
+        } catch(...) {
+            std::cout << "  WARNING: Could not get camera intrinsics, using defaults" << std::endl;
+            NIO_LOG_WARN_S("Could not get camera intrinsics for " << safeName << ", using defaults");
+            dr->depthIntrinsic.fx = depthW * 0.5f / std::tan(70.0f * 3.14159265f / 360.0f);
+            dr->depthIntrinsic.fy = dr->depthIntrinsic.fx;
+            dr->depthIntrinsic.cx = depthW * 0.5f;
+            dr->depthIntrinsic.cy = depthH * 0.5f;
+            memset(dr->depthToColorExtrinsic.rot, 0, sizeof(dr->depthToColorExtrinsic.rot));
+            dr->depthToColorExtrinsic.rot[0] = 1; dr->depthToColorExtrinsic.rot[4] = 1; dr->depthToColorExtrinsic.rot[8] = 1;
+            memset(dr->depthToColorExtrinsic.trans, 0, sizeof(dr->depthToColorExtrinsic.trans));
+            dr->hasIntrinsics = true;
+        }
 
         try { dr->videoPipeline->enableFrameSync(); } catch(...) {}
 
@@ -1113,26 +859,26 @@ try {
                 drCapture->latestColorRGB = std::move(colorRGB);
                 drCapture->latestColorW = cW;
                 drCapture->latestColorH = cH;
-        if(irLeftData && irLW > 0 && irLH > 0)
-            drCapture->latestIRLeftData.assign(irLeftData, irLeftData + (irLW * irLH));
-        else
-            drCapture->latestIRLeftData.clear();
-        drCapture->latestIRLeftW = irLW;
-        drCapture->latestIRLeftH = irLH;
-        if(irRightData && irRW > 0 && irRH > 0)
-            drCapture->latestIRRightData.assign(irRightData, irRightData + (irRW * irRH));
-        else
-            drCapture->latestIRRightData.clear();
-        drCapture->latestIRRightW = irRW;
-        drCapture->latestIRRightH = irRH;
+                if(irLeftData && irLW > 0 && irLH > 0)
+                    drCapture->latestIRLeftData.assign(irLeftData, irLeftData + (irLW * irLH));
+                else
+                    drCapture->latestIRLeftData.clear();
+                drCapture->latestIRLeftW = irLW;
+                drCapture->latestIRLeftH = irLH;
+                if(irRightData && irRW > 0 && irRH > 0)
+                    drCapture->latestIRRightData.assign(irRightData, irRightData + (irRW * irRH));
+                else
+                    drCapture->latestIRRightData.clear();
+                drCapture->latestIRRightW = irRW;
+                drCapture->latestIRRightH = irRH;
                 drCapture->latestDataReady = true;
                 drCapture->latestDataMtx.unlock();
                 drCapture->latestDataCV.notify_one();
             });
-    } catch(ob::Error &e) {
-        std::cerr << " Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
-        NIO_LOG_ERROR_S("Pipeline start failed for " << safeName << ": " << e.what());
-        dr->videoPipeline.reset();
+        } catch(ob::Error &e) {
+            std::cerr << "  Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
+            NIO_LOG_ERROR_S("Pipeline start failed for " << safeName << ": " << e.what());
+            dr->videoPipeline.reset();
             continue;
         }
 
@@ -1158,10 +904,10 @@ try {
                     }
                     dr->imuState->update(a, g);
                 });
-    } catch(ob::Error &e) {
-        std::cerr << " IMU pipeline start failed: " << e.what() << std::endl;
-        NIO_LOG_WARN_S("IMU pipeline start failed for " << safeName << ": " << e.what());
-        dr->hasIMU = false;
+            } catch(ob::Error &e) {
+                std::cerr << "  IMU pipeline start failed: " << e.what() << std::endl;
+                NIO_LOG_WARN_S("IMU pipeline start failed for " << safeName << ": " << e.what());
+                dr->hasIMU = false;
             }
         }
 
@@ -1195,7 +941,7 @@ try {
     auto fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
 
     H264Encoder encoder;
-    if(!encoder.init(cfg.outW, cfg.outH, cfg.outFps)) {
+    if(!encoder.initRGB(cfg.outW, cfg.outH, cfg.outFps, 6000000)) {
         std::cerr << "Failed to init H264 encoder!" << std::endl;
         NIO_LOG_FATAL_S("Failed to init H264 encoder " << cfg.outW << "x" << cfg.outH << "@" << cfg.outFps);
         return -1;
@@ -1260,11 +1006,11 @@ try {
             lastReportTime = currentTime;
             size_t totalPts = renderer.getPointCount();
             float avgFps = encodedFrames / timeSec;
-                std::cout << "[3D Render] FPS: " << std::fixed << std::setprecision(1) << avgFps
-                    << " | Points: " << totalPts
-                    << " | Encoded: " << encodedFrames << std::endl;
-                NIO_LOG_TRACE_S("[3D Render] FPS=" << std::fixed << std::setprecision(1) << avgFps
-                    << " points=" << totalPts << " encoded=" << encodedFrames);
+            std::cout << "[3D Render] FPS: " << std::fixed << std::setprecision(1) << avgFps
+                << " | Points: " << totalPts
+                << " | Encoded: " << encodedFrames << std::endl;
+            NIO_LOG_TRACE_S("[3D Render] FPS=" << std::fixed << std::setprecision(1) << avgFps
+                << " points=" << totalPts << " encoded=" << encodedFrames);
         }
     }
 
@@ -1287,8 +1033,8 @@ try {
     return 0;
 }
 catch(ob::Error &e) {
-    std::cerr << "OB Error: " << e.getFunction() << "\n " << e.what()
-        << "\n status: " << e.getStatus() << std::endl;
+    std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what()
+        << "\n  status: " << e.getStatus() << std::endl;
     NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
     NIO_LOG_SHUTDOWN();
     return -1;

@@ -1,3 +1,9 @@
+// Copyright (c) NIO Inc. All Rights Reserved.
+// Licensed under the MIT License.
+//
+// nio_log.hpp — Header-only Logger singleton with multi-level output,
+// thread-safe logging, and auto-flush on destruction.
+
 #pragma once
 
 #include <string>

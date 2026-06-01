@@ -1,9 +1,9 @@
 // Copyright (c) NIO Inc. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// nio_multi_capture.cpp — Multi-device capture example. Records color,
-// depth, and IR streams to H.264 / raw files with IMU CSV logging.
-// Uses shared nio:: utilities from examples/utils/.
+// nio_multi_capture_cv.cpp — Multi-device capture with OpenCV display.
+// Records all sensor streams to H.264 / raw files and shows a live
+// cv::imshow tile view. Uses shared nio:: utilities from examples/utils/.
 
 #include <libobsensor/ObSensor.hpp>
 #include "utils.hpp"
@@ -11,11 +11,12 @@
 #include "nio_common.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_stream_io.hpp"
+#include "nio_color_convert_cv.hpp"
+#include <opencv2/opencv.hpp>
 
 #include <iostream>
 #include <iomanip>
 #include <sstream>
-#include <fstream>
 #include <mutex>
 #include <thread>
 #include <atomic>
@@ -35,25 +36,134 @@ struct DeviceCapture {
     std::shared_ptr<SensorFiles> sensorFiles;
     bool hasIMU = false;
     float depthScale = 0.001f;
+
+    cv::Mat colorBGR;
+    cv::Mat depthColorized;
+    cv::Mat irBGR;
+    cv::Mat irLeftBGR;
+    cv::Mat irRightBGR;
+    cv::Mat displayTile;
+    std::mutex displayMtx;
+
+    bool hasColor = false;
+    bool hasDepth = false;
+    bool hasIR = false;
+    bool hasIRLeft = false;
+    bool hasIRRight = false;
+
+    int colorW = 0, colorH = 0;
+    int depthW = 0, depthH = 0;
+    int irW = 0, irH = 0;
+    int irLW = 0, irLH = 0;
+    int irRW = 0, irRH = 0;
+
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
 };
 
-static std::vector<std::string> parseDeviceNames(int argc, char **argv) {
-    std::vector<std::string> names;
-    for(int i = 1; i < argc; i++) names.push_back(argv[i]);
-    return names;
+struct CaptureConfig {
+    std::vector<std::string> deviceFilter;
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
+};
+
+static void printUsage() {
+    std::cout << "Usage: nio_multi_capture_cv [device_name_filter...] [options]\n"
+              << "Options:\n"
+              << "  --depth-min M   Min depth in meters for colormap (default: 0.3)\n"
+              << "  --depth-max M   Max depth in meters for colormap (default: 5.0)\n"
+              << "  --help          Show this help\n"
+              << "\nExample:\n"
+              << "  nio_multi_capture_cv                   # all devices\n"
+              << "  nio_multi_capture_cv 336L --depth-max 3.0  # filter + custom range\n"
+              << std::endl;
+}
+
+static CaptureConfig parseArgs(int argc, char **argv) {
+    CaptureConfig cfg;
+    for(int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if(arg == "--depth-min" && i + 1 < argc) {
+            cfg.depthMinM = std::stof(argv[++i]);
+        } else if(arg == "--depth-max" && i + 1 < argc) {
+            cfg.depthMaxM = std::stof(argv[++i]);
+        } else if(arg == "--help") {
+            printUsage();
+            exit(0);
+        } else if(arg.substr(0, 2) != "--") {
+            cfg.deviceFilter.push_back(arg);
+        }
+    }
+    return cfg;
+}
+
+static cv::Mat buildDeviceTile(DeviceCapture *cap) {
+    std::lock_guard<std::mutex> lock(cap->displayMtx);
+
+    std::vector<cv::Mat> row;
+    if(cap->hasColor && !cap->colorBGR.empty()) {
+        cv::Mat c = cap->colorBGR.clone();
+        cv::putText(c, "Color", cv::Point(6, 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        row.push_back(c);
+    }
+    if(cap->hasDepth && !cap->depthColorized.empty()) {
+        cv::Mat d = cap->depthColorized.clone();
+        cv::putText(d, "Depth", cv::Point(6, 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        row.push_back(d);
+    }
+    if(cap->hasIR && !cap->irBGR.empty()) {
+        cv::Mat ir = cap->irBGR.clone();
+        cv::putText(ir, "IR", cv::Point(6, 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        row.push_back(ir);
+    }
+    if(cap->hasIRLeft && !cap->irLeftBGR.empty()) {
+        cv::Mat irl = cap->irLeftBGR.clone();
+        cv::putText(irl, "IR-L", cv::Point(6, 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        row.push_back(irl);
+    }
+    if(cap->hasIRRight && !cap->irRightBGR.empty()) {
+        cv::Mat irr = cap->irRightBGR.clone();
+        cv::putText(irr, "IR-R", cv::Point(6, 20),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        row.push_back(irr);
+    }
+
+    if(row.empty()) return cv::Mat();
+
+    int targetH = 240;
+    for(auto &m : row) {
+        if(!m.empty()) {
+            double scale = static_cast<double>(targetH) / m.rows;
+            cv::resize(m, m, cv::Size(), scale, scale);
+        }
+    }
+
+    cv::Mat tile;
+    cv::hconcat(row, tile);
+
+    cv::putText(tile, cap->deviceName, cv::Point(6, tile.rows - 8),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+
+    return tile;
 }
 
 int main(int argc, char **argv) try {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    auto deviceFilter = parseDeviceNames(argc, argv);
+    CaptureConfig cfg = parseArgs(argc, argv);
 
-    NIO_LOG_INIT("nio_multi_capture", "capture_output");
+    NIO_LOG_INIT("nio_multi_capture_cv", "capture_cv_output");
     NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
-    NIO_LOG_INFO_S("Process started, argc=" << argc << " device_filter_count=" << deviceFilter.size());
-    for(size_t i = 0; i < deviceFilter.size(); i++) {
-        NIO_LOG_DEBUG_S("Device filter[" << i << "]=" << deviceFilter[i]);
+    NIO_LOG_INFO_S("Process started, depthMin=" << cfg.depthMinM
+                   << " depthMax=" << cfg.depthMaxM
+                   << " device_filter_count=" << cfg.deviceFilter.size());
+    for(size_t i = 0; i < cfg.deviceFilter.size(); i++) {
+        NIO_LOG_DEBUG_S("Device filter[" << i << "]=" << cfg.deviceFilter[i]);
     }
 
     ob::Context context;
@@ -66,7 +176,7 @@ int main(int argc, char **argv) try {
     }
 
     std::string sessionTimestamp = getTimestampMs();
-    std::string outputRootDir = "capture_output/" + sessionTimestamp;
+    std::string outputRootDir = "capture_cv_output/" + sessionTimestamp;
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
@@ -92,7 +202,7 @@ int main(int argc, char **argv) try {
         auto devInfo = device->getDeviceInfo();
         std::string name = devInfo->getName();
 
-        if(!deviceMatches(name, deviceFilter)) {
+        if(!deviceMatches(name, cfg.deviceFilter)) {
             std::cout << "Skipping device: " << name << std::endl;
             NIO_LOG_DEBUG_S("Skipping device: " << name << " (does not match filter)");
             continue;
@@ -117,6 +227,8 @@ int main(int argc, char **argv) try {
         auto cap = std::make_shared<DeviceCapture>();
         cap->deviceName = safeName;
         cap->sensorFiles = std::make_shared<SensorFiles>();
+        cap->depthMinM = cfg.depthMinM;
+        cap->depthMaxM = cfg.depthMaxM;
 
         auto startTs = getTimestampMs();
         std::string baseName = deviceOutputDir + "/" + safeName;
@@ -138,8 +250,6 @@ int main(int argc, char **argv) try {
         std::shared_ptr<ob::Config> config = std::make_shared<ob::Config>();
 
         auto sensorList = device->getSensorList();
-        bool hasColor = false, hasDepth = false, hasIR = false;
-        bool hasIRLeft = false, hasIRRight = false;
         bool hasAccel = false, hasGyro = false;
 
         OBFormat colorFormat = OB_FORMAT_UNKNOWN;
@@ -162,7 +272,7 @@ int main(int argc, char **argv) try {
 
             switch(sensorType) {
             case OB_SENSOR_COLOR:
-                hasColor = true;
+                cap->hasColor = true;
                 colorProfile = selectBestProfile(profileList, OB_FORMAT_MJPG);
                 if(colorProfile) {
                     colorFormat = colorProfile->getFormat();
@@ -184,20 +294,22 @@ int main(int argc, char **argv) try {
                         colorH = colorProfile->getHeight();
                         colorFps = colorProfile->getFps();
                     } else {
-                        hasColor = false;
-                        std::cout << " Color: no usable format found, skipping" << std::endl;
+                        cap->hasColor = false;
+                        std::cout << "  Color: no usable format found, skipping" << std::endl;
                     }
                 } else {
-                    hasColor = false;
+                    cap->hasColor = false;
                 }
-                if(hasColor) {
-                    std::cout << " Color: " << colorW << "x" << colorH
+                if(cap->hasColor) {
+                    cap->colorW = colorW;
+                    cap->colorH = colorH;
+                    std::cout << "  Color: " << colorW << "x" << colorH
                               << "@" << colorFps << " format=" << colorFormat << std::endl;
                     NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps << " format=" << colorFormat);
                 }
                 break;
             case OB_SENSOR_DEPTH:
-                hasDepth = true;
+                cap->hasDepth = true;
                 depthProfile = selectBestProfile(profileList, OB_FORMAT_Y16);
                 if(depthProfile) {
                     depthFormat = depthProfile->getFormat();
@@ -219,21 +331,19 @@ int main(int argc, char **argv) try {
                         depthH = depthProfile->getHeight();
                         depthFps = depthProfile->getFps();
                     } else {
-                        hasDepth = false;
-                        std::cout << " Depth: no usable format found, skipping" << std::endl;
+                        cap->hasDepth = false;
+                        std::cout << "  Depth: no usable format found, skipping" << std::endl;
                     }
                 } else {
-                    hasDepth = false;
+                    cap->hasDepth = false;
                 }
-                if(hasDepth) {
-                    std::cout << " Depth: " << depthW << "x" << depthH
+                if(cap->hasDepth) {
+                    cap->depthW = depthW;
+                    cap->depthH = depthH;
+                    std::cout << "  Depth: " << depthW << "x" << depthH
                               << "@" << depthFps << " format=" << depthFormat << std::endl;
                     NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps << " format=" << depthFormat);
                 }
-                try {
-                    auto depthSensorInfo = sensorList->getSensor(s);
-                    (void)depthSensorInfo;
-                } catch(...) {}
                 try {
                     int32_t precisionLevel = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     switch(precisionLevel) {
@@ -243,15 +353,15 @@ int main(int argc, char **argv) try {
                     case 3: cap->depthScale = 0.0001f; break;
                     default: cap->depthScale = 0.001f; break;
                     }
-                    std::cout << " Depth scale: " << cap->depthScale << " (precision level " << precisionLevel << ")" << std::endl;
+                    std::cout << "  Depth scale: " << cap->depthScale << " (precision level " << precisionLevel << ")" << std::endl;
                     NIO_LOG_INFO_S("Depth scale: " << cap->depthScale << " precision_level=" << precisionLevel);
                 } catch(...) {
                     cap->depthScale = 0.001f;
-                    std::cout << " Depth scale: 0.001 (default)" << std::endl;
+                    std::cout << "  Depth scale: 0.001 (default)" << std::endl;
                 }
                 break;
             case OB_SENSOR_IR:
-                hasIR = true;
+                cap->hasIR = true;
                 irProfile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if(irProfile) {
                     irFormat = irProfile->getFormat();
@@ -261,16 +371,18 @@ int main(int argc, char **argv) try {
                     irH = irProfile->getHeight();
                     irFps = irProfile->getFps();
                 } else {
-                    hasIR = false;
+                    cap->hasIR = false;
                 }
-                if(hasIR) {
-                    std::cout << " IR: " << irW << "x" << irH
+                if(cap->hasIR) {
+                    cap->irW = irW;
+                    cap->irH = irH;
+                    std::cout << "  IR: " << irW << "x" << irH
                               << "@" << irFps << " format=" << irFormat << std::endl;
                     NIO_LOG_INFO_S("IR stream: " << irW << "x" << irH << "@" << irFps << " format=" << irFormat);
                 }
                 break;
             case OB_SENSOR_IR_LEFT:
-                hasIRLeft = true;
+                cap->hasIRLeft = true;
                 irLeftProfile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if(irLeftProfile) {
                     irLeftFormat = irLeftProfile->getFormat();
@@ -280,16 +392,18 @@ int main(int argc, char **argv) try {
                     irLH = irLeftProfile->getHeight();
                     irLFps = irLeftProfile->getFps();
                 } else {
-                    hasIRLeft = false;
+                    cap->hasIRLeft = false;
                 }
-                if(hasIRLeft) {
-                    std::cout << " IR Left: " << irLW << "x" << irLH
+                if(cap->hasIRLeft) {
+                    cap->irLW = irLW;
+                    cap->irLH = irLH;
+                    std::cout << "  IR Left: " << irLW << "x" << irLH
                               << "@" << irLFps << " format=" << irLeftFormat << std::endl;
                     NIO_LOG_INFO_S("IR Left stream: " << irLW << "x" << irLH << "@" << irLFps << " format=" << irLeftFormat);
                 }
                 break;
             case OB_SENSOR_IR_RIGHT:
-                hasIRRight = true;
+                cap->hasIRRight = true;
                 irRightProfile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if(irRightProfile) {
                     irRightFormat = irRightProfile->getFormat();
@@ -299,10 +413,12 @@ int main(int argc, char **argv) try {
                     irRH = irRightProfile->getHeight();
                     irRFps = irRightProfile->getFps();
                 } else {
-                    hasIRRight = false;
+                    cap->hasIRRight = false;
                 }
-                if(hasIRRight) {
-                    std::cout << " IR Right: " << irRW << "x" << irRH
+                if(cap->hasIRRight) {
+                    cap->irRW = irRW;
+                    cap->irRH = irRH;
+                    std::cout << "  IR Right: " << irRW << "x" << irRH
                               << "@" << irRFps << " format=" << irRightFormat << std::endl;
                     NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps << " format=" << irRightFormat);
                 }
@@ -315,38 +431,38 @@ int main(int argc, char **argv) try {
 
         if(ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
             config->disableStream(OB_SENSOR_IR_LEFT);
-            hasIRLeft = false;
-            std::cout << " Gemini 305g: disabled IR_LEFT" << std::endl;
+            cap->hasIRLeft = false;
+            std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
             NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
         }
 
         auto sf = cap->sensorFiles;
 
-        if(hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
+        if(cap->hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
             sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264",
-                                            colorFormat, colorW, colorH, colorFps, nullptr, false);
+                                            colorFormat, colorW, colorH, colorFps, "nio@orbbec-captu");
             NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264" << " fmt=" << colorFormat);
         }
-        if(hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
+        if(cap->hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
             sf->depth = createStreamEncoder(baseName + "_depth_" + startTs + ".h264",
-                                            depthFormat, depthW, depthH, depthFps, nullptr, false);
+                                            depthFormat, depthW, depthH, depthFps, "nio@orbbec-captu");
             sf->depthRawFile = std::make_shared<std::ofstream>(
                 baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
             NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
         }
-        if(hasIR && irFormat != OB_FORMAT_UNKNOWN) {
+        if(cap->hasIR && irFormat != OB_FORMAT_UNKNOWN) {
             sf->ir = createStreamEncoder(baseName + "_ir_" + startTs + ".h264",
-                                         irFormat, irW, irH, irFps, nullptr, false);
+                                         irFormat, irW, irH, irFps, "nio@orbbec-captu");
             NIO_LOG_INFO_S("IR output: " << baseName + "_ir_" + startTs + ".h264");
         }
-        if(hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
+        if(cap->hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
             sf->irLeft = createStreamEncoder(baseName + "_ir_left_" + startTs + ".h264",
-                                             irLeftFormat, irLW, irLH, irLFps, nullptr, false);
+                                             irLeftFormat, irLW, irLH, irLFps, "nio@orbbec-captu");
             NIO_LOG_INFO_S("IR Left output: " << baseName + "_ir_left_" + startTs + ".h264");
         }
-        if(hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
+        if(cap->hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
             sf->irRight = createStreamEncoder(baseName + "_ir_right_" + startTs + ".h264",
-                                              irRightFormat, irRW, irRH, irRFps, nullptr, false);
+                                              irRightFormat, irRW, irRH, irRFps, "nio@orbbec-captu");
             NIO_LOG_INFO_S("IR Right output: " << baseName + "_ir_right_" + startTs + ".h264");
         }
         if(hasAccel || hasGyro) {
@@ -361,72 +477,112 @@ int main(int argc, char **argv) try {
 
         try {
             cap->videoPipeline->start(config,
-                [sf, hasColor, hasDepth, hasIR, hasIRLeft, hasIRRight, cap, depthFrameIdx]
-                (std::shared_ptr<ob::FrameSet> frameSet) {
-                    if(!frameSet) return;
+                [cap, sf, depthFrameIdx](std::shared_ptr<ob::FrameSet> frameSet) {
+                if(!frameSet) return;
 
-                    if(hasColor) {
-                        auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-                        if(colorFrame) {
-                            writeStreamFrame(sf->color.get(), colorFrame->getData(),
-                                             colorFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_COLOR]++;
+                if(cap->hasColor) {
+                    auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+                    if(colorFrame) {
+                        writeStreamFrame(sf->color.get(), colorFrame->getData(),
+                                         colorFrame->getDataSize());
+
+                        cv::Mat bgr = frameToBGR(colorFrame);
+                        if(!bgr.empty()) {
+                            std::lock_guard<std::mutex> lock(cap->displayMtx);
+                            bgr.copyTo(cap->colorBGR);
                         }
+
+                        std::lock_guard<std::mutex> lock(sf->countMtx);
+                        sf->frameCounts[OB_FRAME_COLOR]++;
                     }
+                }
 
-                    if(hasDepth) {
-                        auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-                        if(depthFrame) {
-                            auto format = depthFrame->getFormat();
-                            auto data = depthFrame->getData();
-                            auto size = depthFrame->getDataSize();
+                if(cap->hasDepth) {
+                    auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+                    if(depthFrame) {
+                        auto format = depthFrame->getFormat();
+                        auto data = depthFrame->getData();
+                        auto size = depthFrame->getDataSize();
 
-                            if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                                if(sf->depthRawFile && sf->depthRawFile->is_open()) {
-                                    uint64_t idx = depthFrameIdx->fetch_add(1);
-                                    writeDepthRawWithHeader(*sf->depthRawFile, data, size,
-                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
-                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
-                                        cap->depthScale, idx, sf->depthRawMtx);
-                                }
+                        if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+                            if(sf->depthRawFile && sf->depthRawFile->is_open()) {
+                                uint64_t idx = depthFrameIdx->fetch_add(1);
+                                writeDepthRawWithHeader(*sf->depthRawFile, data, size,
+                                    cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
+                                    cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
+                                    cap->depthScale, idx, sf->depthRawMtx);
                             }
-
-                            writeStreamFrame(sf->depth.get(), data, size);
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_DEPTH]++;
                         }
-                    }
 
-                    if(hasIR) {
-                        auto irFrame = frameSet->getFrame(OB_FRAME_IR);
-                        if(irFrame) {
-                            writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR]++;
-                        }
-                    }
+                        writeStreamFrame(sf->depth.get(), data, size);
 
-                    if(hasIRLeft) {
-                        auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
-                        if(irLeftFrame) {
-                            writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR_LEFT]++;
-                        }
-                    }
+                        float scale = cap->depthScale;
+                        try {
+                            auto depthF = depthFrame->as<ob::DepthFrame>();
+                            if(depthF) scale = depthF->getValueScale();
+                        } catch(...) {}
 
-                    if(hasIRRight) {
-                        auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
-                        if(irRightFrame) {
-                            writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR_RIGHT]++;
+                        cv::Mat dc = colorizeDepth(depthFrame, scale, cap->depthMinM, cap->depthMaxM);
+                        if(!dc.empty()) {
+                            std::lock_guard<std::mutex> lock(cap->displayMtx);
+                            dc.copyTo(cap->depthColorized);
                         }
+
+                        std::lock_guard<std::mutex> lock(sf->countMtx);
+                        sf->frameCounts[OB_FRAME_DEPTH]++;
                     }
-                });
+                }
+
+                if(cap->hasIR) {
+                    auto irFrame = frameSet->getFrame(OB_FRAME_IR);
+                    if(irFrame) {
+                        writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize());
+
+                        cv::Mat irBgr = frameToBGR(irFrame);
+                        if(!irBgr.empty()) {
+                            std::lock_guard<std::mutex> lock(cap->displayMtx);
+                            irBgr.copyTo(cap->irBGR);
+                        }
+
+                        std::lock_guard<std::mutex> lock(sf->countMtx);
+                        sf->frameCounts[OB_FRAME_IR]++;
+                    }
+                }
+
+                if(cap->hasIRLeft) {
+                    auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
+                    if(irLeftFrame) {
+                        writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize());
+
+                        cv::Mat irLBgr = frameToBGR(irLeftFrame);
+                        if(!irLBgr.empty()) {
+                            std::lock_guard<std::mutex> lock(cap->displayMtx);
+                            irLBgr.copyTo(cap->irLeftBGR);
+                        }
+
+                        std::lock_guard<std::mutex> lock(sf->countMtx);
+                        sf->frameCounts[OB_FRAME_IR_LEFT]++;
+                    }
+                }
+
+                if(cap->hasIRRight) {
+                    auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
+                    if(irRightFrame) {
+                        writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize());
+
+                        cv::Mat irRBgr = frameToBGR(irRightFrame);
+                        if(!irRBgr.empty()) {
+                            std::lock_guard<std::mutex> lock(cap->displayMtx);
+                            irRBgr.copyTo(cap->irRightBGR);
+                        }
+
+                        std::lock_guard<std::mutex> lock(sf->countMtx);
+                        sf->frameCounts[OB_FRAME_IR_RIGHT]++;
+                    }
+                }
+            });
         } catch(ob::Error &e) {
-            std::cerr << " Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
+            std::cerr << "  Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
             NIO_LOG_ERROR_S("Pipeline start failed for " << safeName << ": " << e.what());
             cap->videoPipeline.reset();
             continue;
@@ -497,35 +653,82 @@ int main(int argc, char **argv) try {
     if(captures.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
         NIO_LOG_FATAL("No matching devices found!");
-        if(!deviceFilter.empty()) {
+        if(!cfg.deviceFilter.empty()) {
             std::cerr << "Available devices:" << std::endl;
             for(uint32_t i = 0; i < deviceList->getCount(); i++) {
                 auto dev = deviceList->getDevice(i);
-                std::cerr << " - " << dev->getDeviceInfo()->getName() << std::endl;
+                std::cerr << "  - " << dev->getDeviceInfo()->getName() << std::endl;
             }
         }
         return -1;
     }
 
-    std::cout << "\n=== Recording started ===" << std::endl;
+    std::cout << "\n=== Multi-Capture+CV recording started ===" << std::endl;
     std::cout << "Output directory: " << outputRootDir << "/" << std::endl;
     std::cout << "Recording " << captures.size() << " device(s)" << std::endl;
+    std::cout << "Depth colormap range: " << cfg.depthMinM << "m - " << cfg.depthMaxM << "m" << std::endl;
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
-    NIO_LOG_INFO_S("=== Recording started === devices=" << captures.size() << " outputDir=" << outputRootDir);
+    NIO_LOG_INFO_S("=== Multi-Capture+CV recording started === devices=" << captures.size() << " outputDir=" << outputRootDir);
     NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
 
+    cv::namedWindow("Multi Capture CV", cv::WINDOW_NORMAL);
+
     auto lastReportTime = ob_smpl::getNowTimesMs();
-    uint32_t waitTime = 1000;
 
     while(g_running) {
-        auto key = ob_smpl::waitForKeyPressed(waitTime);
-        if(key == ESC_KEY || key == 'q' || key == 'Q') {
+        {
+            std::vector<cv::Mat> tiles;
+            for(auto &cap : captures) {
+                cv::Mat tile = buildDeviceTile(cap.get());
+                if(!tile.empty()) tiles.push_back(tile);
+            }
+
+            if(!tiles.empty()) {
+                cv::Mat display;
+                if(tiles.size() == 1) {
+                    display = tiles[0];
+                } else {
+                    std::vector<cv::Mat> rows;
+                    int maxW = 0;
+                    for(const auto &t : tiles) maxW = std::max(maxW, t.cols);
+                    for(auto &t : tiles) {
+                        if(t.cols < maxW) {
+                            cv::Mat padded;
+                            cv::copyMakeBorder(t, padded, 0, 0, 0, maxW - t.cols,
+                                               cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
+                            t = padded;
+                        }
+                        rows.push_back(t);
+                    }
+                    cv::vconcat(rows, display);
+                }
+
+                if(!display.empty()) {
+                    auto now = std::chrono::system_clock::now();
+                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+                    time_t secs = static_cast<time_t>(ms / 1000);
+                    struct tm t;
+                    localtime_r(&secs, &t);
+                    char timeBuf[64];
+                    snprintf(timeBuf, sizeof(timeBuf), "%04d-%02d-%02d %02d:%02d:%02d",
+                             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                             t.tm_hour, t.tm_min, t.tm_sec);
+                    cv::putText(display, timeBuf, cv::Point(8, 24),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+                    cv::imshow("Multi Capture CV", display);
+                }
+            }
+        }
+
+        int key = cv::waitKey(1);
+        if(key == 27 || key == 'q' || key == 'Q') {
             g_running = false;
             break;
         }
 
         auto currentTime = ob_smpl::getNowTimesMs();
-        if(currentTime >= lastReportTime + waitTime) {
+        if(currentTime >= lastReportTime + 2000) {
             uint64_t reportDuration = currentTime - lastReportTime;
             lastReportTime = currentTime;
 
@@ -553,14 +756,16 @@ int main(int argc, char **argv) try {
                         std::cout << std::fixed << std::setprecision(1)
                                   << sep << name << "=" << rate;
                         sep = ", ";
-                        NIO_LOG_TRACE_S("[" << cap->deviceName << "] " << name << "=" << std::fixed << std::setprecision(1) << rate);
+                        NIO_LOG_TRACE_S("[" << cap->deviceName << "] " << name << "="
+                                        << std::fixed << std::setprecision(1) << rate);
                     }
                 }
                 std::cout << std::endl;
             }
-            waitTime = 2000;
         }
     }
+
+    cv::destroyAllWindows();
 
     std::cout << "\n=== Stopping recording ===" << std::endl;
     NIO_LOG_INFO("=== Stopping recording ===");
@@ -594,8 +799,8 @@ int main(int argc, char **argv) try {
     return 0;
 }
 catch(ob::Error &e) {
-    std::cerr << "OB Error: " << e.getFunction() << "\n " << e.what()
-              << "\n status: " << e.getStatus() << std::endl;
+    std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what()
+              << "\n  status: " << e.getStatus() << std::endl;
     NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
     NIO_LOG_SHUTDOWN();
     return -1;
