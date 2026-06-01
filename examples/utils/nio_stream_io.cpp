@@ -54,7 +54,8 @@ void writeH264Frame(std::ofstream &file, const uint8_t *data, uint32_t size,
 
 void writeDepthRawWithHeader(std::ofstream &file, const uint8_t *data, uint32_t size,
                               int width, int height, float scale,
-                              uint64_t frameIndex, std::mutex &mtx) {
+                              uint64_t frameIndex, std::mutex &mtx,
+                              uint64_t deviceTsUs) {
     std::lock_guard<std::mutex> lock(mtx);
     if(!file.is_open()) return;
 
@@ -75,8 +76,9 @@ void writeDepthRawWithHeader(std::ofstream &file, const uint8_t *data, uint32_t 
         uint32_t frameSize = width * height * 2;
         file.write(reinterpret_cast<const char *>(&frameSize), 4);
 
-        uint64_t ts = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+        uint64_t ts = deviceTsUs ? deviceTsUs
+            : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
         file.write(reinterpret_cast<const char *>(&ts), 8);
     }
 
@@ -127,13 +129,14 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string &filePath,
     return se;
 }
 
-void writeStreamFrame(StreamEncoder *se, const uint8_t *data, uint32_t size) {
+void writeStreamFrame(StreamEncoder *se, const uint8_t *data, uint32_t size,
+                      uint64_t deviceTsUs) {
     if(!se || !se->file || !se->file->is_open()) return;
 
     if(se->isNativeH264) {
         writeH264Frame(*se->file, data, size, se->h264KeyFrameWritten, se->mtx);
     } else if(se->encoder) {
-        se->encoder->encode(data, size, *se->file, se->mtx, 0, se->writeSEI);
+        se->encoder->encode(data, size, *se->file, se->mtx, deviceTsUs, se->writeSEI);
     } else {
         std::lock_guard<std::mutex> lock(se->mtx);
         se->file->write(reinterpret_cast<const char *>(data), size);

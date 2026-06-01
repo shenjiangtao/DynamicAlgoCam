@@ -1,12 +1,14 @@
 ### nio.multi_capture 简介
 
-**nio_multi_capture** 是一个参考Orbbrc SDK_V2实现的用于多台 Orbbec 摄像头同时采集与录制的工具。它会自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，并将采集到的流写入磁盘（原生 H.264 或通过 FFmpeg 转码为 H.264、原始深度数据、IMU 文本等）。
+**nio_multi_capture** 是一个参考 Orbbec SDK_V2 实现的用于多台 Orbbec 摄像头同时采集与录制的工具。它会自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，并将采集到的流写入磁盘（原生 H.264 或通过 FFmpeg 转码为 H.264、原始深度数据、IMU 文本等）。同时支持 **D2C 深度对齐到彩色** 后进行 jet colormap 着色与 alpha 混合，将融合结果编码为 H.264 文件。
 
 ---
 
 ### 功能说明
 
-- **多设备自动发现与过滤**：支持通过命令行参数按设备名子串过滤要录制的设备。
+- **多设备自动发现与过滤**：支持通过 `-c` 参数按设备名子串过滤要录制的设备（如 `-c "305" "336L"`）。
+- **自定义保存目录**：支持通过 `-s` 参数指定录制文件的保存目录（如 `-s /HDD/nio_capture`）。
+- **D2C 深度-彩色融合**：使用 `ob::Align(OB_STREAM_COLOR)` 将深度帧对齐到彩色坐标系，jet colormap 着色后 alpha 混合，输出融合 H.264 文件。
 - **智能流配置选择**：为每个传感器选择“最佳”流配置（分辨率、帧率、像素格式）。
 - **多种像素格式转码**：使用 FFmpeg（libavcodec/libswscale）将多种输入像素格式统一转为 YUV420P 并编码为 H.264。
 - **原生 H.264 直写**：若设备输出原生 H.264/H.265/HEVC，程序可直接写入并处理起始码与关键帧门控。
@@ -90,26 +92,56 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 
 ### 运行与使用
 
+**命令行参数**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-c <name...>` | 无(全部设备) | 按设备名子串过滤，可指定多个（如 `-c "305" "336L"`） |
+| `-s <dir>` | `capture_output/` | 录制文件的保存目录 |
+| `--alpha VALUE` | 0.5 | 深度叠加透明度 (0.0=纯彩色, 1.0=纯深度着色) |
+| `--depth-min M` | 0.3 | 着色最小深度 (米)，低于此值的像素显示原始彩色 |
+| `--depth-max M` | 5.0 | 着色最大深度 (米)，高于此值的像素显示原始彩色 |
+| `--no-fusion` | - | 禁用 D2C 融合输出（仅保存各流独立文件） |
+| `--help` | - | 显示帮助信息 |
+
 **基本运行**
-- 录制所有设备：
-  ```bash
-  ./nio_multi_capture
-  ```
-- 按设备名过滤（只录制名称包含 `CAMERA_NAME` 的设备）：
-  ```bash
-  ./nio_multi_capture CAMERA_NAME
-  ```
+- 录制所有设备（默认保存到 `capture_output/`）：
+```bash
+./nio_multi_capture
+```
+- 使用 `-c` 按摄像头类型过滤：
+```bash
+./nio_multi_capture -c "305" "336L"
+```
+- 使用 `-s` 指定保存目录：
+```bash
+./nio_multi_capture -s /HDD/nio_capture
+```
+- 组合使用 `-c` 和 `-s`：
+```bash
+./nio_multi_capture -c "305" -s /HDD/nio_capture
+```
+- 自定义融合参数：
+```bash
+./nio_multi_capture -c "336L" --alpha 0.7 --depth-min 0.2 --depth-max 3.0
+```
+- 仅录制原始流，不做融合：
+```bash
+./nio_multi_capture --no-fusion
+```
 
 **输出目录**
-- 程序会在当前目录下创建：
-  **`capture_output/<sessionTimestamp>/<DEVICE_NAME>/`**
-  其中 `<sessionTimestamp>` 为毫秒级时间戳，设备目录内包含各传感器对应的文件，例如：
+- 程序会在指定目录下创建：**`<saveDir>/<sessionTimestamp>/<DEVICE_NAME>/`**
+- 默认为 `capture_output/<sessionTimestamp>/<DEVICE_NAME>/`
+- 使用 `-s /HDD/nio_capture` 时为 `/HDD/nio_capture/<sessionTimestamp>/<DEVICE_NAME>/`
+- 其中 `<sessionTimestamp>` 为毫秒级时间戳，设备目录内包含各传感器对应的文件，例如：
   - `DEVICE_color_<ts>.h264`
   - `DEVICE_depth_<ts>.h264`
   - `DEVICE_depth_raw_<ts>.raw`（写入原始深度摄像头的数据）
   - `DEVICE_ir_left_<ts>.h264`
   - `DEVICE_ir_right_<ts>.h264`
   - `DEVICE_imu_<ts>.txt`
+  - `DEVICE_d2c_fused_<ts>.h264`（D2C 融合后的 H.264 文件）
 
 **停止录制**
 - 使用 **Ctrl+C** 或发送 SIGTERM，程序会尝试优雅停止并关闭文件与编码器。
@@ -151,6 +183,23 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 
 #### 数据流
 
+```
+Device → Pipeline → FrameSet Callback
+├─ [ob::Align(OB_STREAM_COLOR)] → aligned FrameSet
+│  ├─ Color Frame → decodeColorToRGB() → RGB24
+│  ├─ Aligned Depth Frame (Y16) → jet colormap → RGB24
+│  └─ alpha blend: fused = (1-α)*color + α*depth_colored
+│     → H264Encoder (RGB24 → sws_scale → libx264 encode) → _d2c_fused_<ts>.h264
+├─ Color Frame → H264Encoder (MJPEG decode → sws_scale → libx264 encode) → .h264
+├─ Depth Frame ┬→ H264Encoder (Y16 → sws_scale → libx264 encode) → .h264
+│              └→ writeDepthRawWithHeader() → .raw
+├─ IR Frame → H264Encoder (Y8 → sws_scale → libx264 encode) → .h264
+├─ IR Left → H264Encoder → .h264
+└─ IR Right → H264Encoder → .h264
+
+IMU Pipeline → FrameSet Callback
+├─ AccelFrame → as<AccelFrame>() → getValue() → .txt
+└─ GyroFrame → as<GyroFrame>() → getValue() → .txt
 ```
 Device → Pipeline → FrameSet Callback
   ├─ Color Frame  → H264Encoder (MJPEG decode → sws_scale → libx264 encode) → .h264

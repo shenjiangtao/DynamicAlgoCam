@@ -41,13 +41,13 @@ public:
 
     bool encode(const uint8_t *data, uint32_t size,
                 std::ofstream &outFile, std::mutex &mtx,
-                uint64_t frameTimestampMs = 0, bool writeSEI = true);
+                uint64_t deviceTimestampUs = 0, bool writeSEI = true);
 
     bool encodeRGB(const uint8_t *rgbData, std::ofstream &outFile, std::mutex &mtx,
-                   uint64_t frameTimestampMs);
+                   uint64_t deviceTimestampUs);
 
     bool encodeBGR(const uint8_t *bgrData, std::ofstream &outFile, std::mutex &mtx,
-                   uint64_t frameTimestampMs);
+                   uint64_t deviceTimestampUs);
 
     int getWidth() const { return width_; }
     int getHeight() const { return height_; }
@@ -57,7 +57,7 @@ private:
     AVFrame *decodeMjpg(const uint8_t *data, uint32_t size);
     bool initEncoder(int width, int height, int fps, int bitRate);
     bool initSws(AVPixelFormat srcFmt, int width, int height);
-    bool writeFrame(std::ofstream &outFile, std::mutex &mtx, uint64_t frameTimestampMs, bool writeSEI);
+    bool writeFrame(std::ofstream &outFile, std::mutex &mtx, uint64_t deviceTimestampUs, bool writeSEI);
 
     AVCodecContext *codecCtx_;
     AVFrame *frame_;

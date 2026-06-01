@@ -3,7 +3,15 @@
 //
 // nio_multi_capture.cpp — Multi-device capture example. Records color,
 // depth, and IR streams to H.264 / raw files with IMU CSV logging.
+// Additionally performs D2C (depth-to-color) alignment and alpha-blends
+// depth (jet colormap) with color, saving the fused result as H.264.
 // Uses shared nio:: utilities from examples/utils/.
+//
+// Usage:
+//   ./nio_multi_capture                                          # all devices
+//   ./nio_multi_capture -c "305" "336L"                          # filter by camera type
+//   ./nio_multi_capture -s /HDD/nio_capture                      # custom save directory
+//   ./nio_multi_capture -c "305" -s /HDD/nio_capture --alpha 0.6 # combined
 
 #include <libobsensor/ObSensor.hpp>
 #include "utils.hpp"
@@ -11,6 +19,7 @@
 #include "nio_common.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_stream_io.hpp"
+#include "nio_color_convert.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -25,6 +34,8 @@
 #include <cstring>
 #include <csignal>
 #include <chrono>
+#include <cmath>
+#include <getopt.h>
 
 using namespace nio;
 
@@ -35,25 +46,128 @@ struct DeviceCapture {
     std::shared_ptr<SensorFiles> sensorFiles;
     bool hasIMU = false;
     float depthScale = 0.001f;
+
+    std::shared_ptr<ob::Align> alignFilter;
+    std::shared_ptr<H264Encoder> fusedEncoder;
+    std::shared_ptr<std::ofstream> fusedFile;
+    std::mutex fusedMtx;
+    std::shared_ptr<MjpgDecoderRes> mjpgRes;
+    std::shared_ptr<std::vector<uint8_t>> colorRGBBuf;
+    std::shared_ptr<std::vector<uint8_t>> fusedRGBBuf;
+    int colorW = 0;
+    int colorH = 0;
+    int fusedFps = 30;
+    OBFormat colorFormat = OB_FORMAT_UNKNOWN;
+    float alpha = 0.5f;
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
+    bool enableFusion = true;
+    std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount;
 };
 
-static std::vector<std::string> parseDeviceNames(int argc, char **argv) {
-    std::vector<std::string> names;
-    for(int i = 1; i < argc; i++) names.push_back(argv[i]);
-    return names;
+struct CaptureConfig {
+    std::vector<std::string> cameraFilter;
+    std::string saveDir;
+    float alpha = 0.5f;
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
+    bool enableFusion = true;
+    bool noFusion = false;
+};
+
+static void printUsage(const char *prog) {
+    std::cout << "Usage: " << prog << " [options] [camera_name_filter...]\n"
+              << "\nOptions:\n"
+              << "  -c <name...>   Camera type filter (can specify multiple, e.g. -c \"305\" \"336L\")\n"
+              << "  -s <dir>       Save directory (default: capture_output/)\n"
+              << "  --alpha VAL    Depth overlay opacity 0.0-1.0 (default: 0.5)\n"
+              << "  --depth-min M  Min depth in meters for colormap (default: 0.3)\n"
+              << "  --depth-max M  Max depth in meters for colormap (default: 5.0)\n"
+              << "  --no-fusion    Disable D2C fusion output (only save individual streams)\n"
+              << "  --help         Show this help\n"
+              << "\nExamples:\n"
+              << "  " << prog << "                                           # all devices, default settings\n"
+              << "  " << prog << " -c \"305\" \"336L\"                            # filter cameras by type\n"
+              << "  " << prog << " -s /HDD/nio_capture                         # custom save directory\n"
+              << "  " << prog << " -c \"305\" -s /HDD/nio_capture --alpha 0.6    # combined options\n"
+              << std::endl;
+}
+
+static CaptureConfig parseArgs(int argc, char **argv) {
+    CaptureConfig cfg;
+
+    static struct option longOpts[] = {
+        {"alpha",     required_argument, nullptr, 'a'},
+        {"depth-min", required_argument, nullptr, 'm'},
+        {"depth-max", required_argument, nullptr, 'x'},
+        {"no-fusion", no_argument,       nullptr, 'n'},
+        {"help",      no_argument,       nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}
+    };
+
+    opterr = 0;
+    int ch;
+    int optIdx = 0;
+
+    while((ch = getopt_long(argc, argv, "c:s:h", longOpts, &optIdx)) != -1) {
+        switch(ch) {
+        case 'c':
+            cfg.cameraFilter.push_back(optarg);
+            while(optind < argc && argv[optind][0] != '-') {
+                cfg.cameraFilter.push_back(argv[optind++]);
+            }
+            break;
+        case 's':
+            cfg.saveDir = optarg;
+            while(!cfg.saveDir.empty() && cfg.saveDir.back() == '/')
+                cfg.saveDir.pop_back();
+            break;
+        case 'a':
+            cfg.alpha = std::stof(optarg);
+            cfg.alpha = std::max(0.0f, std::min(1.0f, cfg.alpha));
+            break;
+        case 'm':
+            cfg.depthMinM = std::stof(optarg);
+            break;
+        case 'x':
+            cfg.depthMaxM = std::stof(optarg);
+            break;
+        case 'n':
+            cfg.noFusion = true;
+            break;
+        case 'h':
+            printUsage(argv[0]);
+            exit(0);
+        default:
+            break;
+        }
+    }
+
+    for(int i = optind; i < argc; i++) {
+        cfg.cameraFilter.push_back(argv[i]);
+    }
+
+    if(cfg.noFusion) {
+        cfg.enableFusion = false;
+    }
+
+    return cfg;
 }
 
 int main(int argc, char **argv) try {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    auto deviceFilter = parseDeviceNames(argc, argv);
+    CaptureConfig cfg = parseArgs(argc, argv);
 
-    NIO_LOG_INIT("nio_multi_capture", "capture_output");
+    NIO_LOG_INIT("nio_multi_capture", cfg.saveDir.empty() ? "capture_output" : cfg.saveDir);
     NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
-    NIO_LOG_INFO_S("Process started, argc=" << argc << " device_filter_count=" << deviceFilter.size());
-    for(size_t i = 0; i < deviceFilter.size(); i++) {
-        NIO_LOG_DEBUG_S("Device filter[" << i << "]=" << deviceFilter[i]);
+    NIO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
+        << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
+        << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM
+        << " depthMax=" << cfg.depthMaxM << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+    for(size_t i = 0; i < cfg.cameraFilter.size(); i++) {
+        NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
 
     ob::Context context;
@@ -66,7 +180,8 @@ int main(int argc, char **argv) try {
     }
 
     std::string sessionTimestamp = getTimestampMs();
-    std::string outputRootDir = "capture_output/" + sessionTimestamp;
+    std::string outputBaseDir = cfg.saveDir.empty() ? "capture_output" : cfg.saveDir;
+    std::string outputRootDir = outputBaseDir + "/" + sessionTimestamp;
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
@@ -92,7 +207,7 @@ int main(int argc, char **argv) try {
         auto devInfo = device->getDeviceInfo();
         std::string name = devInfo->getName();
 
-        if(!deviceMatches(name, deviceFilter)) {
+        if(!deviceMatches(name, cfg.cameraFilter)) {
             std::cout << "Skipping device: " << name << std::endl;
             NIO_LOG_DEBUG_S("Skipping device: " << name << " (does not match filter)");
             continue;
@@ -117,6 +232,11 @@ int main(int argc, char **argv) try {
         auto cap = std::make_shared<DeviceCapture>();
         cap->deviceName = safeName;
         cap->sensorFiles = std::make_shared<SensorFiles>();
+        cap->alpha = cfg.alpha;
+        cap->depthMinM = cfg.depthMinM;
+        cap->depthMaxM = cfg.depthMaxM;
+        cap->enableFusion = cfg.enableFusion;
+        cap->fusedFrameCount = std::make_shared<std::atomic<uint64_t>>(0);
 
         auto startTs = getTimestampMs();
         std::string baseName = deviceOutputDir + "/" + safeName;
@@ -136,6 +256,8 @@ int main(int argc, char **argv) try {
 
         cap->videoPipeline = std::make_shared<ob::Pipeline>(device);
         std::shared_ptr<ob::Config> config = std::make_shared<ob::Config>();
+
+        config->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
 
         auto sensorList = device->getSensorList();
         bool hasColor = false, hasDepth = false, hasIR = false;
@@ -231,10 +353,6 @@ int main(int argc, char **argv) try {
                     NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps << " format=" << depthFormat);
                 }
                 try {
-                    auto depthSensorInfo = sensorList->getSensor(s);
-                    (void)depthSensorInfo;
-                } catch(...) {}
-                try {
                     int32_t precisionLevel = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     switch(precisionLevel) {
                     case 0: cap->depthScale = 0.001f; break;
@@ -324,29 +442,29 @@ int main(int argc, char **argv) try {
 
         if(hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
             sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264",
-                                            colorFormat, colorW, colorH, colorFps, nullptr, false);
+                colorFormat, colorW, colorH, colorFps, nullptr, false);
             NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264" << " fmt=" << colorFormat);
         }
         if(hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
             sf->depth = createStreamEncoder(baseName + "_depth_" + startTs + ".h264",
-                                            depthFormat, depthW, depthH, depthFps, nullptr, false);
+                depthFormat, depthW, depthH, depthFps, nullptr, false);
             sf->depthRawFile = std::make_shared<std::ofstream>(
                 baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
             NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
         }
         if(hasIR && irFormat != OB_FORMAT_UNKNOWN) {
             sf->ir = createStreamEncoder(baseName + "_ir_" + startTs + ".h264",
-                                         irFormat, irW, irH, irFps, nullptr, false);
+                irFormat, irW, irH, irFps, nullptr, false);
             NIO_LOG_INFO_S("IR output: " << baseName + "_ir_" + startTs + ".h264");
         }
         if(hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
             sf->irLeft = createStreamEncoder(baseName + "_ir_left_" + startTs + ".h264",
-                                             irLeftFormat, irLW, irLH, irLFps, nullptr, false);
+                irLeftFormat, irLW, irLH, irLFps, nullptr, false);
             NIO_LOG_INFO_S("IR Left output: " << baseName + "_ir_left_" + startTs + ".h264");
         }
         if(hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
             sf->irRight = createStreamEncoder(baseName + "_ir_right_" + startTs + ".h264",
-                                              irRightFormat, irRW, irRH, irRFps, nullptr, false);
+                irRightFormat, irRW, irRH, irRFps, nullptr, false);
             NIO_LOG_INFO_S("IR Right output: " << baseName + "_ir_right_" + startTs + ".h264");
         }
         if(hasAccel || hasGyro) {
@@ -357,73 +475,219 @@ int main(int argc, char **argv) try {
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
+        bool canFuse = cfg.enableFusion && hasColor && hasDepth;
+        if(canFuse) {
+            cap->alignFilter = std::make_shared<ob::Align>(OB_STREAM_COLOR);
+            cap->colorW = colorW;
+            cap->colorH = colorH;
+            cap->colorFormat = colorFormat;
+            cap->fusedFps = std::min(colorFps, depthFps);
+
+            std::string fusedPath = baseName + "_d2c_fused_" + startTs + ".h264";
+            cap->fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
+
+            cap->fusedEncoder = std::make_shared<H264Encoder>();
+            if(!cap->fusedEncoder->initRGB(colorW, colorH, cap->fusedFps)) {
+                std::cerr << " Failed to init fused H264 encoder for " << safeName << std::endl;
+                NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName
+                                << " " << colorW << "x" << colorH << "@" << cap->fusedFps);
+                canFuse = false;
+            } else {
+                cap->mjpgRes = std::make_shared<MjpgDecoderRes>();
+                cap->mjpgRes->init(colorW, colorH, colorFormat);
+                int rgbBufSize = colorW * colorH * 3;
+                cap->colorRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
+                cap->fusedRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
+                std::cout << " D2C Fusion: " << colorW << "x" << colorH
+                          << "@" << cap->fusedFps << " alpha=" << cfg.alpha
+                          << " depth=[" << cfg.depthMinM << "m, " << cfg.depthMaxM << "m]" << std::endl;
+                NIO_LOG_INFO_S("D2C Fusion enabled: " << colorW << "x" << colorH << "@" << cap->fusedFps
+                               << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM << "m-" << cfg.depthMaxM << "m"
+                               << " output=" << fusedPath);
+            }
+        } else if(cfg.enableFusion && !hasColor) {
+            std::cout << " D2C Fusion: skipped (no color sensor)" << std::endl;
+            NIO_LOG_DEBUG_S("D2C Fusion skipped for " << safeName << ": no color sensor");
+        } else if(cfg.enableFusion && !hasDepth) {
+            std::cout << " D2C Fusion: skipped (no depth sensor)" << std::endl;
+            NIO_LOG_DEBUG_S("D2C Fusion skipped for " << safeName << ": no depth sensor");
+        }
+
         auto depthFrameIdx = std::make_shared<std::atomic<uint64_t>>(0);
 
         try {
+            cap->videoPipeline->enableFrameSync();
+        } catch(...) {}
+
+        try {
             cap->videoPipeline->start(config,
-                [sf, hasColor, hasDepth, hasIR, hasIRLeft, hasIRRight, cap, depthFrameIdx]
+                [sf, hasColor, hasDepth, hasIR, hasIRLeft, hasIRRight, cap, depthFrameIdx, canFuse]
                 (std::shared_ptr<ob::FrameSet> frameSet) {
                     if(!frameSet) return;
 
-                    if(hasColor) {
-                        auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-                        if(colorFrame) {
-                            writeStreamFrame(sf->color.get(), colorFrame->getData(),
-                                             colorFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_COLOR]++;
-                        }
-                    }
+                    if(canFuse && cap->alignFilter) {
+                        auto alignedFrame = cap->alignFilter->process(frameSet);
+                        auto alignedFS = alignedFrame
+                            ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame)
+                            : nullptr;
+                        if(!alignedFS) alignedFS = frameSet;
 
-                    if(hasDepth) {
-                        auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-                        if(depthFrame) {
-                            auto format = depthFrame->getFormat();
-                            auto data = depthFrame->getData();
-                            auto size = depthFrame->getDataSize();
+                        auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
+                        auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
 
-                            if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                                if(sf->depthRawFile && sf->depthRawFile->is_open()) {
-                                    uint64_t idx = depthFrameIdx->fetch_add(1);
-                                    writeDepthRawWithHeader(*sf->depthRawFile, data, size,
-                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
-                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
-                                        cap->depthScale, idx, sf->depthRawMtx);
-                                }
+        if(colorFrame && depthFrame) {
+            uint64_t colorTsUs = colorFrame->getTimeStampUs();
+            (void)colorTsUs;
+
+            int w = cap->colorW;
+                            int h = cap->colorH;
+
+                            bool colorOk = decodeColorToRGB(
+                                colorFrame->getData(), colorFrame->getDataSize(),
+                                cap->colorFormat, w, h,
+                                cap->colorRGBBuf->data(), cap->mjpgRes);
+
+                            if(!colorOk) {
+                                memset(cap->colorRGBBuf->data(), 128, w * h * 3);
                             }
 
-                            writeStreamFrame(sf->depth.get(), data, size);
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_DEPTH]++;
+                            auto depthData = depthFrame->getData();
+                            auto depthSize = depthFrame->getDataSize();
+                            auto depthFmt = depthFrame->getFormat();
+
+                            float scale = cap->depthScale;
+                            try {
+                                auto depthF = depthFrame->as<ob::DepthFrame>();
+                                if(depthF) {
+                                    scale = depthF->getValueScale();
+                                }
+                            } catch(...) {}
+
+                            int depthW = w;
+                            int depthH = h;
+                            try {
+                                auto depthVF = depthFrame->as<ob::VideoFrame>();
+                                if(depthVF) {
+                                    depthW = static_cast<int>(depthVF->getWidth());
+                                    depthH = static_cast<int>(depthVF->getHeight());
+                                }
+                            } catch(...) {}
+
+                            float minDist = cap->depthMinM;
+                            float maxDist = cap->depthMaxM;
+                            float alpha = cap->alpha;
+
+                            if(depthFmt == OB_FORMAT_Y16 && depthData &&
+                               depthSize >= (uint32_t)(depthW * depthH * 2)) {
+                                const uint16_t *depthPtr = reinterpret_cast<const uint16_t *>(depthData);
+                                int blendW = std::min(w, depthW);
+                                int blendH = std::min(h, depthH);
+
+                                for(int y = 0; y < blendH; y++) {
+                                    for(int x = 0; x < blendW; x++) {
+                                        uint16_t rawVal = depthPtr[y * depthW + x];
+                                        float distM = rawVal * scale / 1000.0f;
+
+                                        if(rawVal == 0 || distM < minDist || distM > maxDist) {
+                                            int idx = (y * w + x) * 3;
+                                            (*cap->fusedRGBBuf)[idx + 0] = (*cap->colorRGBBuf)[idx + 0];
+                                            (*cap->fusedRGBBuf)[idx + 1] = (*cap->colorRGBBuf)[idx + 1];
+                                            (*cap->fusedRGBBuf)[idx + 2] = (*cap->colorRGBBuf)[idx + 2];
+                                        } else {
+                                            float norm = (distM - minDist) / (maxDist - minDist);
+                                            norm = std::max(0.0f, std::min(1.0f, norm));
+                                            uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+                                            uint8_t cr, cg, cb;
+                                            jetColormap(v, cr, cg, cb);
+
+                                            int idx = (y * w + x) * 3;
+                                            float inv = 1.0f - alpha;
+                                            (*cap->fusedRGBBuf)[idx + 0] = static_cast<uint8_t>(
+                                                inv * (*cap->colorRGBBuf)[idx + 0] + alpha * cr + 0.5f);
+                                            (*cap->fusedRGBBuf)[idx + 1] = static_cast<uint8_t>(
+                                                inv * (*cap->colorRGBBuf)[idx + 1] + alpha * cg + 0.5f);
+                                            (*cap->fusedRGBBuf)[idx + 2] = static_cast<uint8_t>(
+                                                inv * (*cap->colorRGBBuf)[idx + 2] + alpha * cb + 0.5f);
+                                        }
+                                    }
+                                }
+                                for(int y = blendH; y < h; y++) {
+                                    memcpy(cap->fusedRGBBuf->data() + y * w * 3,
+                                           cap->colorRGBBuf->data() + y * w * 3, w * 3);
+                                }
+                            } else {
+                                memcpy(cap->fusedRGBBuf->data(), cap->colorRGBBuf->data(), w * h * 3);
+                            }
+
+            cap->fusedEncoder->encodeRGB(
+                cap->fusedRGBBuf->data(), *cap->fusedFile, cap->fusedMtx, depthFrame->getTimeStampUs());
+                            (*cap->fusedFrameCount)++;
                         }
                     }
 
-                    if(hasIR) {
-                        auto irFrame = frameSet->getFrame(OB_FRAME_IR);
-                        if(irFrame) {
-                            writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR]++;
-                        }
-                    }
+        if(hasColor) {
+            auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+            if(colorFrame) {
+                writeStreamFrame(sf->color.get(), colorFrame->getData(),
+                    colorFrame->getDataSize(), colorFrame->getTimeStampUs());
+                std::lock_guard<std::mutex> lock(sf->countMtx);
+                sf->frameCounts[OB_FRAME_COLOR]++;
+            }
+        }
 
-                    if(hasIRLeft) {
-                        auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
-                        if(irLeftFrame) {
-                            writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR_LEFT]++;
-                        }
-                    }
+        if(hasDepth) {
+            auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+            if(depthFrame) {
+                auto format = depthFrame->getFormat();
+                auto data = depthFrame->getData();
+                auto size = depthFrame->getDataSize();
 
-                    if(hasIRRight) {
-                        auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
-                        if(irRightFrame) {
-                            writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize());
-                            std::lock_guard<std::mutex> lock(sf->countMtx);
-                            sf->frameCounts[OB_FRAME_IR_RIGHT]++;
-                        }
+                if(format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+                    if(sf->depthRawFile && sf->depthRawFile->is_open()) {
+                        uint64_t idx = depthFrameIdx->fetch_add(1);
+                        writeDepthRawWithHeader(*sf->depthRawFile, data, size,
+                            cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
+                            cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
+                            cap->depthScale, idx, sf->depthRawMtx,
+                            depthFrame->getTimeStampUs());
                     }
+                }
+
+                writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
+                std::lock_guard<std::mutex> lock(sf->countMtx);
+                sf->frameCounts[OB_FRAME_DEPTH]++;
+            }
+        }
+
+        if(hasIR) {
+            auto irFrame = frameSet->getFrame(OB_FRAME_IR);
+            if(irFrame) {
+                writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize(),
+                    irFrame->getTimeStampUs());
+                std::lock_guard<std::mutex> lock(sf->countMtx);
+                sf->frameCounts[OB_FRAME_IR]++;
+            }
+        }
+
+        if(hasIRLeft) {
+            auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
+            if(irLeftFrame) {
+                writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize(),
+                    irLeftFrame->getTimeStampUs());
+                std::lock_guard<std::mutex> lock(sf->countMtx);
+                sf->frameCounts[OB_FRAME_IR_LEFT]++;
+            }
+        }
+
+        if(hasIRRight) {
+            auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
+            if(irRightFrame) {
+                writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize(),
+                    irRightFrame->getTimeStampUs());
+                std::lock_guard<std::mutex> lock(sf->countMtx);
+                sf->frameCounts[OB_FRAME_IR_RIGHT]++;
+            }
+        }
                 });
         } catch(ob::Error &e) {
             std::cerr << " Pipeline start failed for " << safeName << ": " << e.what() << std::endl;
@@ -497,7 +761,7 @@ int main(int argc, char **argv) try {
     if(captures.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
         NIO_LOG_FATAL("No matching devices found!");
-        if(!deviceFilter.empty()) {
+        if(!cfg.cameraFilter.empty()) {
             std::cerr << "Available devices:" << std::endl;
             for(uint32_t i = 0; i < deviceList->getCount(); i++) {
                 auto dev = deviceList->getDevice(i);
@@ -510,8 +774,15 @@ int main(int argc, char **argv) try {
     std::cout << "\n=== Recording started ===" << std::endl;
     std::cout << "Output directory: " << outputRootDir << "/" << std::endl;
     std::cout << "Recording " << captures.size() << " device(s)" << std::endl;
+    if(cfg.enableFusion) {
+        std::cout << "D2C Fusion: alpha=" << cfg.alpha
+                  << ", depth range: " << cfg.depthMinM << "m - " << cfg.depthMaxM << "m" << std::endl;
+    } else {
+        std::cout << "D2C Fusion: disabled" << std::endl;
+    }
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
-    NIO_LOG_INFO_S("=== Recording started === devices=" << captures.size() << " outputDir=" << outputRootDir);
+    NIO_LOG_INFO_S("=== Recording started === devices=" << captures.size() << " outputDir=" << outputRootDir
+                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
     NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
 
     auto lastReportTime = ob_smpl::getNowTimesMs();
@@ -542,7 +813,7 @@ int main(int argc, char **argv) try {
                 }
 
                 std::cout << "[" << cap->deviceName << "] ";
-                if(tempCounts.empty()) {
+                if(tempCounts.empty() && !cap->fusedEncoder) {
                     std::cout << "Recording... waiting for frames";
                 } else {
                     std::cout << "Recording... FPS: ";
@@ -554,6 +825,12 @@ int main(int argc, char **argv) try {
                                   << sep << name << "=" << rate;
                         sep = ", ";
                         NIO_LOG_TRACE_S("[" << cap->deviceName << "] " << name << "=" << std::fixed << std::setprecision(1) << rate);
+                    }
+                    if(cap->fusedEncoder) {
+                        uint64_t fusedCount = cap->fusedFrameCount->exchange(0);
+                        float fusedRate = (reportDuration > 0) ? (fusedCount / (reportDuration / 1000.0f)) : 0.0f;
+                        std::cout << sep << "fused=" << std::fixed << std::setprecision(1) << fusedRate;
+                        NIO_LOG_TRACE_S("[" << cap->deviceName << "] fused=" << std::fixed << std::setprecision(1) << fusedRate);
                     }
                 }
                 std::cout << std::endl;
@@ -583,6 +860,10 @@ int main(int argc, char **argv) try {
         if(sf->irRight && sf->irRight->file) sf->irRight->file->close();
         if(sf->depthRawFile) sf->depthRawFile->close();
         if(sf->imuFile) sf->imuFile->close();
+
+        if(cap->fusedEncoder) cap->fusedEncoder->close();
+        if(cap->fusedFile) cap->fusedFile->close();
+        cap->mjpgRes.reset();
 
         std::cout << "Stopped: " << cap->deviceName << std::endl;
         NIO_LOG_INFO_S("Stopped device: " << cap->deviceName);

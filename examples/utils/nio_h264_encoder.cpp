@@ -209,14 +209,14 @@ AVFrame *H264Encoder::decodeMjpg(const uint8_t *data, uint32_t size) {
 }
 
 bool H264Encoder::writeFrame(std::ofstream &outFile, std::mutex &mtx,
-                              uint64_t frameTimestampMs, bool writeSEI) {
+                             uint64_t deviceTimestampUs, bool writeSEI) {
     if(writeSEI) {
         if(!seiWritten_) {
             nio::writeSEINalUnit(outFile, SEI_COPYRIGHT, mtx, seiUuid_.c_str());
             seiWritten_ = true;
         }
         std::ostringstream tsStr;
-        tsStr << "ts=" << frameTimestampMs;
+        tsStr << "dts=" << deviceTimestampUs;
         nio::writeSEINalUnit(outFile, tsStr.str(), mtx, seiUuid_.c_str());
     }
 
@@ -239,8 +239,8 @@ bool H264Encoder::writeFrame(std::ofstream &outFile, std::mutex &mtx,
 }
 
 bool H264Encoder::encode(const uint8_t *data, uint32_t size,
-                          std::ofstream &outFile, std::mutex &mtx,
-                          uint64_t frameTimestampMs, bool writeSEI) {
+                         std::ofstream &outFile, std::mutex &mtx,
+                         uint64_t deviceTimestampUs, bool writeSEI) {
     if(!initialized_ || !codecCtx_) return false;
 
     AVFrame *srcFrame = nullptr;
@@ -309,14 +309,14 @@ bool H264Encoder::encode(const uint8_t *data, uint32_t size,
         return false;
     }
 
-    bool wrote = writeFrame(outFile, mtx, frameTimestampMs, writeSEI);
+    bool wrote = writeFrame(outFile, mtx, deviceTimestampUs, writeSEI);
 
     if(srcFrame != frame_) av_frame_free(&srcFrame);
     return wrote;
 }
 
 bool H264Encoder::encodeRGB(const uint8_t *rgbData, std::ofstream &outFile, std::mutex &mtx,
-                             uint64_t frameTimestampMs) {
+                             uint64_t deviceTimestampUs) {
     if(!initialized_ || !codecCtx_ || !swsCtx_) return false;
 
     int srcStride = width_ * 3;
@@ -330,11 +330,11 @@ bool H264Encoder::encodeRGB(const uint8_t *rgbData, std::ofstream &outFile, std:
     int ret = avcodec_send_frame(codecCtx_, frame_);
     if(ret < 0) return false;
 
-    return writeFrame(outFile, mtx, frameTimestampMs, true);
+    return writeFrame(outFile, mtx, deviceTimestampUs, true);
 }
 
 bool H264Encoder::encodeBGR(const uint8_t *bgrData, std::ofstream &outFile, std::mutex &mtx,
-                             uint64_t frameTimestampMs) {
+                             uint64_t deviceTimestampUs) {
     if(!initialized_ || !codecCtx_ || !swsCtx_) return false;
 
     int srcStride = width_ * 3;
@@ -348,7 +348,7 @@ bool H264Encoder::encodeBGR(const uint8_t *bgrData, std::ofstream &outFile, std:
     int ret = avcodec_send_frame(codecCtx_, frame_);
     if(ret < 0) return false;
 
-    return writeFrame(outFile, mtx, frameTimestampMs, true);
+    return writeFrame(outFile, mtx, deviceTimestampUs, true);
 }
 
 } // namespace nio

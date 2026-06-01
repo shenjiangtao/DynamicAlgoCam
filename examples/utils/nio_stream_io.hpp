@@ -60,7 +60,8 @@ void writeH264Frame(std::ofstream &file, const uint8_t *data, uint32_t size,
 
 void writeDepthRawWithHeader(std::ofstream &file, const uint8_t *data, uint32_t size,
                               int width, int height, float scale,
-                              uint64_t frameIndex, std::mutex &mtx);
+                              uint64_t frameIndex, std::mutex &mtx,
+                              uint64_t deviceTsUs = 0);
 
 std::shared_ptr<std::ofstream> openBufferedFile(const std::string &path,
     std::ios_base::openmode mode = std::ios::binary,
@@ -72,6 +73,7 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string &filePath,
     const char *seiUuid = "nio@orbbec-fusio",
     bool writeSEI = true);
 
-void writeStreamFrame(StreamEncoder *se, const uint8_t *data, uint32_t size);
+void writeStreamFrame(StreamEncoder *se, const uint8_t *data, uint32_t size,
+                      uint64_t deviceTsUs = 0);
 
 } // namespace nio
