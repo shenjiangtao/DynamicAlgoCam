@@ -37,6 +37,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef GIT_COMMIT_HASH
+#define GIT_COMMIT_HASH "unknown"
+#endif
+
 using namespace nio;
 
 struct DeviceCapture
@@ -63,6 +67,7 @@ struct DeviceCapture
     float depthMinM = 0.3f;
     float depthMaxM = 5.0f;
     bool enableFusion = true;
+    bool hwD2CMode = false;
     std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount;
 };
 
@@ -80,30 +85,31 @@ struct CaptureConfig
 static void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options] [camera_name_filter...]\n"
               << "\nOptions:\n"
-              << "  -c <name...>   Camera type filter (can specify multiple, e.g. -c \"305\" \"336L\")\n"
-              << "  -s <dir>       Save directory (default: capture_output/)\n"
-              << "  --alpha VAL    Depth overlay opacity 0.0-1.0 (default: 0.5)\n"
-              << "  --depth-min M  Min depth in meters for colormap (default: 0.3)\n"
-              << "  --depth-max M  Max depth in meters for colormap (default: 5.0)\n"
-              << "  --no-fusion    Disable D2C fusion output (only save individual streams)\n"
-              << "  --help         Show this help\n"
+              << "  -c <name...>  Camera type filter (can specify multiple, e.g. -c \"305\" \"336L\")\n"
+              << "  -s <dir>      Save directory (default: capture_output/)\n"
+              << "  --alpha VAL   Depth overlay opacity 0.0-1.0 (default: 0.5)\n"
+              << "  --depth-min M Min depth in meters for colormap (default: 0.3)\n"
+              << "  --depth-max M Max depth in meters for colormap (default: 5.0)\n"
+              << "  --no-fusion   Disable D2C fusion output (only save individual streams)\n"
+              << "  --help        Show this help\n"
               << "\nExamples:\n"
-              << "  " << prog << "                                           # all devices, default settings\n"
-              << "  " << prog << " -c \"305\" \"336L\"                            # filter cameras by type\n"
-              << "  " << prog << " -s /HDD/nio_capture                         # custom save directory\n"
-              << "  " << prog << " -c \"305\" -s /HDD/nio_capture --alpha 0.6    # combined options\n"
+              << "  " << prog << "                                 # all devices, default settings\n"
+              << "  " << prog << " -c \"305\" \"336L\"               # filter cameras by type\n"
+              << "  " << prog << " -s /HDD/nio_capture             # custom save directory\n"
+              << "  " << prog << " -c \"305\" --alpha 0.6            # combined options\n"
               << std::endl;
 }
 
 static CaptureConfig parseArgs(int argc, char** argv) {
     CaptureConfig cfg;
-
-    static struct option longOpts[] = { { "alpha", required_argument, nullptr, 'a' },
-                                        { "depth-min", required_argument, nullptr, 'm' },
-                                        { "depth-max", required_argument, nullptr, 'x' },
-                                        { "no-fusion", no_argument, nullptr, 'n' },
-                                        { "help", no_argument, nullptr, 'h' },
-                                        { nullptr, 0, nullptr, 0 } };
+    static struct option longOpts[] = {
+        { "alpha",      required_argument, nullptr, 'a' },
+        { "depth-min",  required_argument, nullptr, 'm' },
+        { "depth-max",  required_argument, nullptr, 'x' },
+        { "no-fusion",  no_argument,       nullptr, 'n' },
+        { "help",       no_argument,       nullptr, 'h' },
+        { nullptr,      0,                 nullptr, 0   }
+    };
 
     opterr = 0;
     int ch;
@@ -142,7 +148,6 @@ static CaptureConfig parseArgs(int argc, char** argv) {
             break;
         }
     }
-
     for (int i = optind; i < argc; i++) {
         cfg.cameraFilter.push_back(argv[i]);
     }
@@ -154,6 +159,26 @@ static CaptureConfig parseArgs(int argc, char** argv) {
     return cfg;
 }
 
+static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
+                                      std::shared_ptr<ob::StreamProfile> colorProfile,
+                                      std::shared_ptr<ob::StreamProfile> depthProfile) {
+    auto hwD2CDepthProfiles = pipe->getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE);
+    if (!hwD2CDepthProfiles || hwD2CDepthProfiles->getCount() == 0) {
+        return false;
+    }
+    auto depthVsp = depthProfile->as<ob::VideoStreamProfile>();
+    auto count = hwD2CDepthProfiles->getCount();
+    for (uint32_t i = 0; i < count; i++) {
+        auto sp = hwD2CDepthProfiles->getProfile(i);
+        auto vsp = sp->as<ob::VideoStreamProfile>();
+        if (vsp->getWidth() == depthVsp->getWidth() && vsp->getHeight() == depthVsp->getHeight()
+            && vsp->getFormat() == depthVsp->getFormat() && vsp->getFps() == depthVsp->getFps()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int main(int argc, char** argv) try {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
@@ -162,10 +187,12 @@ int main(int argc, char** argv) try {
 
     NIO_LOG_INIT("nio_multi_capture", cfg.saveDir.empty() ? "capture_output" : cfg.saveDir);
     NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
+    NIO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
+    std::cout << "Git commit: " << GIT_COMMIT_HASH << std::endl;
     NIO_LOG_INFO_S("Process started, camera_filter_count="
-                   << cfg.cameraFilter.size() << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
-                   << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
-                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+        << cfg.cameraFilter.size() << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
+        << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
+        << " fusion=" << (cfg.enableFusion ? "on" : "off"));
     for (size_t i = 0; i < cfg.cameraFilter.size(); i++) {
         NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
@@ -460,8 +487,22 @@ int main(int argc, char** argv) try {
         if (ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
             config->disableStream(OB_SENSOR_IR_LEFT);
             hasIRLeft = false;
-            std::cout << " Gemini 305g: disabled IR_LEFT" << std::endl;
+            std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
             NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
+        }
+
+        bool hwD2CSupported = false;
+        if (hasColor && hasDepth && colorProfile && depthProfile) {
+            hwD2CSupported = checkIfSupportHWD2CAlign(cap->videoPipeline, colorProfile, depthProfile);
+            if (hwD2CSupported) {
+                config->setAlignMode(ALIGN_D2C_HW_MODE);
+                cap->hwD2CMode = true;
+                std::cout << "  HW D2C: supported, using hardware depth-to-color alignment" << std::endl;
+                NIO_LOG_INFO_S("HW D2C supported for " << safeName << ", using ALIGN_D2C_HW_MODE");
+            } else {
+                std::cout << "  HW D2C: not supported, using software alignment" << std::endl;
+                NIO_LOG_INFO_S("HW D2C not supported for " << safeName << ", using SW alignment");
+            }
         }
 
         auto sf = cap->sensorFiles;
@@ -504,7 +545,9 @@ int main(int argc, char** argv) try {
 
         bool canFuse = cfg.enableFusion && hasColor && hasDepth;
         if (canFuse) {
-            cap->alignFilter = std::make_shared<ob::Align>(OB_STREAM_COLOR);
+            if (!cap->hwD2CMode) {
+                cap->alignFilter = std::make_shared<ob::Align>(OB_STREAM_COLOR);
+            }
             cap->colorW = colorW;
             cap->colorH = colorH;
             cap->colorFormat = colorFormat;
@@ -515,9 +558,9 @@ int main(int argc, char** argv) try {
 
             cap->fusedEncoder = std::make_shared<H264Encoder>();
             if (!cap->fusedEncoder->initRGB(colorW, colorH, cap->fusedFps)) {
-                std::cerr << " Failed to init fused H264 encoder for " << safeName << std::endl;
+                std::cerr << "  Failed to init fused H264 encoder for " << safeName << std::endl;
                 NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName << " " << colorW << "x" << colorH
-                                                                         << "@" << cap->fusedFps);
+                                << "@" << cap->fusedFps);
                 canFuse = false;
             } else {
                 cap->mjpgRes = std::make_shared<MjpgDecoderRes>();
@@ -525,13 +568,15 @@ int main(int argc, char** argv) try {
                 int rgbBufSize = colorW * colorH * 3;
                 cap->colorRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
                 cap->fusedRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
-                std::cout << " D2C Fusion: " << colorW << "x" << colorH << "@" << cap->fusedFps
+                std::cout << "  D2C Fusion: " << colorW << "x" << colorH << "@" << cap->fusedFps
                           << " alpha=" << cfg.alpha << " depth=[" << cfg.depthMinM << "m, " << cfg.depthMaxM << "m]"
+                          << " mode=" << (cap->hwD2CMode ? "HW" : "SW")
                           << std::endl;
                 NIO_LOG_INFO_S("D2C Fusion enabled: " << colorW << "x" << colorH << "@" << cap->fusedFps
-                                                      << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM
-                                                      << "m-" << cfg.depthMaxM << "m"
-                                                      << " output=" << fusedPath);
+                               << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM
+                               << "m-" << cfg.depthMaxM << "m"
+                               << " mode=" << (cap->hwD2CMode ? "HW" : "SW")
+                               << " output=" << fusedPath);
             }
         } else if (cfg.enableFusion && !hasColor) {
             std::cout << " D2C Fusion: skipped (no color sensor)" << std::endl;
@@ -554,14 +599,21 @@ int main(int argc, char** argv) try {
                 if (!frameSet)
                     return;
 
-                if (canFuse && cap->alignFilter) {
+            if (canFuse) {
+                std::shared_ptr<ob::FrameSet> alignedFS;
+                if (cap->hwD2CMode) {
+                    alignedFS = frameSet;
+                } else if (cap->alignFilter) {
                     auto alignedFrame = cap->alignFilter->process(frameSet);
-                    auto alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
+                    alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
                     if (!alignedFS)
                         alignedFS = frameSet;
+                } else {
+                    alignedFS = frameSet;
+                }
 
-                    auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
-                    auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
+                auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
+                auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
 
                     if (colorFrame && depthFrame) {
                         uint64_t colorTsUs = colorFrame->getTimeStampUs();

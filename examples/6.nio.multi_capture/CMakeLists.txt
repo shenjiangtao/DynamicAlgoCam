@@ -12,6 +12,20 @@ add_executable(${PROJECT_NAME} nio_multi_capture.cpp)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_SHORT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE GIT_COMMIT_RESULT
+)
+if(GIT_COMMIT_RESULT EQUAL 0 AND GIT_COMMIT_SHORT)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE GIT_COMMIT_HASH="${GIT_COMMIT_SHORT}")
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE GIT_COMMIT_HASH="unknown")
+endif()
+
 target_link_libraries(${PROJECT_NAME}
 ob::${OB_SDK_LIB_NAME}
 ob::examples::utils
