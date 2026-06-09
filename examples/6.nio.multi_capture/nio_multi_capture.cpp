@@ -43,43 +43,53 @@
 
 using namespace nio;
 
+// ---------------------------------------------------------------------------
+// Data structures
+// ---------------------------------------------------------------------------
+
+// Per-device capture state: pipelines, encoders, fusion buffers, and metadata.
+// One DeviceCapture is created for each matched Orbbec device.
 struct DeviceCapture
 {
+    // Video pipeline handles color/depth/IR streams; IMU pipeline is separate
+    // because OrbbecSDK requires accel+gyro on a dedicated pipeline instance.
     std::shared_ptr<ob::Pipeline> videoPipeline;
     std::shared_ptr<ob::Pipeline> imuPipeline;
-    std::string deviceName;
-    std::shared_ptr<SensorFiles> sensorFiles;
+    std::string deviceName;                   // device name with spaces replaced by '_'
+    std::shared_ptr<SensorFiles> sensorFiles; // per-stream encoders & output files
     bool hasIMU = false;
-    float depthScale = 0.001f;
+    float depthScale = 0.001f; // raw Y16 → meters conversion factor
 
-    std::shared_ptr<ob::Align> alignFilter;
-    std::shared_ptr<H264Encoder> fusedEncoder;
-    std::shared_ptr<std::ofstream> fusedFile;
-    std::mutex fusedMtx;
-    std::shared_ptr<MjpgDecoderRes> mjpgRes;
-    std::shared_ptr<std::vector<uint8_t>> colorRGBBuf;
-    std::shared_ptr<std::vector<uint8_t>> fusedRGBBuf;
-    int colorW = 0;
-    int colorH = 0;
-    int fusedFps = 30;
-    OBFormat colorFormat = OB_FORMAT_UNKNOWN;
-    float alpha = 0.5f;
-    float depthMinM = 0.3f;
-    float depthMaxM = 5.0f;
+    // D2C (depth-to-color) fusion fields — only used when enableFusion=true
+    std::shared_ptr<ob::Align> alignFilter;            // SW alignment filter (null if HW D2C)
+    std::shared_ptr<H264Encoder> fusedEncoder;         // RGB→H264 encoder for fused output
+    std::shared_ptr<std::ofstream> fusedFile;          // fused .h264 output file
+    std::mutex fusedMtx;                               // protects fusedFile writes
+    std::shared_ptr<MjpgDecoderRes> mjpgRes;           // MJPEG decoder for color→RGB conversion
+    std::shared_ptr<std::vector<uint8_t>> colorRGBBuf; // decoded color RGB buffer
+    std::shared_ptr<std::vector<uint8_t>> fusedRGBBuf; // alpha-blended fusion output
+    int colorW = 0;                                    // color stream width (also fusion width)
+    int colorH = 0;                                    // color stream height (also fusion height)
+    int fusedFps = 30;                                 // fusion output fps (min of color & depth)
+    OBFormat colorFormat = OB_FORMAT_UNKNOWN;          // actual color pixel format from device
+    float alpha = 0.5f;                                // depth overlay opacity (0=only color, 1=only depth)
+    float depthMinM = 0.3f;                            // min depth for jet colormap normalization (meters)
+    float depthMaxM = 5.0f;                            // max depth for jet colormap normalization (meters)
     bool enableFusion = true;
-    bool hwD2CMode = false;
-    std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount;
+    bool hwD2CMode = false;                                 // true if device supports hardware D2C alignment
+    std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount; // FPS counter for fusion stream
 };
 
+// CLI configuration parsed from command-line arguments.
 struct CaptureConfig
 {
-    std::vector<std::string> cameraFilter;
-    std::string saveDir;
+    std::vector<std::string> cameraFilter; // e.g. {"305", "336L"} — only open matching devices
+    std::string saveDir;                   // output root directory (default: "capture_output")
     float alpha = 0.5f;
     float depthMinM = 0.3f;
     float depthMaxM = 5.0f;
     bool enableFusion = true;
-    bool noFusion = false;
+    bool noFusion = false; // set by --no-fusion; converted to enableFusion=false
 };
 
 static void printUsage(const char* prog) {
@@ -94,9 +104,9 @@ static void printUsage(const char* prog) {
               << "  --help        Show this help\n"
               << "\nExamples:\n"
               << "  " << prog << "                                 # all devices, default settings\n"
-              << "  " << prog << " -c \"305\" \"336L\"               # filter cameras by type\n"
+              << "  " << prog << " -c \"305\" \"336L\"             # filter cameras by type\n"
               << "  " << prog << " -s /HDD/nio_capture             # custom save directory\n"
-              << "  " << prog << " -c \"305\" --alpha 0.6            # combined options\n"
+              << "  " << prog << " -c \"305\" --alpha 0.6          # combined options\n"
               << std::endl;
 }
 
@@ -178,6 +188,9 @@ static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
 }
 
 int main(int argc, char** argv) try {
+    // -----------------------------------------------------------------------
+    // Signal handling & CLI parsing
+    // -----------------------------------------------------------------------
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
@@ -210,6 +223,8 @@ int main(int argc, char** argv) try {
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
+    // Check USB transfer buffer size — multiple high-res devices may exhaust
+    // the default usbfs_memory_mb (usually 16MB). Warn if < 128MB with >1 device.
     {
         std::ifstream usbfsFile("/sys/module/usbcore/parameters/usbfs_memory_mb");
         if (usbfsFile.is_open()) {
@@ -226,6 +241,17 @@ int main(int argc, char** argv) try {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Device enumeration & per-device setup
+    // -----------------------------------------------------------------------
+    // For each discovered Orbbec device that matches the camera filter:
+    //  1. Create output directory  <saveDir>/<timestamp>/<deviceName>/
+    //  2. Enumerate sensors, select stream profiles
+    //  3. Set up H264 encoders + output files for each stream
+    //  4. Configure D2C alignment (HW or SW)
+    //  5. Start video pipeline with frame callback
+    //  6. Start separate IMU pipeline if accel+gyro are present
+    // -----------------------------------------------------------------------
     std::vector<std::shared_ptr<DeviceCapture>> captures;
 
     for (uint32_t i = 0; i < deviceList->getCount(); i++) {
@@ -304,6 +330,10 @@ int main(int argc, char** argv) try {
 
         std::shared_ptr<ob::VideoStreamProfile> colorProfile, depthProfile, irProfile, irLeftProfile, irRightProfile;
 
+        // Enumerate all sensors on this device and select best stream profile for each.
+        // Profile selection priority: prefer the requested format (MJPG for color, Y16
+        // for depth, Y8 for IR). If the preferred format is unavailable, fall back to
+        // the first profile with a known format.
         for (uint32_t s = 0; s < sensorList->getCount(); s++) {
             auto sensorType = sensorList->getSensorType(s);
             auto sensor = sensorList->getSensor(s);
@@ -383,6 +413,8 @@ int main(int argc, char** argv) try {
                     NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps
                                                     << " format=" << depthFormat);
                 }
+                // Depth precision determines the Y16→meters scale factor.
+                // E.g. precision_level=0 → 1mm, precision_level=1 → 0.5mm, etc.
                 try {
                     int32_t precisionLevel = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     switch (precisionLevel) {
@@ -482,6 +514,8 @@ int main(int argc, char** argv) try {
             }
         }
 
+        // Gemini 305g reports an IR_LEFT sensor but it is non-functional; disable it
+        // to avoid pipeline start failures.
         if (ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
             config->disableStream(OB_SENSOR_IR_LEFT);
             hasIRLeft = false;
@@ -489,6 +523,10 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
         }
 
+        // Check if device supports hardware depth-to-color alignment.
+        // If supported, the D2C alignment happens on-device and the output
+        // FrameSet already contains aligned depth; otherwise we use the SW
+        // Align filter in the frame callback.
         bool hwD2CSupported = false;
         if (hasColor && hasDepth && colorProfile && depthProfile) {
             hwD2CSupported = checkIfSupportHWD2CAlign(cap->videoPipeline, colorProfile, depthProfile);
@@ -503,6 +541,12 @@ int main(int argc, char** argv) try {
             }
         }
 
+        // -----------------------------------------------------------------------
+        // Create H264 encoders + output files for each sensor stream
+        // -----------------------------------------------------------------------
+        // Each stream gets a StreamEncoder (which wraps an H264Encoder + buffered
+        // file). For native H264/H265 devices the encoder is skipped and raw NALUs
+        // are written directly. Depth also gets a parallel .raw file with Y16 data.
         auto sf = cap->sensorFiles;
 
         if (hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
@@ -539,6 +583,14 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
+        // -----------------------------------------------------------------------
+        // D2C fusion setup
+        // -----------------------------------------------------------------------
+        // When both color and depth are available, create a separate H264 output
+        // that alpha-blends depth (jet colormap) onto the color image.
+        // Pipeline: color frame → decodeColorToRGB() → RGB24 buffer
+        //           depth frame → align to color → jet colormap
+        //           blend with alpha → fusedEncoder->encodeRGB() → .h264
         bool canFuse = cfg.enableFusion && hasColor && hasDepth;
         if (canFuse) {
             if (!cap->hwD2CMode) {
@@ -582,6 +634,15 @@ int main(int argc, char** argv) try {
 
         auto depthFrameIdx = std::make_shared<std::atomic<uint64_t>>(0);
 
+        // -----------------------------------------------------------------------
+        // Start video pipeline with frame callback
+        // -----------------------------------------------------------------------
+        // The callback processes every incoming FrameSet from the device:
+        //  1. D2C fusion: align depth→color, decode color to RGB, alpha-blend,
+        //     encode fused result to H264
+        //  2. Individual streams: encode each frame to H264 (or write raw NALUs
+        //     for native H264 devices), and write depth .raw with headers
+        // -----------------------------------------------------------------------
         try {
             cap->videoPipeline->enableFrameSync();
         } catch (...) {
@@ -593,7 +654,10 @@ int main(int argc, char** argv) try {
                 if (!frameSet)
                     return;
 
+                // ---- D2C fusion path ----
                 if (canFuse) {
+                    // For HW D2C mode the frameSet is already aligned by the device;
+                    // for SW D2C mode we apply the Align filter manually.
                     std::shared_ptr<ob::FrameSet> alignedFS;
                     if (cap->hwD2CMode) {
                         alignedFS = frameSet;
@@ -616,6 +680,7 @@ int main(int argc, char** argv) try {
                         int w = cap->colorW;
                         int h = cap->colorH;
 
+                        // Decode color frame to RGB24 (handles MJPG/YUYV/BGR/etc.)
                         bool colorOk = decodeColorToRGB(colorFrame->getData(), colorFrame->getDataSize(),
                                                         cap->colorFormat, w, h, cap->colorRGBBuf->data(), cap->mjpgRes);
 
@@ -627,6 +692,8 @@ int main(int argc, char** argv) try {
                         auto depthSize = depthFrame->getDataSize();
                         auto depthFmt = depthFrame->getFormat();
 
+                        // Depth value scale: prefer per-frame getValueScale(), fallback to
+                        // the device-level depthScale queried at init time.
                         float scale = cap->depthScale;
                         try {
                             auto depthF = depthFrame->as<ob::DepthFrame>();
@@ -659,7 +726,7 @@ int main(int argc, char** argv) try {
                             b = static_cast<uint8_t>(255 * std::min(1.0f, std::max(0.0f, 1.5f - fabs(4 * x - 1))));
                         };
 
-                        // 融合函数：彩色 + 深度伪彩色
+                        // Alpha-blend: output = (1-alpha)*color + alpha*jet(depth)
                         auto fuseDepthColor = [&](const uint16_t* depthPtr, int depthW, int depthH) {
                             int blendW = std::min(w, depthW);
                             int blendH = std::min(h, depthH);
@@ -708,6 +775,8 @@ int main(int argc, char** argv) try {
                     }
                 }
 
+                // ---- Individual stream recording (color/depth/IR) ----
+                // These write to separate .h264 files independently of the fusion path.
                 if (hasColor) {
                     auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
                     if (colorFrame) {
@@ -725,6 +794,8 @@ int main(int argc, char** argv) try {
                         auto data = depthFrame->getData();
                         auto size = depthFrame->getDataSize();
 
+                        // Write raw Y16 depth data with per-frame header for offline replay.
+                        // Skipped for native H264/H265 depth streams.
                         if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
                             if (sf->depthRawFile && sf->depthRawFile->is_open()) {
                                 uint64_t idx = depthFrameIdx->fetch_add(1);
@@ -781,6 +852,12 @@ int main(int argc, char** argv) try {
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+        // -----------------------------------------------------------------------
+        // Start IMU pipeline (separate from video pipeline)
+        // -----------------------------------------------------------------------
+        // OrbbecSDK requires accel+gyro to be started on a dedicated pipeline
+        // instance. The callback writes timestamped CSV lines to the IMU file.
+        // -----------------------------------------------------------------------
         cap->hasIMU = (hasAccel && hasGyro);
         if (cap->hasIMU) {
             NIO_LOG_INFO_S("Starting IMU pipeline for " << safeName);
@@ -870,6 +947,13 @@ int main(int argc, char** argv) try {
                                                         << " fusion=" << (cfg.enableFusion ? "on" : "off"));
     NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
 
+    // -----------------------------------------------------------------------
+    // Main recording loop
+    // -----------------------------------------------------------------------
+    // Polls keyboard every ~1s (then every ~2s after first report).
+    // Prints per-stream FPS statistics on each reporting interval.
+    // Exits on Ctrl+C (SIGINT/SIGTERM → g_running=false), 'q', or ESC.
+    // -----------------------------------------------------------------------
     auto lastReportTime = ob_smpl::getNowTimesMs();
     uint32_t waitTime = 1000;
 
@@ -885,6 +969,11 @@ int main(int argc, char** argv) try {
             uint64_t reportDuration = currentTime - lastReportTime;
             lastReportTime = currentTime;
 
+            // -----------------------------------------------------------------------
+            // Shutdown: stop pipelines, close encoders, flush files
+            // -----------------------------------------------------------------------
+            // Order matters: stop pipelines first (no more callbacks), then close
+            // encoders (flushes buffered H264 frames), then close files.
             for (auto& cap : captures) {
                 std::map<OBFrameType, uint64_t> tempCounts;
                 {
@@ -976,7 +1065,8 @@ int main(int argc, char** argv) try {
     NIO_LOG_SHUTDOWN();
     return 0;
 } catch (ob::Error& e) {
-    std::cerr << "OB Error: " << e.getFunction() << "\n " << e.what() << "\n status: " << e.getStatus() << std::endl;
+    // Top-level catch for unhandled OrbbecSDK errors
+    std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what() << "\n status: " << e.getStatus() << std::endl;
     NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
     NIO_LOG_SHUTDOWN();
     return -1;
