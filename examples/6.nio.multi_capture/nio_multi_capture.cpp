@@ -102,14 +102,12 @@ static void printUsage(const char* prog) {
 
 static CaptureConfig parseArgs(int argc, char** argv) {
     CaptureConfig cfg;
-    static struct option longOpts[] = {
-        { "alpha",      required_argument, nullptr, 'a' },
-        { "depth-min",  required_argument, nullptr, 'm' },
-        { "depth-max",  required_argument, nullptr, 'x' },
-        { "no-fusion",  no_argument,       nullptr, 'n' },
-        { "help",       no_argument,       nullptr, 'h' },
-        { nullptr,      0,                 nullptr, 0   }
-    };
+    static struct option longOpts[] = { { "alpha", required_argument, nullptr, 'a' },
+                                        { "depth-min", required_argument, nullptr, 'm' },
+                                        { "depth-max", required_argument, nullptr, 'x' },
+                                        { "no-fusion", no_argument, nullptr, 'n' },
+                                        { "help", no_argument, nullptr, 'h' },
+                                        { nullptr, 0, nullptr, 0 } };
 
     opterr = 0;
     int ch;
@@ -160,8 +158,8 @@ static CaptureConfig parseArgs(int argc, char** argv) {
 }
 
 static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
-                                      std::shared_ptr<ob::StreamProfile> colorProfile,
-                                      std::shared_ptr<ob::StreamProfile> depthProfile) {
+                                     std::shared_ptr<ob::StreamProfile> colorProfile,
+                                     std::shared_ptr<ob::StreamProfile> depthProfile) {
     auto hwD2CDepthProfiles = pipe->getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE);
     if (!hwD2CDepthProfiles || hwD2CDepthProfiles->getCount() == 0) {
         return false;
@@ -171,8 +169,8 @@ static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
     for (uint32_t i = 0; i < count; i++) {
         auto sp = hwD2CDepthProfiles->getProfile(i);
         auto vsp = sp->as<ob::VideoStreamProfile>();
-        if (vsp->getWidth() == depthVsp->getWidth() && vsp->getHeight() == depthVsp->getHeight()
-            && vsp->getFormat() == depthVsp->getFormat() && vsp->getFps() == depthVsp->getFps()) {
+        if (vsp->getWidth() == depthVsp->getWidth() && vsp->getHeight() == depthVsp->getHeight() &&
+            vsp->getFormat() == depthVsp->getFormat() && vsp->getFps() == depthVsp->getFps()) {
             return true;
         }
     }
@@ -190,9 +188,9 @@ int main(int argc, char** argv) try {
     NIO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
     std::cout << "Git commit: " << GIT_COMMIT_HASH << std::endl;
     NIO_LOG_INFO_S("Process started, camera_filter_count="
-        << cfg.cameraFilter.size() << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
-        << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
-        << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+                   << cfg.cameraFilter.size() << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
+                   << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
+                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
     for (size_t i = 0; i < cfg.cameraFilter.size(); i++) {
         NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
@@ -510,16 +508,14 @@ int main(int argc, char** argv) try {
         if (hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
             sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264", colorFormat, colorW, colorH,
                                             colorFps, nullptr, false);
-            NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264"
-                                            << " fmt=" << colorFormat);
+            NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264" << " fmt=" << colorFormat);
         }
         if (hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
             sf->depth = createStreamEncoder(baseName + "_depth_" + startTs + ".h264", depthFormat, depthW, depthH,
                                             depthFps, nullptr, false);
             sf->depthRawFile =
                 std::make_shared<std::ofstream>(baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
-            NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264"
-                                            << " + raw");
+            NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
         }
         if (hasIR && irFormat != OB_FORMAT_UNKNOWN) {
             sf->ir =
@@ -560,7 +556,7 @@ int main(int argc, char** argv) try {
             if (!cap->fusedEncoder->initRGB(colorW, colorH, cap->fusedFps)) {
                 std::cerr << "  Failed to init fused H264 encoder for " << safeName << std::endl;
                 NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName << " " << colorW << "x" << colorH
-                                << "@" << cap->fusedFps);
+                                                                         << "@" << cap->fusedFps);
                 canFuse = false;
             } else {
                 cap->mjpgRes = std::make_shared<MjpgDecoderRes>();
@@ -570,13 +566,11 @@ int main(int argc, char** argv) try {
                 cap->fusedRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
                 std::cout << "  D2C Fusion: " << colorW << "x" << colorH << "@" << cap->fusedFps
                           << " alpha=" << cfg.alpha << " depth=[" << cfg.depthMinM << "m, " << cfg.depthMaxM << "m]"
-                          << " mode=" << (cap->hwD2CMode ? "HW" : "SW")
-                          << std::endl;
-                NIO_LOG_INFO_S("D2C Fusion enabled: " << colorW << "x" << colorH << "@" << cap->fusedFps
-                               << " alpha=" << cfg.alpha << " depthRange=" << cfg.depthMinM
-                               << "m-" << cfg.depthMaxM << "m"
-                               << " mode=" << (cap->hwD2CMode ? "HW" : "SW")
-                               << " output=" << fusedPath);
+                          << " mode=" << (cap->hwD2CMode ? "HW" : "SW") << std::endl;
+                NIO_LOG_INFO_S("D2C Fusion enabled: "
+                               << colorW << "x" << colorH << "@" << cap->fusedFps << " alpha=" << cfg.alpha
+                               << " depthRange=" << cfg.depthMinM << "m-" << cfg.depthMaxM << "m"
+                               << " mode=" << (cap->hwD2CMode ? "HW" : "SW") << " output=" << fusedPath);
             }
         } else if (cfg.enableFusion && !hasColor) {
             std::cout << " D2C Fusion: skipped (no color sensor)" << std::endl;
@@ -599,21 +593,21 @@ int main(int argc, char** argv) try {
                 if (!frameSet)
                     return;
 
-            if (canFuse) {
-                std::shared_ptr<ob::FrameSet> alignedFS;
-                if (cap->hwD2CMode) {
-                    alignedFS = frameSet;
-                } else if (cap->alignFilter) {
-                    auto alignedFrame = cap->alignFilter->process(frameSet);
-                    alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
-                    if (!alignedFS)
+                if (canFuse) {
+                    std::shared_ptr<ob::FrameSet> alignedFS;
+                    if (cap->hwD2CMode) {
                         alignedFS = frameSet;
-                } else {
-                    alignedFS = frameSet;
-                }
+                    } else if (cap->alignFilter) {
+                        auto alignedFrame = cap->alignFilter->process(frameSet);
+                        alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
+                        if (!alignedFS)
+                            alignedFS = frameSet;
+                    } else {
+                        alignedFS = frameSet;
+                    }
 
-                auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
-                auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
+                    auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
+                    auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
 
                     if (colorFrame && depthFrame) {
                         uint64_t colorTsUs = colorFrame->getTimeStampUs();

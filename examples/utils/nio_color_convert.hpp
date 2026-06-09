@@ -19,15 +19,17 @@ extern "C" {
 namespace nio {
 
 struct MjpgDecoderRes {
-    AVCodecContext *ctx;
-    AVPacket *pkt;
-    AVFrame *decFrame;
-    SwsContext *sws;
+  AVCodecContext *ctx;
+  AVPacket *pkt;
+  AVFrame *decFrame;
+  SwsContext *sws;
+  AVPixelFormat decFmt;
+  bool swsInitialized;
 
-    MjpgDecoderRes();
-    ~MjpgDecoderRes();
+  MjpgDecoderRes();
+  ~MjpgDecoderRes();
 
-    bool init(int w, int h, OBFormat fmt);
+  bool init(int w, int h, OBFormat fmt);
 };
 
 void jetColormap(uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b);

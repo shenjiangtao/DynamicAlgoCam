@@ -71,9 +71,11 @@ private:
     std::string seiUuid_;
 
     const AVCodec *mjpgCodec_;
-    AVCodecContext *mjpgCtx_;
-    AVPacket *mjpgPkt_;
-    AVFrame *mjpgDecFrame_;
+  AVPixelFormat mjpgDecFmt_;
+  bool mjpgSwsInitialized_;
+  AVCodecContext *mjpgCtx_;
+  AVPacket *mjpgPkt_;
+  AVFrame *mjpgDecFrame_;
 };
 
 } // namespace nio
