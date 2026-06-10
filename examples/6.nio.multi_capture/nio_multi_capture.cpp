@@ -273,6 +273,8 @@ int main(int argc, char** argv) try {
 
         auto safeName = name;
         std::replace(safeName.begin(), safeName.end(), ' ', '_');
+        std::string serialNumber = devInfo->getSerialNumber();
+        safeName = safeName + "_" + serialNumber;
 
         std::string deviceOutputDir = outputRootDir + "/" + safeName;
         mkdirp(deviceOutputDir);
