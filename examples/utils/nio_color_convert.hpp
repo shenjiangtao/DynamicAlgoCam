@@ -3,6 +3,21 @@
 //
 // nio_color_convert.hpp — Color conversion utilities: MJPEG decoding,
 // jet colormap, RGB quadrant compositing, 5×7 bitmap text rendering.
+//
+// MjpgDecoderRes: RAII wrapper for FFmpeg MJPEG decoder + sws context.
+//   - sws context is lazily created on first decoded frame (see .cpp for
+//     the YUVJ422P vs YUV420P format mismatch fix).
+//   - decFmt / swsInitialized track the lazy init state.
+//
+// decodeColorToRGB(): converts any supported OBFormat frame to RGB24.
+//   Used by the D2C fusion preview to compose color + depth + IR into
+//   a single RGB canvas.
+//
+// fillQuadrant / fillQuadrantJetDepth: composite sub-images into a 2×2
+//   quadrant layout (used for multi-sensor preview display).
+//
+// drawChar5x7 / drawText5x7: tiny bitmap font overlay for timestamp/sensor
+//   labels drawn directly onto RGB pixel buffers.
 
 #pragma once
 
@@ -18,13 +33,17 @@ extern "C" {
 
 namespace nio {
 
+// MjpgDecoderRes: owns MJPEG decoder + sws context for YUV→RGB conversion.
+// Sws is NOT created in init() — it is lazily created in decodeColorToRGB()
+// after the first frame is decoded, because the actual decoder output format
+// (e.g. YUVJ422P) may differ from the requested YUV420P.
 struct MjpgDecoderRes {
-  AVCodecContext *ctx;
-  AVPacket *pkt;
-  AVFrame *decFrame;
-  SwsContext *sws;
-  AVPixelFormat decFmt;
-  bool swsInitialized;
+    AVCodecContext *ctx;         // MJPEG decoder context
+    AVPacket *pkt;               // reuse packet for each decode call
+    AVFrame *decFrame;           // reuse decoded frame buffer
+    SwsContext *sws;             // lazily created YUV→RGB sws context
+    AVPixelFormat decFmt;        // actual decoder output pixel format
+    bool swsInitialized;         // true after first-frame lazy init
 
   MjpgDecoderRes();
   ~MjpgDecoderRes();

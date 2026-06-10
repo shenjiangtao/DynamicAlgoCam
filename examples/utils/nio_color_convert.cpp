@@ -2,6 +2,13 @@
 // Licensed under the MIT License.
 //
 // nio_color_convert.cpp — Color conversion and text rendering implementation.
+//
+// Sections:
+//   1. MjpgDecoderRes — RAII wrapper for FFmpeg MJPEG decoder + lazy sws
+//   2. jetColormap — blue→cyan→green→yellow→red false-color mapping
+//   3. decodeColorToRGB — universal OBFormat → RGB24 converter
+//   4. font5x7 / drawChar5x7 / drawText5x7 — 5×7 bitmap text overlay
+//   5. fillQuadrant / fillQuadrantJetDepth — 2×2 compositing
 
 #include "nio_color_convert.hpp"
 #include "nio_log.hpp"
@@ -17,9 +24,10 @@ extern "C" {
 
 namespace nio {
 
+// === Section 1: MjpgDecoderRes — RAII MJPEG decoder + lazy sws ===
+
 MjpgDecoderRes::MjpgDecoderRes()
-: ctx(nullptr), pkt(nullptr), decFrame(nullptr), sws(nullptr),
-  decFmt(AV_PIX_FMT_NONE), swsInitialized(false) {}
+: ctx(nullptr), pkt(nullptr), decFrame(nullptr), sws(nullptr), decFmt(AV_PIX_FMT_NONE), swsInitialized(false) {}
 
 MjpgDecoderRes::~MjpgDecoderRes() {
     if (sws)
@@ -32,26 +40,31 @@ MjpgDecoderRes::~MjpgDecoderRes() {
         avcodec_free_context(&ctx);
 }
 
+// init: allocate MJPEG decoder.  sws is NOT created here — it is
+// deferred to the first decodeColorToRGB() call because the decoder
+// output format (YUVJ422P vs YUV420P) is unknown until first decode.
 bool MjpgDecoderRes::init(int w, int h, OBFormat fmt) {
-  pkt = av_packet_alloc();
-  decFrame = av_frame_alloc();
-  if (fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
-    auto codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
-    if (codec) {
-      ctx = avcodec_alloc_context3(codec);
-      if (ctx) {
-        ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-        ctx->width = w;
-        ctx->height = h;
-        if (avcodec_open2(ctx, codec, nullptr) < 0) {
-          avcodec_free_context(&ctx);
-          ctx = nullptr;
+    pkt = av_packet_alloc();
+    decFrame = av_frame_alloc();
+    if (fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
+        auto codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
+        if (codec) {
+            ctx = avcodec_alloc_context3(codec);
+            if (ctx) {
+                ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+                ctx->width = w;
+                ctx->height = h;
+                if (avcodec_open2(ctx, codec, nullptr) < 0) {
+                    avcodec_free_context(&ctx);
+                    ctx = nullptr;
+                }
+            }
         }
-      }
     }
-  }
-  return true;
+    return true;
 }
+
+// === Section 2: jetColormap — false-color depth visualization ===
 
 void jetColormap(uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
     float t = v / 255.0f;
@@ -81,6 +94,14 @@ void jetColormap(uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
     g = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, gv * 255.0f)));
     b = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, bv * 255.0f)));
 }
+
+// === Section 3: decodeColorToRGB — universal OBFormat → RGB24 converter ===
+// Handles: RGB, BGR, RGBA, BGRA (direct copy/swizzle), MJPEG (decode+sws),
+// YUYV/UYVY/NV12/NV21/I420 (sws with BT.709 full-range color details).
+//
+// MJPEG path: sws context is lazily created on first decoded frame using
+// the actual decoder output format (typically YUVJ422P) to avoid the
+// chroma misalignment bug described in nio_h264_encoder.cpp.
 
 bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w, int h, uint8_t* rgbBuf,
                       std::shared_ptr<MjpgDecoderRes> mjpg) {
@@ -112,65 +133,67 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         }
         return true;
     }
-  if (format == OB_FORMAT_MJPG || format == OB_FORMAT_MJPEG) {
-    if (!mjpg->ctx)
-      return false;
-    mjpg->pkt->data = const_cast<uint8_t*>(data);
-    mjpg->pkt->size = size;
-    int ret = avcodec_send_packet(mjpg->ctx, mjpg->pkt);
-    if (ret < 0)
-      return false;
-    ret = avcodec_receive_frame(mjpg->ctx, mjpg->decFrame);
-    if (ret < 0)
-      return false;
+    // --- MJPEG path: decode JPEG → YUV, then sws_scale → RGB24 ---
+    if (format == OB_FORMAT_MJPG || format == OB_FORMAT_MJPEG) {
+        if (!mjpg->ctx)
+            return false;
+        mjpg->pkt->data = const_cast<uint8_t*>(data);
+        mjpg->pkt->size = size;
+        int ret = avcodec_send_packet(mjpg->ctx, mjpg->pkt);
+        if (ret < 0)
+            return false;
+        ret = avcodec_receive_frame(mjpg->ctx, mjpg->decFrame);
+        if (ret < 0)
+            return false;
 
-    AVPixelFormat decFmt = static_cast<AVPixelFormat>(mjpg->decFrame->format);
+        AVPixelFormat decFmt = static_cast<AVPixelFormat>(mjpg->decFrame->format);
 
-    if (!mjpg->swsInitialized) {
-      const char* pixFmtName = av_get_pix_fmt_name(decFmt);
-      NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] decodeColorToRGB"
-        << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
-        << " color_range=" << mjpg->decFrame->color_range
-        << " w=" << mjpg->decFrame->width << " h=" << mjpg->decFrame->height
-        << " stride_Y=" << mjpg->decFrame->linesize[0]
-        << " stride_U=" << mjpg->decFrame->linesize[1]
-        << " stride_V=" << mjpg->decFrame->linesize[2]);
-      if (mjpg->decFrame->data[0]) {
-        const uint8_t* y0 = mjpg->decFrame->data[0];
-        const uint8_t* u0 = mjpg->decFrame->data[1];
-        const uint8_t* v0 = mjpg->decFrame->data[2];
-        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion sample"
-          << " Y[0..4]={" << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << ","
-          << (int)y0[3] << "} U[0..4]={" << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2]
-          << "," << (int)u0[3] << "} V[0..4]={" << (int)v0[0] << "," << (int)v0[1] << ","
-          << (int)v0[2] << "," << (int)v0[3] << "}");
-      }
+        // First decoded frame: create sws with actual decoder output format
+        if (!mjpg->swsInitialized) {
+            const char* pixFmtName = av_get_pix_fmt_name(decFmt);
+            NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] decodeColorToRGB"
+                           << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
+                           << " color_range=" << mjpg->decFrame->color_range << " w=" << mjpg->decFrame->width
+                           << " h=" << mjpg->decFrame->height << " stride_Y=" << mjpg->decFrame->linesize[0]
+                           << " stride_U=" << mjpg->decFrame->linesize[1]
+                           << " stride_V=" << mjpg->decFrame->linesize[2]);
+            if (mjpg->decFrame->data[0]) {
+                const uint8_t* y0 = mjpg->decFrame->data[0];
+                const uint8_t* u0 = mjpg->decFrame->data[1];
+                const uint8_t* v0 = mjpg->decFrame->data[2];
+                NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion sample"
+                               << " Y[0..4]={" << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << ","
+                               << (int)y0[3] << "} U[0..4]={" << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2]
+                               << "," << (int)u0[3] << "} V[0..4]={" << (int)v0[0] << "," << (int)v0[1] << ","
+                               << (int)v0[2] << "," << (int)v0[3] << "}");
+            }
 
-      if (mjpg->sws) {
-        sws_freeContext(mjpg->sws);
-        mjpg->sws = nullptr;
-      }
-      mjpg->decFmt = decFmt;
-      mjpg->sws = sws_getContext(w, h, decFmt, w, h, AV_PIX_FMT_RGB24,
-        SWS_BILINEAR, nullptr, nullptr, nullptr);
-      if (!mjpg->sws) {
-        NIO_LOG_ERROR_S("Failed to create sws for MJPEG->RGB, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
-        return false;
-      }
-      const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-      const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-      int srcRange = (mjpg->decFrame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
-      sws_setColorspaceDetails(mjpg->sws, srcCoeffs, srcRange, dstCoeffs, 1,
-                               0, 1 << 16, 1 << 16);
-      NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion sws recreated: srcFmt="
-        << (pixFmtName ? pixFmtName : "unknown")
-        << " dstFmt=RGB24 srcRange=" << srcRange << " dstRange=1 cs=BT709");
-      mjpg->swsInitialized = true;
-    }
+            if (mjpg->sws) {
+                sws_freeContext(mjpg->sws);
+                mjpg->sws = nullptr;
+            }
+            mjpg->decFmt = decFmt;
+            mjpg->sws = sws_getContext(w, h, decFmt, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (!mjpg->sws) {
+                NIO_LOG_ERROR_S(
+                    "Failed to create sws for MJPEG->RGB, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
+                return false;
+            }
+            const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+            const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+            // Detect full vs limited range from decoded frame
+            int srcRange = (mjpg->decFrame->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
+            sws_setColorspaceDetails(mjpg->sws, srcCoeffs, srcRange, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+            NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion sws recreated: srcFmt="
+                           << (pixFmtName ? pixFmtName : "unknown") << " dstFmt=RGB24 srcRange=" << srcRange
+                           << " dstRange=1 cs=BT709");
+            mjpg->swsInitialized = true;
+        }
 
-    if (!mjpg->sws)
-      return false;
+        if (!mjpg->sws)
+            return false;
 
+        // Allocate temporary RGB frame for sws_scale output
         AVFrame* tmpFrame = av_frame_alloc();
         if (!tmpFrame)
             return false;
@@ -182,19 +205,19 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
             return false;
         }
 
-  sws_scale(mjpg->sws, mjpg->decFrame->data, mjpg->decFrame->linesize, 0, h, tmpFrame->data, tmpFrame->linesize);
+        sws_scale(mjpg->sws, mjpg->decFrame->data, mjpg->decFrame->linesize, 0, h, tmpFrame->data, tmpFrame->linesize);
 
-  static bool fusionRgbLogged = false;
-  if (!fusionRgbLogged && tmpFrame->data[0]) {
-    const uint8_t* rgb0 = tmpFrame->data[0];
-    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion RGB output sample"
-      << " pixel0={" << (int)rgb0[0] << "," << (int)rgb0[1] << "," << (int)rgb0[2] << "} pixel1={"
-      << (int)rgb0[3] << "," << (int)rgb0[4] << "," << (int)rgb0[5] << "} pixel2={" << (int)rgb0[6]
-      << "," << (int)rgb0[7] << "," << (int)rgb0[8] << "} pixel3={" << (int)rgb0[9] << ","
-      << (int)rgb0[10] << "," << (int)rgb0[11] << "} pixel4={" << (int)rgb0[12] << ","
-      << (int)rgb0[13] << "," << (int)rgb0[14] << "}");
-    fusionRgbLogged = true;
-  }
+        static bool fusionRgbLogged = false;
+        if (!fusionRgbLogged && tmpFrame->data[0]) {
+            const uint8_t* rgb0 = tmpFrame->data[0];
+            NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] fusion RGB output sample"
+                           << " pixel0={" << (int)rgb0[0] << "," << (int)rgb0[1] << "," << (int)rgb0[2] << "} pixel1={"
+                           << (int)rgb0[3] << "," << (int)rgb0[4] << "," << (int)rgb0[5] << "} pixel2={" << (int)rgb0[6]
+                           << "," << (int)rgb0[7] << "," << (int)rgb0[8] << "} pixel3={" << (int)rgb0[9] << ","
+                           << (int)rgb0[10] << "," << (int)rgb0[11] << "} pixel4={" << (int)rgb0[12] << ","
+                           << (int)rgb0[13] << "," << (int)rgb0[14] << "}");
+            fusionRgbLogged = true;
+        }
 
         for (int row = 0; row < h; row++) {
             memcpy(rgbBuf + row * w * 3, tmpFrame->data[0] + row * tmpFrame->linesize[0], w * 3);
@@ -202,6 +225,8 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         av_frame_free(&tmpFrame);
         return true;
     }
+    // --- YUV variants: YUYV, UYVY, NV12, NV21, I420 → RGB24 ---
+    // These create a temporary sws per call (acceptable for preview-only use).
     if (format == OB_FORMAT_YUYV || format == OB_FORMAT_UYVY || format == OB_FORMAT_NV12 || format == OB_FORMAT_NV21 ||
         format == OB_FORMAT_I420) {
         AVPixelFormat srcPixFmt = AV_PIX_FMT_NONE;
@@ -268,6 +293,10 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
     return false;
 }
 
+// === Section 4: 5×7 bitmap font for text overlay ===
+// Covers printable ASCII (0x20–0x7E).  Each glyph is 5 columns × 7 rows,
+// stored as 5 bytes (one byte per column, LSB = top row).
+
 static const uint8_t font5x7[][5] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00 }, { 0x00, 0x00, 0x5F, 0x00, 0x00 }, { 0x00, 0x03, 0x00, 0x03, 0x00 },
     { 0x14, 0x3E, 0x14, 0x3E, 0x14 }, { 0x24, 0x2A, 0x7F, 0x2A, 0x12 }, { 0x23, 0x13, 0x08, 0x64, 0x62 },
@@ -322,6 +351,8 @@ void drawText5x7(uint8_t* buf, int bufW, int bufH, int x0, int y0, const std::st
     }
 }
 
+// === Section 5: Quadrant compositing for multi-sensor preview ===
+
 void fillQuadrant(uint8_t* outBuf, int outW, int outH, int quadX, int quadY, int quadW, int quadH,
                   const uint8_t* srcRGB, int srcW, int srcH) {
     for (int y = 0; y < quadH; y++) {
@@ -345,6 +376,9 @@ void fillQuadrant(uint8_t* outBuf, int outW, int outH, int quadX, int quadY, int
     }
 }
 
+// fillQuadrantJetDepth: render depth Y16 data as jet-colormapped RGB
+// into a quadrant.  Zero-valued pixels (invalid depth) are drawn as black.
+// scale: raw→millimeters conversion factor; depthMinM/depthMaxM: clip range.
 void fillQuadrantJetDepth(uint8_t* outBuf, int outW, int outH, int quadX, int quadY, int quadW, int quadH,
                           const uint16_t* depthData, int depthW, int depthH, float scale, float depthMinM,
                           float depthMaxM) {

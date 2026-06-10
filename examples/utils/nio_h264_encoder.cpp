@@ -2,6 +2,21 @@
 // Licensed under the MIT License.
 //
 // nio_h264_encoder.cpp — H264Encoder implementation using FFmpeg x264.
+//
+// Encoding pipeline per input format:
+//   RGB/BGR/RGBA/BGRA/YUYV/UYVY/NV12/NV21/I420/Y16/Y8:
+//     raw pixels → sws_scale (srcFmt → YUV420P) → avcodec_encode → H.264 NAL
+//   MJPEG:
+//     JPEG bytes → mjpgCtx_ decode → YUVJ422P (or similar) frame →
+//     sws_scale (actual decoder fmt → YUV420P) → avcodec_encode → H.264 NAL
+//
+// Critical color-space fix (2025-06):
+//   MJPEG decoder may output YUVJ422P (4:2:2 full range) instead of the
+//   requested YUV420P (4:2:0).  If sws_getContext is created with the wrong
+//   source format, sws_scale reads U/V planes with 4:2:0 stride from 4:2:2
+//   data, causing chroma misalignment and completely wrong colors.
+//   Fix: sws context is lazily created in decodeMjpg() using the actual
+//   decoder output format from the first decoded frame.
 
 #include "nio_h264_encoder.hpp"
 #include "nio_common.hpp"
@@ -36,6 +51,7 @@ H264Encoder::~H264Encoder() {
     close();
 }
 
+// --- initEncoder: create x264 AVCodecContext with BT.709 full-range VUI ---
 bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
     width_ = width;
     height_ = height;
@@ -64,9 +80,12 @@ bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
     codecCtx_->qmin = 10;
     codecCtx_->qmax = 30;
 
+    // x264 ultrafast + zerolatency: lowest CPU overhead, suitable for realtime
     av_opt_set(codecCtx_->priv_data, "preset", "ultrafast", 0);
     av_opt_set(codecCtx_->priv_data, "tune", "zerolatency", 0);
 
+    // VUI color-space signals: tell the decoder this is BT.709 full range.
+    // Without these, decoders assume limited range (16-235 luma) → washed out.
     codecCtx_->color_range = AVCOL_RANGE_JPEG;
     codecCtx_->color_primaries = AVCOL_PRI_BT709;
     codecCtx_->color_trc = AVCOL_TRC_BT709;
@@ -102,6 +121,9 @@ bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
     return true;
 }
 
+// --- initSws: create SwsContext with BT.709 full-range color-space details ---
+// Used by initRGB/initBGR paths.  srcRange=1 (full range) for RGB input,
+// dstRange=1 (full range) for YUV420P output to encoder.
 bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
     AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
     if (srcFmt != dstFmt) {
@@ -114,11 +136,17 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
         }
         const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
         const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+        // sws_setColorspaceDetails: 8-arg signature
+        // (ctx, srcCoeffs, srcRange, dstCoeffs, dstRange, brightness, contrast, saturation)
+        // brightness=0, contrast=1<<16 (1.0), saturation=1<<16 (1.0)
         sws_setColorspaceDetails(swsCtx_, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
     }
     return true;
 }
 
+// --- init: main entry point — selects pixel format, creates encoder + sws ---
+// For MJPEG: srcFmt is set to YUV420P as a decoder hint, but swsSrcFmt=NONE
+// so the sws context is NOT created here (done lazily in decodeMjpg).
 bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int bitRate, const char* seiUuid) {
     srcFormat_ = srcFormat;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
@@ -126,6 +154,9 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
     if (!initEncoder(width, height, fps, bitRate))
         return false;
 
+    // Map OBFormat → AVPixelFormat for sws_getContext.
+    // For MJPEG: srcFmt=YUV420P is only a decoder hint — swsSrcFmt is set
+    // to NONE below so sws is deferred to decodeMjpg().
     AVPixelFormat srcFmt = AV_PIX_FMT_NONE;
     switch (srcFormat) {
     case OB_FORMAT_YUYV:
@@ -171,26 +202,31 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
         return false;
     }
 
-  AVPixelFormat swsSrcFmt = srcFmt;
-  if (srcFormat == OB_FORMAT_MJPG || srcFormat == OB_FORMAT_MJPEG) {
-    swsSrcFmt = AV_PIX_FMT_NONE;
-  }
-
-  AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
-  if (swsSrcFmt != AV_PIX_FMT_NONE && swsSrcFmt != dstFmt) {
-    swsCtx_ =
-      sws_getContext(width, height, swsSrcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (!swsCtx_) {
-      std::cerr << "Failed to create sws context" << std::endl;
-      NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << srcFormat);
-      close();
-      return false;
+    // Defer sws creation for MJPEG: the actual decoder output format
+    // (typically YUVJ422P) is unknown until the first frame is decoded.
+    AVPixelFormat swsSrcFmt = srcFmt;
+    if (srcFormat == OB_FORMAT_MJPG || srcFormat == OB_FORMAT_MJPEG) {
+        swsSrcFmt = AV_PIX_FMT_NONE;
     }
-    const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-    const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-    sws_setColorspaceDetails(swsCtx_, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
-  }
 
+    AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
+    if (swsSrcFmt != AV_PIX_FMT_NONE && swsSrcFmt != dstFmt) {
+        swsCtx_ =
+            sws_getContext(width, height, swsSrcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
+        if (!swsCtx_) {
+            std::cerr << "Failed to create sws context" << std::endl;
+            NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << srcFormat);
+            close();
+            return false;
+        }
+        const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+        const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+        sws_setColorspaceDetails(swsCtx_, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+    }
+
+    // Pre-create the MJPEG decoder. pix_fmt=YUV420P is only a preference —
+    // the actual decoder output format is determined by the JPEG internals
+    // (usually YUVJ422P for 4:2:2 chroma subsampled JPEGs from Orbbec cameras).
     mjpgCodec_ = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
     if (mjpgCodec_) {
         mjpgCtx_ = avcodec_alloc_context3(mjpgCodec_);
@@ -211,6 +247,7 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
     return true;
 }
 
+// --- initRGB / initBGR: convenience wrappers for RGB/BGR-only encoding ---
 bool H264Encoder::initRGB(int width, int height, int fps, int bitRate, const char* seiUuid) {
     srcFormat_ = OB_FORMAT_RGB;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
@@ -237,6 +274,7 @@ bool H264Encoder::initBGR(int width, int height, int fps, int bitRate, const cha
     return true;
 }
 
+// --- close: release all FFmpeg resources in reverse creation order ---
 void H264Encoder::close() {
     if (swsCtx_) {
         sws_freeContext(swsCtx_);
@@ -264,6 +302,11 @@ void H264Encoder::close() {
     initialized_ = false;
 }
 
+// --- decodeMjpg: decode MJPEG frame → YUV420P via MJPEG decoder + sws ---
+// On the first decoded frame, inspects the actual decoder output format
+// (e.g. YUVJ422P) and creates the sws context with the correct source
+// pixel format and color range.  This lazy initialization fixes the chroma
+// misalignment bug that occurred when sws was pre-created with YUV420P.
 AVFrame* H264Encoder::decodeMjpg(const uint8_t* data, uint32_t size) {
     if (!mjpgCtx_)
         return nullptr;
@@ -279,74 +322,75 @@ AVFrame* H264Encoder::decodeMjpg(const uint8_t* data, uint32_t size) {
     if (ret < 0)
         return nullptr;
 
-  AVPixelFormat decFmt = static_cast<AVPixelFormat>(mjpgDecFrame_->format);
+    AVPixelFormat decFmt = static_cast<AVPixelFormat>(mjpgDecFrame_->format);
 
-  if (!mjpgSwsInitialized_) {
-    const char* pixFmtName = av_get_pix_fmt_name(decFmt);
-    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder::decodeMjpg"
-      << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
-      << " color_range=" << mjpgDecFrame_->color_range
-      << " w=" << mjpgDecFrame_->width << " h=" << mjpgDecFrame_->height
-      << " stride_Y=" << mjpgDecFrame_->linesize[0]
-      << " stride_U=" << mjpgDecFrame_->linesize[1]
-      << " stride_V=" << mjpgDecFrame_->linesize[2]);
-    if (mjpgDecFrame_->data[0]) {
-      const uint8_t* y0 = mjpgDecFrame_->data[0];
-      const uint8_t* u0 = mjpgDecFrame_->data[1];
-      const uint8_t* v0 = mjpgDecFrame_->data[2];
-      NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder sample Y[0..4]={"
-        << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << "," << (int)y0[3] << "} U[0..4]={"
-        << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2] << "," << (int)u0[3] << "} V[0..4]={"
-        << (int)v0[0] << "," << (int)v0[1] << "," << (int)v0[2] << "," << (int)v0[3] << "}");
+    // First frame: inspect actual decoder output, create sws lazily
+    if (!mjpgSwsInitialized_) {
+        const char* pixFmtName = av_get_pix_fmt_name(decFmt);
+        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder::decodeMjpg"
+                       << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
+                       << " color_range=" << mjpgDecFrame_->color_range << " w=" << mjpgDecFrame_->width
+                       << " h=" << mjpgDecFrame_->height << " stride_Y=" << mjpgDecFrame_->linesize[0]
+                       << " stride_U=" << mjpgDecFrame_->linesize[1] << " stride_V=" << mjpgDecFrame_->linesize[2]);
+        if (mjpgDecFrame_->data[0]) {
+            const uint8_t* y0 = mjpgDecFrame_->data[0];
+            const uint8_t* u0 = mjpgDecFrame_->data[1];
+            const uint8_t* v0 = mjpgDecFrame_->data[2];
+            NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder sample Y[0..4]={"
+                           << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << "," << (int)y0[3] << "} U[0..4]={"
+                           << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2] << "," << (int)u0[3] << "} V[0..4]={"
+                           << (int)v0[0] << "," << (int)v0[1] << "," << (int)v0[2] << "," << (int)v0[3] << "}");
+        }
+
+        if (swsCtx_) {
+            sws_freeContext(swsCtx_);
+            swsCtx_ = nullptr;
+        }
+        mjpgDecFmt_ = decFmt;
+        swsCtx_ = sws_getContext(width_, height_, decFmt, width_, height_, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr,
+                                 nullptr, nullptr);
+        if (!swsCtx_) {
+            NIO_LOG_ERROR_S("Failed to create sws context for MJPEG, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
+            return nullptr;
+        }
+        const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+        const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+        // Detect color range from decoded frame:
+        // AVCOL_RANGE_JPEG (1) = full range 0-255
+        // AVCOL_RANGE_MPEG (0) = limited range 16-235
+        int srcRange = (mjpgDecFrame_->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
+        sws_setColorspaceDetails(swsCtx_, srcCoeffs, srcRange, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] sws recreated: srcFmt=" << (pixFmtName ? pixFmtName : "unknown")
+                                                                         << " dstFmt=YUV420P srcRange=" << srcRange
+                                                                         << " dstRange=1 cs=BT709");
+        mjpgSwsInitialized_ = true;
     }
 
-    if (swsCtx_) {
-      sws_freeContext(swsCtx_);
-      swsCtx_ = nullptr;
+    if (!swsCtx_)
+        return nullptr;
+
+    if (av_frame_make_writable(frame_) < 0)
+        return nullptr;
+    sws_scale(swsCtx_, mjpgDecFrame_->data, mjpgDecFrame_->linesize, 0, mjpgDecFrame_->height, frame_->data,
+              frame_->linesize);
+
+    static bool postSwsLogged = false;
+    if (!postSwsLogged && frame_->data[0] && frame_->data[1] && frame_->data[2]) {
+        const uint8_t* yOut = frame_->data[0];
+        const uint8_t* uOut = frame_->data[1];
+        const uint8_t* vOut = frame_->data[2];
+        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder post-sws_scale"
+                       << " Y[0..4]={" << (int)yOut[0] << "," << (int)yOut[1] << "," << (int)yOut[2] << ","
+                       << (int)yOut[3] << "} U[0..4]={" << (int)uOut[0] << "," << (int)uOut[1] << "," << (int)uOut[2]
+                       << "," << (int)uOut[3] << "} V[0..4]={" << (int)vOut[0] << "," << (int)vOut[1] << ","
+                       << (int)vOut[2] << "," << (int)vOut[3] << "}");
+        postSwsLogged = true;
     }
-    mjpgDecFmt_ = decFmt;
-    swsCtx_ = sws_getContext(width_, height_, decFmt,
-      width_, height_, AV_PIX_FMT_YUV420P,
-      SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (!swsCtx_) {
-      NIO_LOG_ERROR_S("Failed to create sws context for MJPEG, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
-      return nullptr;
-    }
-    const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-    const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-    int srcRange = (mjpgDecFrame_->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
-    sws_setColorspaceDetails(swsCtx_, srcCoeffs, srcRange, dstCoeffs, 1,
-                             0, 1 << 16, 1 << 16);
-    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] sws recreated: srcFmt="
-      << (pixFmtName ? pixFmtName : "unknown")
-      << " dstFmt=YUV420P srcRange=" << srcRange << " dstRange=1 cs=BT709");
-    mjpgSwsInitialized_ = true;
-  }
 
-  if (!swsCtx_)
-    return nullptr;
-
-  if (av_frame_make_writable(frame_) < 0)
-    return nullptr;
-  sws_scale(swsCtx_, mjpgDecFrame_->data, mjpgDecFrame_->linesize, 0, mjpgDecFrame_->height, frame_->data,
-    frame_->linesize);
-
-  static bool postSwsLogged = false;
-  if (!postSwsLogged && frame_->data[0] && frame_->data[1] && frame_->data[2]) {
-    const uint8_t* yOut = frame_->data[0];
-    const uint8_t* uOut = frame_->data[1];
-    const uint8_t* vOut = frame_->data[2];
-    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder post-sws_scale"
-      << " Y[0..4]={" << (int)yOut[0] << "," << (int)yOut[1] << "," << (int)yOut[2] << ","
-      << (int)yOut[3] << "} U[0..4]={" << (int)uOut[0] << "," << (int)uOut[1] << "," << (int)uOut[2]
-      << "," << (int)uOut[3] << "} V[0..4]={" << (int)vOut[0] << "," << (int)vOut[1] << ","
-      << (int)vOut[2] << "," << (int)vOut[3] << "}");
-    postSwsLogged = true;
-  }
-
-  return frame_;
+    return frame_;
 }
 
+// --- writeFrame: drain encoded packets from encoder, write to file with SEI ---
 bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t deviceTimestampUs, bool writeSEI) {
     if (writeSEI) {
         if (!seiWritten_) {
@@ -378,6 +422,10 @@ bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t d
     return wrote;
 }
 
+// --- encode: top-level encode entry point ---
+// Dispatches to MJPEG decode path or direct sws_scale path depending on
+// srcFormat_.  Computes source strides, calls sws_scale, then sends the
+// YUV420P frame to the H.264 encoder and writes output NALs.
 bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outFile, std::mutex& mtx,
                          uint64_t deviceTimestampUs, bool writeSEI) {
     if (!initialized_ || !codecCtx_)
@@ -468,6 +516,7 @@ bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outF
     return wrote;
 }
 
+// --- encodeRGB / encodeBGR: direct RGB/BGR encode (sws already created) ---
 bool H264Encoder::encodeRGB(const uint8_t* rgbData, std::ofstream& outFile, std::mutex& mtx,
                             uint64_t deviceTimestampUs) {
     if (!initialized_ || !codecCtx_ || !swsCtx_)

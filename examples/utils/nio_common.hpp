@@ -3,6 +3,23 @@
 //
 // nio_common.hpp — Shared NIO utilities: signal handling, timestamps,
 // directory creation, SEI NAL unit writing, device matching, profile selection.
+//
+// g_running / signalHandler: atomic flag set to false on SIGINT/SIGTERM,
+// used by the main capture loop to exit cleanly.
+//
+// getTimestampMs / getTimestampMsInt / getTimestampIso: wall-clock time
+// helpers for log messages and file naming.
+//
+// mkdirp: recursive mkdir -p equivalent (ignores EEXIST).
+//
+// SEI_COPYRIGHT / writeSEINalUnit: embed unregistered SEI NAL units
+// with a 16-byte UUID prefix (used for copyright + per-frame timestamps).
+//
+// deviceMatches: case-insensitive substring match of device name against
+// a filter list (used to select Orbbec camera models by name).
+//
+// selectBestProfile: scoring-based stream profile selector — prefers
+// the requested format, then favors 640w@30fps for real-time encoding.
 
 #pragma once
 

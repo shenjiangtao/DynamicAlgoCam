@@ -2,6 +2,14 @@
 // Licensed under the MIT License.
 //
 // nio_common.cpp — Implementation of shared NIO utilities.
+//
+// Sections:
+//   1. Signal handling + g_running
+//   2. Timestamp helpers
+//   3. mkdirp — recursive directory creation
+//   4. SEI NAL unit writer (H.264 unregistered SEI with UUID prefix)
+//   5. deviceMatches — filter device name by substring list
+//   6. selectBestProfile — scoring-based stream profile selection
 
 #include "nio_common.hpp"
 #include "nio_log.hpp"
@@ -17,11 +25,15 @@
 
 namespace nio {
 
+// === Section 1: Signal handling ===
+
 std::atomic<bool> g_running{ true };
 
 void signalHandler(int) {
     g_running = false;
 }
+
+// === Section 2: Timestamp helpers ===
 
 std::string getTimestampMs() {
     auto now = std::chrono::system_clock::now();
@@ -47,6 +59,8 @@ std::string getTimestampIso() {
     return std::string(buf);
 }
 
+// === Section 3: mkdirp — recursive mkdir -p (ignores EEXIST) ===
+
 void mkdirp(const std::string& path) {
     size_t pos = 0;
     std::string tmp;
@@ -56,6 +70,14 @@ void mkdirp(const std::string& path) {
     }
     mkdir(path.c_str(), 0755);
 }
+
+// === Section 4: SEI NAL unit writer ===
+// Writes H.264 unregistered SEI NAL (type 6, payload type 5) with:
+//   - 16-byte UUID prefix (first 16 chars of uuid string)
+//   - payload string (copyright notice or "dts=..." timestamp)
+//   - RBSP trailing bits + emulation prevention byte stuffing
+//
+// NAL structure: [00 00 00 01] [06 05] [size bytes] [UUID+payload RBSP] [80]
 
 const char* SEI_COPYRIGHT = "Copyright jiangtao.shen@nio.com";
 
@@ -104,6 +126,10 @@ void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mu
     }
 }
 
+// === Section 5: deviceMatches — substring match against filter list ===
+// Returns true if filter is empty (no filter = accept all) or if any
+// filter string appears as a substring of deviceName.
+
 bool deviceMatches(const std::string& deviceName, const std::vector<std::string>& filter) {
     if (filter.empty())
         return true;
@@ -113,6 +139,10 @@ bool deviceMatches(const std::string& deviceName, const std::vector<std::string>
     }
     return false;
 }
+
+// === Section 6: selectBestProfile — scoring-based stream profile selection ===
+// Scoring: format match = +1000, width 640=+100 / 848=+90 / 1280=+80,
+// fps 30=+50 / 25=+45 / 15=+30.  Falls back to first profile if no match.
 
 std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
                                                           OBFormat preferredFormat) {

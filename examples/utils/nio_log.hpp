@@ -3,6 +3,18 @@
 //
 // nio_log.hpp — Header-only Logger singleton with multi-level output,
 // thread-safe logging, and auto-flush on destruction.
+//
+// Usage:
+//   NIO_LOG_INIT("my_process", "/tmp/logs")     — must call once at startup
+//   NIO_LOG_SET_LEVEL(nio::LogLevel::INFO)       — set minimum level
+//   NIO_LOG_INFO_S("width=" << w << " height=" << h)  — stream-style logging
+//   NIO_LOG_SHUTDOWN()                            — optional explicit close
+//
+// Log format: "YYYY-MM-DD HH:MM:SS.mmm LEVEL [thread_id] file:line func | msg"
+//
+// Macro variants:
+//   NIO_LOG_INFO(msg)    — msg is a std::string
+//   NIO_LOG_INFO_S(msg)  — msg is an ostringstream expression (preferred)
 
 #pragma once
 
@@ -21,6 +33,7 @@
 
 namespace nio {
 
+// Log severity levels: TRACE < DEBUG < INFO < WARN < ERROR < FATAL
 enum class LogLevel {
     TRACE = 0,
     DEBUG = 1,
@@ -30,9 +43,13 @@ enum class LogLevel {
     FATAL = 5
 };
 
+// Logger: singleton with file + console output.
+// WARN/ERROR/FATAL also go to stderr; INFO and below go to stdout.
+// All file writes are mutex-protected and auto-flushed.
 class Logger {
+// --- Public API: init, setLevel, log, flush, shutdown ---
 public:
-    static Logger &instance() {
+    static Logger &instance() {   // Meyer's singleton — thread-safe in C++11
         static Logger logger;
         return logger;
     }

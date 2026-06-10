@@ -3,6 +3,12 @@
 //
 // nio_color_convert_cv.hpp — OpenCV-based color conversion: frameToBGR,
 // colorizeDepth. Only compiled when OpenCV is available.
+//
+// frameToBGR: converts an ob::Frame (any pixel format) to a cv::Mat BGR
+// image using cv::cvtColor / cv::imdecode.  Used for debug visualization.
+//
+// colorizeDepth: applies JET colormap to Y16 depth data with configurable
+// min/max clip range.  Invalid depth (raw==0) pixels are rendered black.
 
 #pragma once
 
