@@ -27,13 +27,18 @@ else()
 endif()
 
 target_link_libraries(${PROJECT_NAME}
-ob::${OB_SDK_LIB_NAME}
-ob::examples::utils
+    ob::${OB_SDK_LIB_NAME}
+    ob::examples::utils
 )
 
-set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER "examples")
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    FOLDER "examples"
+    INSTALL_RPATH "$ORIGIN/../lib"
+    INSTALL_RPATH_USE_LINK_PATH FALSE
+    BUILD_WITH_INSTALL_RPATH TRUE
+)
 if(MSVC)
-set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 endif()
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
