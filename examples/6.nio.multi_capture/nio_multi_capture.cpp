@@ -605,7 +605,10 @@ int main(int argc, char** argv) try {
     depthSlotW = colorW;
     depthSlotH = colorH;
   }
-  cap->viewerIdx = viewer.addDevice(safeName, hasColor, colorFormat, colorW, colorH, hasDepth, depthSlotFmt, depthSlotW, depthSlotH,
+  std::string camType = name;
+  std::replace(camType.begin(), camType.end(), ' ', '_');
+  cap->viewerIdx = viewer.addDevice(safeName, camType, serialNumber,
+    hasColor, colorFormat, colorW, colorH, hasDepth, depthSlotFmt, depthSlotW, depthSlotH,
     hasIR, irW, irH, hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
 
         // -----------------------------------------------------------------------

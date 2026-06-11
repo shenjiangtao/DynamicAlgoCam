@@ -87,6 +87,7 @@ public:
   // all devices are registered, so that window size and texture array are
   // sized correctly for every device.
   int addDevice(const std::string& name,
+  const std::string& cameraType, const std::string& serialNumber,
   bool hasColor, OBFormat colorFmt, int cw, int ch,
   bool hasDepth, OBFormat depthFmt, int dw, int dh,
   bool hasIR, int irw, int irh,
@@ -120,15 +121,17 @@ private:
                    uint8_t* rgb, std::shared_ptr<MjpgDecoderRes> mjpg);
 
     // DeviceRow: one row in the viewer layout. Maps channel types to slot indices.
-    struct DeviceRow {
-        std::string name;
-        std::vector<int> slotIndices; // all slot indices for this row (left→right)
-        int colorSlot = -1;           // index into slots_ (-1 if no color sensor)
-        int depthSlot = -1;
-        int irSlot = -1;              // Gemini 305 single IR
-        int irLeftSlot = -1;          // Gemini 335L/336L IR left
-        int irRightSlot = -1;         // Gemini 335L/336L IR right
-    };
+  struct DeviceRow {
+    std::string name;
+    std::string cameraType;
+    std::string serialNumber;
+    std::vector<int> slotIndices; // all slot indices for this row (left→right)
+    int colorSlot = -1; // index into slots_ (-1 if no color sensor)
+    int depthSlot = -1;
+    int irSlot = -1; // Gemini 305 single IR
+    int irLeftSlot = -1; // Gemini 335L/336L IR left
+    int irRightSlot = -1; // Gemini 335L/336L IR right
+  };
 
   std::vector<DeviceRow> devices_;
   std::vector<std::unique_ptr<ViewerSlot>> slots_; // unique_ptr because mutex is non-movable

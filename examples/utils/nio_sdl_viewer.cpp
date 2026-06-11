@@ -41,11 +41,14 @@ bool SDLViewer::init() {
 // - Creates one ViewerSlot per available channel (color/depth/IR/IR-L/IR-R)
 // - Window/texture/render-thread creation is deferred to createWindow()
 // Returns device index for pushFrame(), or -1 if no slots were added.
-int SDLViewer::addDevice(const std::string& name, bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth,
+int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
+  bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth,
   OBFormat depthFmt, int dw, int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh,
   bool hasIRRight, int irw2, int irh2) {
-    DeviceRow row;
-    row.name = name;
+  DeviceRow row;
+  row.name = name;
+  row.cameraType = cameraType;
+  row.serialNumber = serialNumber;
 
     // Track max slot dimensions for window sizing and scaling
     int maxW = 0, maxH = 0;
@@ -68,34 +71,33 @@ int SDLViewer::addDevice(const std::string& name, bool hasColor, OBFormat colorF
         return idx;
     };
 
-    // Add slots in left-to-right order: Color | Depth | IR[-L] | IR[-R]
-    if (hasColor) {
-        int idx = addSlot(name + " Color", colorFmt, cw, ch);
-        row.slotIndices.push_back(idx);
-        row.colorSlot = idx;
-    }
+  // Add slots in left-to-right order: Color | Depth | IR[-L] | IR-R]
+  std::string devTag = cameraType + " [" + serialNumber + "]";
+  if (hasColor) {
+    int idx = addSlot(devTag + " Color", colorFmt, cw, ch);
+    row.slotIndices.push_back(idx);
+    row.colorSlot = idx;
+  }
   if (hasDepth) {
-    int idx = addSlot(name + " Depth", depthFmt, dw, dh);
+    int idx = addSlot(devTag + " Depth", depthFmt, dw, dh);
     row.slotIndices.push_back(idx);
     row.depthSlot = idx;
   }
-    // Gemini 305: single IR sensor (OB_FRAME_IR, Y8 format)
-    if (hasIR) {
-        int idx = addSlot(name + " IR", OB_FORMAT_Y8, irw, irh);
-        row.slotIndices.push_back(idx);
-        row.irSlot = idx;
-    }
-    // Gemini 335L/336L: stereo IR (OB_FRAME_IR_LEFT + IR_RIGHT, Y8 format)
-    if (hasIRLeft) {
-        int idx = addSlot(name + " IR-L", OB_FORMAT_Y8, ilw, ilh);
-        row.slotIndices.push_back(idx);
-        row.irLeftSlot = idx;
-    }
-    if (hasIRRight) {
-        int idx = addSlot(name + " IR-R", OB_FORMAT_Y8, irw2, irh2);
-        row.slotIndices.push_back(idx);
-        row.irRightSlot = idx;
-    }
+  if (hasIR) {
+    int idx = addSlot(devTag + " IR", OB_FORMAT_Y8, irw, irh);
+    row.slotIndices.push_back(idx);
+    row.irSlot = idx;
+  }
+  if (hasIRLeft) {
+    int idx = addSlot(devTag + " IR-L", OB_FORMAT_Y8, ilw, ilh);
+    row.slotIndices.push_back(idx);
+    row.irLeftSlot = idx;
+  }
+  if (hasIRRight) {
+    int idx = addSlot(devTag + " IR-R", OB_FORMAT_Y8, irw2, irh2);
+    row.slotIndices.push_back(idx);
+    row.irRightSlot = idx;
+  }
 
   devices_.push_back(row);
 
@@ -378,14 +380,15 @@ void SDLViewer::renderLoop() {
                 auto& slot = *slots_[slotIdx];
                 auto* tex = textures_[slotIdx];
 
-                // Upload texture only if new frame data is available
-                {
-                    std::lock_guard<std::mutex> lock(slot.mtx);
-                    if (slot.updated) {
-                        SDL_UpdateTexture(tex, nullptr, slot.rgbBuf.data(), slot.w * 3);
-                        slot.updated = false;
-                    }
-                }
+        // Upload texture only if new frame data is available
+        {
+          std::lock_guard<std::mutex> lock(slot.mtx);
+          if (slot.updated) {
+            drawText5x7(slot.rgbBuf.data(), slot.w, slot.h, 4, 4, slot.label, 255, 255, 255);
+            SDL_UpdateTexture(tex, nullptr, slot.rgbBuf.data(), slot.w * 3);
+            slot.updated = false;
+          }
+        }
 
                 // Uniform scaling: fit all slots into the window preserving aspect ratio
                 float scaleX = static_cast<float>(winW) / (maxSlotsPerRow_ * tileW_);
