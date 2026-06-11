@@ -160,18 +160,18 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, 
 }
 
 // writeStreamFrame: dispatch frame data to the appropriate writer.
-//   - native H.264: writeH264Frame (skip until keyframe)
-//   - software-encoded: H264Encoder::encode (MJPEG decode + sws + x264)
-//   - fallback: raw binary write (when encoder init failed)
+// - native H.264: writeH264Frame (skip until keyframe)
+// - software-encoded: H264Encoder::encode (MJPEG decode + sws + x264)
+// - fallback: raw binary write (when encoder init failed)
 void writeStreamFrame(StreamEncoder* se, const uint8_t* data, uint32_t size, uint64_t deviceTsUs) {
     if (!se || !se->file || !se->file->is_open())
         return;
 
     if (se->isNativeH264) {
-        writeH264Frame(*se->file, data, size, se->h264KeyFrameWritten, se->mtx);
-    } else if (se->encoder) {
-        se->encoder->encode(data, size, *se->file, se->mtx, deviceTsUs, se->writeSEI);
-    } else {
+writeH264Frame(*se->file, data, size, se->h264KeyFrameWritten, se->mtx);
+} else if (se->encoder) {
+se->encoder->encode(data, size, *se->file, se->mtx, deviceTsUs, se->writeSEI);
+} else {
         std::lock_guard<std::mutex> lock(se->mtx);
         se->file->write(reinterpret_cast<const char*>(data), size);
         se->file->flush();

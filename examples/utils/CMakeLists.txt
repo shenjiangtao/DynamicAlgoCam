@@ -15,57 +15,62 @@ pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
+pkg_check_modules(SDL2 REQUIRED sdl2)
 
 add_library(ob_examples_utils STATIC
-${CMAKE_CURRENT_LIST_DIR}/utils_c.c
-${CMAKE_CURRENT_LIST_DIR}/utils_c.h
-${CMAKE_CURRENT_LIST_DIR}/utils.cpp
-${CMAKE_CURRENT_LIST_DIR}/utils.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_log.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_common.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_common.cpp
-${CMAKE_CURRENT_LIST_DIR}/nio_h264_encoder.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_h264_encoder.cpp
-${CMAKE_CURRENT_LIST_DIR}/nio_stream_io.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_stream_io.cpp
-${CMAKE_CURRENT_LIST_DIR}/nio_color_convert.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_color_convert.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/utils_c.c
+    ${CMAKE_CURRENT_LIST_DIR}/utils_c.h
+    ${CMAKE_CURRENT_LIST_DIR}/utils.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/utils.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_log.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_common.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_common.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_h264_encoder.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_h264_encoder.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_stream_io.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_stream_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_color_convert.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_color_convert.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_sdl_viewer.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_sdl_viewer.cpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC
-ob::${OB_SDK_LIB_NAME}
-${AVCODEC_LIBRARIES}
-${AVFORMAT_LIBRARIES}
-${AVUTIL_LIBRARIES}
-${SWSCALE_LIBRARIES}
-${SWRESAMPLE_LIBRARIES}
+    ob::${OB_SDK_LIB_NAME}
+    ${AVCODEC_LIBRARIES}
+    ${AVFORMAT_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
+    ${SWSCALE_LIBRARIES}
+    ${SWRESAMPLE_LIBRARIES}
+    ${SDL2_LIBRARIES}
 )
 
 target_include_directories(ob_examples_utils PUBLIC
-${AVCODEC_INCLUDE_DIRS}
-${AVFORMAT_INCLUDE_DIRS}
-${AVUTIL_INCLUDE_DIRS}
-${SWSCALE_INCLUDE_DIRS}
-${SWRESAMPLE_INCLUDE_DIRS}
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
+    ${SWSCALE_INCLUDE_DIRS}
+    ${SWRESAMPLE_INCLUDE_DIRS}
+    ${SDL2_INCLUDE_DIRS}
 )
 
 target_link_directories(ob_examples_utils PUBLIC
-${AVCODEC_LIBRARY_DIRS}
-${AVFORMAT_LIBRARY_DIRS}
-${AVUTIL_LIBRARY_DIRS}
-${SWSCALE_LIBRARY_DIRS}
-${SWRESAMPLE_LIBRARY_DIRS}
+    ${AVCODEC_LIBRARY_DIRS}
+    ${AVFORMAT_LIBRARY_DIRS}
+    ${AVUTIL_LIBRARY_DIRS}
+    ${SWSCALE_LIBRARY_DIRS}
+    ${SWRESAMPLE_LIBRARY_DIRS}
 )
 
 if(${OpenCV_FOUND})
-target_sources(ob_examples_utils PRIVATE
-${CMAKE_CURRENT_LIST_DIR}/utils_opencv.cpp
-${CMAKE_CURRENT_LIST_DIR}/utils_opencv.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_color_convert_cv.hpp
-${CMAKE_CURRENT_LIST_DIR}/nio_color_convert_cv.cpp
-)
-target_link_libraries(ob_examples_utils PUBLIC ${OpenCV_LIBS})
-target_include_directories(ob_examples_utils PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_sources(ob_examples_utils PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/utils_opencv.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/utils_opencv.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/nio_color_convert_cv.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/nio_color_convert_cv.cpp
+    )
+    target_link_libraries(ob_examples_utils PUBLIC ${OpenCV_LIBS})
+    target_include_directories(ob_examples_utils PUBLIC ${OpenCV_INCLUDE_DIRS})
 endif()
 
 find_package(Threads REQUIRED)

@@ -37,19 +37,22 @@ static const int NIO_FILE_BUF_SIZE = 4 * 1024 * 1024;
 // StreamEncoder: bundles encoder + output file + per-stream mutex + metadata.
 // For native H.264 streams (camera outputs H.264 directly), encoder is null
 // and NALs are written verbatim after the first keyframe is seen.
+// For FFV1 lossless streams (Y16/Y8/YUYV/MJPG), ffv1Encoder is non-null and
+// file is null (FFV1Encoder writes directly to MKV via libavformat).
+// For other formats (RGB/etc.), H264Encoder is used with a separate .h264 file.
 struct StreamEncoder {
-    std::shared_ptr<H264Encoder> encoder;   // null for native H.264 streams
-    std::shared_ptr<std::ofstream> file;     // output .h264 file
-    std::mutex mtx;                          // protects file writes
-    bool h264KeyFrameWritten = false;        // native H.264: skip until first IDR/SPS/PPS
-    bool isNativeH264 = false;               // true = camera outputs H.264 directly
-    bool writeSEI = true;                    // embed copyright/timestamp SEI NALs
+std::shared_ptr<H264Encoder> encoder; // null for native H.264 streams
+std::shared_ptr<std::ofstream> file; // output .h264 file
+std::mutex mtx; // protects file writes
+bool h264KeyFrameWritten = false; // native H.264: skip until first IDR/SPS/PPS
+bool isNativeH264 = false; // true = camera outputs H.264 directly
+bool writeSEI = true; // embed copyright/timestamp SEI NALs
     OBFormat srcFormat = OB_FORMAT_UNKNOWN;
     int width = 0;
     int height = 0;
     int fps = 30;
-    std::string sensorTag;                   // for logging/error messages
-    std::shared_ptr<char[]> fileBuf;         // holds the 4 MB file buffer alive
+std::string sensorTag; // for logging/error messages
+std::shared_ptr<char[]> fileBuf; // holds the 4 MB file buffer alive
 };
 
 // SensorFiles: per-device collection of stream encoders and raw data files.

@@ -17,6 +17,7 @@
 #include "nio_common.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_log.hpp"
+#include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
 #include "utils.hpp"
 #include <libobsensor/ObSensor.hpp>
@@ -78,6 +79,7 @@ struct DeviceCapture
     bool enableFusion = true;
     bool hwD2CMode = false;                                 // true if device supports hardware D2C alignment
     std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount; // FPS counter for fusion stream
+    int viewerIdx = -1;                                     // SDLViewer device index (-1 = not registered with viewer)
 };
 
 // CLI configuration parsed from command-line arguments.
@@ -253,6 +255,14 @@ int main(int argc, char** argv) try {
     //  6. Start separate IMU pipeline if accel+gyro are present
     // -----------------------------------------------------------------------
     std::vector<std::shared_ptr<DeviceCapture>> captures;
+
+    // Initialize SDL2 live preview — if init fails (e.g. no display), continue
+    // without preview (viewerIdx will stay -1, pushFrame calls will be no-ops)
+    SDLViewer viewer;
+    if (!viewer.init()) {
+        std::cerr << "SDL viewer init failed, continuing without preview" << std::endl;
+        NIO_LOG_WARN_S("SDL viewer init failed, continuing without preview");
+    }
 
     for (uint32_t i = 0; i < deviceList->getCount(); i++) {
         auto device = deviceList->getDevice(i);
@@ -585,6 +595,12 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
+        // Register device with SDL viewer for live preview.
+        // Returns device index used for pushFrame() calls in the SDK callback.
+        // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
+        cap->viewerIdx = viewer.addDevice(safeName, hasColor, colorFormat, colorW, colorH, hasDepth, depthW, depthH,
+                                          hasIR, irW, irH, hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
+
         // -----------------------------------------------------------------------
         // D2C fusion setup
         // -----------------------------------------------------------------------
@@ -652,7 +668,7 @@ int main(int argc, char** argv) try {
 
         try {
             cap->videoPipeline->start(config, [sf, hasColor, hasDepth, hasIR, hasIRLeft, hasIRRight, cap, depthFrameIdx,
-                                               canFuse](std::shared_ptr<ob::FrameSet> frameSet) {
+                                               canFuse, &viewer](std::shared_ptr<ob::FrameSet> frameSet) {
                 if (!frameSet)
                     return;
 
@@ -784,6 +800,10 @@ int main(int argc, char** argv) try {
                     if (colorFrame) {
                         writeStreamFrame(sf->color.get(), colorFrame->getData(), colorFrame->getDataSize(),
                                          colorFrame->getTimeStampUs());
+                        // Push color frame to SDL viewer for live preview (YUYV/MJPG → RGB conversion happens inside)
+                        if (cap->viewerIdx >= 0)
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::COLOR, colorFrame->getData(),
+                                             colorFrame->getDataSize());
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_COLOR]++;
                     }
@@ -810,6 +830,10 @@ int main(int argc, char** argv) try {
                         }
 
                         writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
+                        // Push depth frame to SDL viewer (Y16 → jet colormap conversion happens inside)
+                        if (cap->viewerIdx >= 0)
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::DEPTH, data, size, cap->depthScale,
+                                             cap->depthMinM, cap->depthMaxM);
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_DEPTH]++;
                     }
@@ -820,6 +844,10 @@ int main(int argc, char** argv) try {
                     if (irFrame) {
                         writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize(),
                                          irFrame->getTimeStampUs());
+                        // Push IR frame to SDL viewer (Y8 → grayscale conversion happens inside)
+                        if (cap->viewerIdx >= 0)
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR, irFrame->getData(),
+                                             irFrame->getDataSize());
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_IR]++;
                     }
@@ -830,6 +858,10 @@ int main(int argc, char** argv) try {
                     if (irLeftFrame) {
                         writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize(),
                                          irLeftFrame->getTimeStampUs());
+                        // Push IR-Left frame to SDL viewer (Y8 → grayscale, for Gemini 335L/336L stereo IR)
+                        if (cap->viewerIdx >= 0)
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
+                                             irLeftFrame->getDataSize());
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_IR_LEFT]++;
                     }
@@ -840,6 +872,10 @@ int main(int argc, char** argv) try {
                     if (irRightFrame) {
                         writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize(),
                                          irRightFrame->getTimeStampUs());
+                        // Push IR-Right frame to SDL viewer (Y8 → grayscale, for Gemini 335L/336L stereo IR)
+                        if (cap->viewerIdx >= 0)
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
+                                             irRightFrame->getDataSize());
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_IR_RIGHT]++;
                     }
@@ -1061,6 +1097,9 @@ int main(int argc, char** argv) try {
         std::cout << "Stopped: " << cap->deviceName << std::endl;
         NIO_LOG_INFO_S("Stopped device: " << cap->deviceName);
     }
+
+    // Stop SDL viewer: joins render thread and destroys SDL resources
+    viewer.close();
 
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
     NIO_LOG_INFO_S("All recordings saved to: " << outputRootDir << "/");
