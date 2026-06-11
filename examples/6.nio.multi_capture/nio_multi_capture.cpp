@@ -595,11 +595,18 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
-        // Register device with SDL viewer for live preview.
-        // Returns device index used for pushFrame() calls in the SDK callback.
-        // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
-        cap->viewerIdx = viewer.addDevice(safeName, hasColor, colorFormat, colorW, colorH, hasDepth, depthW, depthH,
-                                          hasIR, irW, irH, hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
+  // Register device with SDL viewer for live preview.
+  // Returns device index used for pushFrame() calls in the SDK callback.
+  // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
+  OBFormat depthSlotFmt = OB_FORMAT_Y16;
+  int depthSlotW = depthW;
+  int depthSlotH = depthH;
+  if (hasDepth && cap->hwD2CMode && hasColor) {
+    depthSlotW = colorW;
+    depthSlotH = colorH;
+  }
+  cap->viewerIdx = viewer.addDevice(safeName, hasColor, colorFormat, colorW, colorH, hasDepth, depthSlotFmt, depthSlotW, depthSlotH,
+    hasIR, irW, irH, hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
 
         // -----------------------------------------------------------------------
         // D2C fusion setup
@@ -955,10 +962,17 @@ int main(int argc, char** argv) try {
             });
         }
 
-        captures.push_back(std::move(cap));
-    }
+  captures.push_back(std::move(cap));
+  }
 
-    if (captures.empty()) {
+  // Create SDL window + textures + render thread now that all devices are registered.
+  // If init() failed earlier (no display), createWindow is a no-op.
+  if (!viewer.createWindow()) {
+    std::cerr << "SDL viewer window creation failed, continuing without preview" << std::endl;
+    NIO_LOG_WARN("SDL viewer window creation failed, continuing without preview");
+  }
+
+  if (captures.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
         NIO_LOG_FATAL("No matching devices found!");
         if (!cfg.cameraFilter.empty()) {

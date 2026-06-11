@@ -81,15 +81,22 @@ public:
     // close: stop render thread, destroy SDL resources. Called by destructor.
     void close();
 
-    // addDevice: register a device and its available sensor channels.
-    // Returns device index (>=0) for use in pushFrame(), or -1 on failure.
-    // Creates the SDL window + render thread on first call.
-    int addDevice(const std::string& name,
-                  bool hasColor, OBFormat colorFmt, int cw, int ch,
-                  bool hasDepth, int dw, int dh,
-                  bool hasIR, int irw, int irh,
-                  bool hasIRLeft, int ilw, int ilh,
-                  bool hasIRRight, int irw2, int irh2);
+  // addDevice: register a device and its available sensor channels.
+  // Returns device index (>=0) for use in pushFrame(), or -1 on failure.
+  // Window/texture/render-thread creation is deferred to createWindow() after
+  // all devices are registered, so that window size and texture array are
+  // sized correctly for every device.
+  int addDevice(const std::string& name,
+  bool hasColor, OBFormat colorFmt, int cw, int ch,
+  bool hasDepth, OBFormat depthFmt, int dw, int dh,
+  bool hasIR, int irw, int irh,
+  bool hasIRLeft, int ilw, int ilh,
+  bool hasIRRight, int irw2, int irh2);
+
+  // createWindow: create SDL window, renderer, textures and start render
+  // thread. Must be called after all addDevice() calls. Returns false if
+  // SDL resource creation fails (safe to continue without preview).
+  bool createWindow();
 
     // pushFrame: convert a raw sensor frame to RGB and store in the slot.
     // Called from OrbbecSDK callback — must be fast (no encoding, just conversion).
@@ -123,15 +130,16 @@ private:
         int irRightSlot = -1;         // Gemini 335L/336L IR right
     };
 
-    std::vector<DeviceRow> devices_;
-    std::vector<std::unique_ptr<ViewerSlot>> slots_; // unique_ptr because mutex is non-movable
+  std::vector<DeviceRow> devices_;
+  std::vector<std::unique_ptr<ViewerSlot>> slots_; // unique_ptr because mutex is non-movable
 
-    SDL_Window* window_ = nullptr;
-    SDL_Renderer* renderer_ = nullptr;
-    std::vector<SDL_Texture*> textures_; // one per slot, RGB24 STREAMING
+  SDL_Window* window_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+  std::vector<SDL_Texture*> textures_; // one per slot, RGB24 STREAMING
 
-    std::thread renderThread_;         // independent render thread
-    std::atomic<bool> running_{false}; // false → render thread exits
+  std::thread renderThread_; // independent render thread
+  std::atomic<bool> running_{false}; // false → render thread exits
+  bool initialized_ = false; // true after createWindow() succeeds
 
     int tileW_ = 0;           // max slot width (used for scaling)
     int tileH_ = 0;           // max slot height (used for scaling)

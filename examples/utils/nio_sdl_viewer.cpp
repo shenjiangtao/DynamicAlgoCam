@@ -39,13 +39,11 @@ bool SDLViewer::init() {
 
 // addDevice: register a device and create slots for its available sensors.
 // - Creates one ViewerSlot per available channel (color/depth/IR/IR-L/IR-R)
-// - On first device: creates SDL window, renderer, textures, and render thread
-// - Window size = maxSlotsPerRow * maxSlotW × numDevices * maxSlotH
-// - Uses SDL_RENDERER_SOFTWARE to avoid GPU dependency on headless servers
-// Returns device index for pushFrame(), or -1 on SDL creation failure.
+// - Window/texture/render-thread creation is deferred to createWindow()
+// Returns device index for pushFrame(), or -1 if no slots were added.
 int SDLViewer::addDevice(const std::string& name, bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth,
-                         int dw, int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh,
-                         bool hasIRRight, int irw2, int irh2) {
+  OBFormat depthFmt, int dw, int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh,
+  bool hasIRRight, int irw2, int irh2) {
     DeviceRow row;
     row.name = name;
 
@@ -76,11 +74,11 @@ int SDLViewer::addDevice(const std::string& name, bool hasColor, OBFormat colorF
         row.slotIndices.push_back(idx);
         row.colorSlot = idx;
     }
-    if (hasDepth) {
-        int idx = addSlot(name + " Depth", OB_FORMAT_Y16, dw, dh);
-        row.slotIndices.push_back(idx);
-        row.depthSlot = idx;
-    }
+  if (hasDepth) {
+    int idx = addSlot(name + " Depth", depthFmt, dw, dh);
+    row.slotIndices.push_back(idx);
+    row.depthSlot = idx;
+  }
     // Gemini 305: single IR sensor (OB_FRAME_IR, Y8 format)
     if (hasIR) {
         int idx = addSlot(name + " IR", OB_FORMAT_Y8, irw, irh);
@@ -99,84 +97,98 @@ int SDLViewer::addDevice(const std::string& name, bool hasColor, OBFormat colorF
         row.irRightSlot = idx;
     }
 
-    devices_.push_back(row);
+  devices_.push_back(row);
 
-    // Create SDL window + render thread on first device registration
-    if (!window_ && !slots_.empty()) {
-        // Recalculate max slots per row across all devices (for column count)
-        maxSlotsPerRow_ = 0;
-        for (auto& d : devices_)
-            maxSlotsPerRow_ = std::max(maxSlotsPerRow_, static_cast<int>(d.slotIndices.size()));
-        tileW_ = maxW;
-        tileH_ = maxH;
+  int devIdx = devices_.size() - 1;
+  NIO_LOG_INFO_S("SDLViewer: added device " << name << " devIdx=" << devIdx << " slots=" << row.slotIndices.size());
+  return devIdx;
+}
 
-        // Window dimensions: columns = maxSlotsPerRow, rows = numDevices
-        int winW = maxSlotsPerRow_ * tileW_;
-        int winH = devices_.size() * tileH_;
-        window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
-                                   SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
-        if (!window_) {
-            std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
-            return -1;
-        }
-        // SOFTWARE renderer: avoids GPU dependency, works on headless/Xvfb
-        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-        if (!renderer_) {
-            std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
-            return -1;
-        }
+// createWindow: create SDL window, renderer, textures, and start render thread.
+// Must be called after all addDevice() calls so that textures are sized for
+// every device. Returns false if SDL resource creation fails.
+bool SDLViewer::createWindow() {
+  if (initialized_ || slots_.empty())
+    return false;
 
-        // Create one streaming RGB24 texture per slot (updated by renderLoop)
-        for (auto& s : slots_) {
-            auto* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, s->w, s->h);
-            textures_.push_back(tex);
-        }
+  // Compute max slot dimensions and max slots per row
+  int maxW = 0, maxH = 0;
+  for (auto& s : slots_) {
+    maxW = std::max(maxW, s->w);
+    maxH = std::max(maxH, s->h);
+  }
+  maxSlotsPerRow_ = 0;
+  for (auto& d : devices_)
+    maxSlotsPerRow_ = std::max(maxSlotsPerRow_, static_cast<int>(d.slotIndices.size()));
+  tileW_ = maxW;
+  tileH_ = maxH;
 
-        // Start independent render thread (decoupled from SDK callbacks)
-        renderThread_ = std::thread(&SDLViewer::renderLoop, this);
-    }
+  int winW = maxSlotsPerRow_ * tileW_;
+  int winH = static_cast<int>(devices_.size()) * tileH_;
+  window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
+    SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+  if (!window_) {
+    std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+    return false;
+  }
+  renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+  if (!renderer_) {
+    std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
+    SDL_DestroyWindow(window_);
+    window_ = nullptr;
+    return false;
+  }
 
-    int devIdx = devices_.size() - 1;
-    NIO_LOG_INFO_S("SDLViewer: added device " << name << " devIdx=" << devIdx << " slots=" << row.slotIndices.size());
-    return devIdx;
+  for (auto& s : slots_) {
+    auto* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, s->w, s->h);
+    textures_.push_back(tex);
+  }
+
+  renderThread_ = std::thread(&SDLViewer::renderLoop, this);
+  initialized_ = true;
+  NIO_LOG_INFO_S("SDLViewer: window created " << winW << "x" << winH
+    << " slots=" << slots_.size() << " devices=" << devices_.size());
+  return true;
 }
 
 // close: stop render thread, destroy all SDL resources, free sws/AVFrame.
 // Called by destructor or explicitly at program exit.
 void SDLViewer::close() {
-    running_ = false;
-    if (renderThread_.joinable())
-        renderThread_.join();
+  running_ = false;
+  if (renderThread_.joinable())
+    renderThread_.join();
 
-    for (auto* tex : textures_) {
-        if (tex)
-            SDL_DestroyTexture(tex);
-    }
-    textures_.clear();
+  for (auto* tex : textures_) {
+    if (tex)
+      SDL_DestroyTexture(tex);
+  }
+  textures_.clear();
 
-    // Free per-slot YUYV sws context + AVFrames (MJPEG decoder freed by MjpgDecoderRes)
-    for (auto& s : slots_) {
-        if (s->yuyvSws) {
-            sws_freeContext(s->yuyvSws);
-            s->yuyvSws = nullptr;
-        }
-        if (s->yuyvSrcFrame) {
-            av_frame_free(&s->yuyvSrcFrame);
-        }
-        if (s->yuyvDstFrame) {
-            av_frame_free(&s->yuyvDstFrame);
-        }
+  for (auto& s : slots_) {
+    if (s->yuyvSws) {
+      sws_freeContext(s->yuyvSws);
+      s->yuyvSws = nullptr;
     }
+    if (s->yuyvSrcFrame) {
+      av_frame_free(&s->yuyvSrcFrame);
+    }
+    if (s->yuyvDstFrame) {
+      av_frame_free(&s->yuyvDstFrame);
+    }
+  }
 
-    if (renderer_) {
-        SDL_DestroyRenderer(renderer_);
-        renderer_ = nullptr;
-    }
-    if (window_) {
-        SDL_DestroyWindow(window_);
-        window_ = nullptr;
-    }
+  if (renderer_) {
+    SDL_DestroyRenderer(renderer_);
+    renderer_ = nullptr;
+  }
+  if (window_) {
+    SDL_DestroyWindow(window_);
+    window_ = nullptr;
+  }
+  if (initialized_) {
     SDL_Quit();
+    initialized_ = false;
+  }
 }
 
 // === Section 3: Frame push (called from SDK callback) ===
@@ -186,10 +198,14 @@ void SDLViewer::close() {
 // All conversion happens under the slot mutex to avoid tearing with renderLoop.
 // After conversion, sets slot.updated=true so renderLoop uploads the new texture.
 void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uint32_t size, float depthScale,
-                          float depthMinM, float depthMaxM) {
-    if (devIdx < 0 || devIdx >= (int)devices_.size())
-        return;
-    auto& dev = devices_[devIdx];
+  float depthMinM, float depthMaxM) {
+  if (!initialized_) {
+    return;
+  }
+  if (devIdx < 0 || devIdx >= (int)devices_.size()) {
+    return;
+  }
+  auto& dev = devices_[devIdx];
 
     // Map channel enum → slot index for this device
     int slotIdx = -1;
