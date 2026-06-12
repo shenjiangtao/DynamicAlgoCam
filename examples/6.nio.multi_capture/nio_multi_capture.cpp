@@ -92,6 +92,7 @@ struct CaptureConfig
     float depthMaxM = 5.0f;
     bool enableFusion = true;
     bool noFusion = false; // set by --no-fusion; converted to enableFusion=false
+    bool noShow = false;   // set by --no-show; skip SDL viewer entirely
 };
 
 static void printUsage(const char* prog) {
@@ -103,6 +104,7 @@ static void printUsage(const char* prog) {
               << "  --depth-min M Min depth in meters for colormap (default: 0.3)\n"
               << "  --depth-max M Max depth in meters for colormap (default: 5.0)\n"
               << "  --no-fusion   Disable D2C fusion output (only save individual streams)\n"
+              << "  --no-show     Disable SDL live preview window\n"
               << "  --help        Show this help\n"
               << "\nExamples:\n"
               << "  " << prog << "                                 # all devices, default settings\n"
@@ -118,6 +120,7 @@ static CaptureConfig parseArgs(int argc, char** argv) {
                                         { "depth-min", required_argument, nullptr, 'm' },
                                         { "depth-max", required_argument, nullptr, 'x' },
                                         { "no-fusion", no_argument, nullptr, 'n' },
+                                        { "no-show", no_argument, nullptr, 'S' },
                                         { "help", no_argument, nullptr, 'h' },
                                         { nullptr, 0, nullptr, 0 } };
 
@@ -150,6 +153,9 @@ static CaptureConfig parseArgs(int argc, char** argv) {
             break;
         case 'n':
             cfg.noFusion = true;
+            break;
+        case 'S':
+            cfg.noShow = true;
             break;
         case 'h':
             printUsage(argv[0]);
@@ -259,9 +265,11 @@ int main(int argc, char** argv) try {
     // Initialize SDL2 live preview — if init fails (e.g. no display), continue
     // without preview (viewerIdx will stay -1, pushFrame calls will be no-ops)
     SDLViewer viewer;
-    if (!viewer.init()) {
-        std::cerr << "SDL viewer init failed, continuing without preview" << std::endl;
-        NIO_LOG_WARN_S("SDL viewer init failed, continuing without preview");
+    if (!cfg.noShow) {
+        if (!viewer.init()) {
+            std::cerr << "SDL viewer init failed, continuing without preview" << std::endl;
+            NIO_LOG_WARN_S("SDL viewer init failed, continuing without preview");
+        }
     }
 
     for (uint32_t i = 0; i < deviceList->getCount(); i++) {
@@ -342,10 +350,14 @@ int main(int argc, char** argv) try {
 
         std::shared_ptr<ob::VideoStreamProfile> colorProfile, depthProfile, irProfile, irLeftProfile, irRightProfile;
 
+        bool is305 = ob_smpl::isGemini305Device(vid, pid);
+        OBFormat colorPreferredFmt = is305 ? OB_FORMAT_YUYV : OB_FORMAT_MJPG;
+
         // Enumerate all sensors on this device and select best stream profile for each.
-        // Profile selection priority: prefer the requested format (MJPG for color, Y16
-        // for depth, Y8 for IR). If the preferred format is unavailable, fall back to
-        // the first profile with a known format.
+        // Profile selection priority: prefer the requested format (YUYV for Gemini 305
+        // color per SDK config, MJPG for others; Y16 for depth, Y8 for IR).
+        // If the preferred format is unavailable, fall back to the first profile
+        // with a known format.
         for (uint32_t s = 0; s < sensorList->getCount(); s++) {
             auto sensorType = sensorList->getSensorType(s);
             auto sensor = sensorList->getSensor(s);
@@ -354,7 +366,7 @@ int main(int argc, char** argv) try {
             switch (sensorType) {
             case OB_SENSOR_COLOR:
                 hasColor = true;
-                colorProfile = selectBestProfile(profileList, OB_FORMAT_MJPG);
+                colorProfile = selectBestProfile(profileList, colorPreferredFmt);
                 if (colorProfile) {
                     colorFormat = colorProfile->getFormat();
                     if (colorFormat == OB_FORMAT_UNKNOWN) {
@@ -595,21 +607,23 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
-  // Register device with SDL viewer for live preview.
-  // Returns device index used for pushFrame() calls in the SDK callback.
-  // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
-  OBFormat depthSlotFmt = OB_FORMAT_Y16;
-  int depthSlotW = depthW;
-  int depthSlotH = depthH;
-  if (hasDepth && cap->hwD2CMode && hasColor) {
-    depthSlotW = colorW;
-    depthSlotH = colorH;
-  }
-  std::string camType = name;
-  std::replace(camType.begin(), camType.end(), ' ', '_');
-  cap->viewerIdx = viewer.addDevice(safeName, camType, serialNumber,
-    hasColor, colorFormat, colorW, colorH, hasDepth, depthSlotFmt, depthSlotW, depthSlotH,
-    hasIR, irW, irH, hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
+        // Register device with SDL viewer for live preview.
+        // Returns device index used for pushFrame() calls in the SDK callback.
+        // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
+        OBFormat depthSlotFmt = OB_FORMAT_Y16;
+        int depthSlotW = depthW;
+        int depthSlotH = depthH;
+        if (hasDepth && cap->hwD2CMode && hasColor) {
+            depthSlotW = colorW;
+            depthSlotH = colorH;
+        }
+        if (!cfg.noShow) {
+            std::string camType = name;
+            std::replace(camType.begin(), camType.end(), ' ', '_');
+            cap->viewerIdx = viewer.addDevice(safeName, camType, serialNumber, hasColor, colorFormat, colorW, colorH,
+                                              hasDepth, depthSlotFmt, depthSlotW, depthSlotH, hasIR, irW, irH,
+                                              hasIRLeft, irLW, irLH, hasIRRight, irRW, irRH);
+        }
 
         // -----------------------------------------------------------------------
         // D2C fusion setup
@@ -966,17 +980,20 @@ int main(int argc, char** argv) try {
             });
         }
 
-  captures.push_back(std::move(cap));
-  }
+        captures.push_back(std::move(cap));
+    }
 
-  // Create SDL window + textures + render thread now that all devices are registered.
-  // If init() failed earlier (no display), createWindow is a no-op.
-  if (!viewer.createWindow()) {
-    std::cerr << "SDL viewer window creation failed, continuing without preview" << std::endl;
-    NIO_LOG_WARN("SDL viewer window creation failed, continuing without preview");
-  }
+    // Create SDL window + textures + render thread now that all devices are registered.
+    // If init() failed earlier (no display), createWindow is a no-op.
+    // Skip entirely when --no-show is set.
+    if (!cfg.noShow) {
+        if (!viewer.createWindow()) {
+            std::cerr << "SDL viewer window creation failed, continuing without preview" << std::endl;
+            NIO_LOG_WARN("SDL viewer window creation failed, continuing without preview");
+        }
+    }
 
-  if (captures.empty()) {
+    if (captures.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
         NIO_LOG_FATAL("No matching devices found!");
         if (!cfg.cameraFilter.empty()) {
