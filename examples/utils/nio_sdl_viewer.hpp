@@ -51,7 +51,7 @@ struct ViewerSlot {
     // Raw frame buffer (written by pushFrame, read by decodeThread)
     std::vector<uint8_t> rawBuf;
     uint32_t rawSize = 0;
-    float depthScale = 0.001f;
+    float depthScale = 1.0f; // raw→mm (same as DepthFrame::getValueScale)
     float depthMinM = 0.3f;
     float depthMaxM = 5.0f;
     std::mutex rawMtx;
@@ -93,7 +93,7 @@ public:
 
     void pushFrame(int devIdx, ViewerChannel ch,
                    const uint8_t* data, uint32_t size,
-                   float depthScale = 0.001f,
+                   float depthScale = 1.0f,
                    float depthMinM = 0.3f, float depthMaxM = 5.0f);
 
 private:

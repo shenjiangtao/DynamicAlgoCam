@@ -831,10 +831,19 @@ int main(int argc, char** argv) try {
                             }
                         }
 
+                        float viewerDepthScale = cap->depthScale;
+                        try {
+                            auto depthF = depthFrame->as<ob::DepthFrame>();
+                            if (depthF) {
+                                viewerDepthScale = depthF->getValueScale();
+                            }
+                        } catch (...) {
+                        }
                         writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
                         // Push depth frame to SDL viewer (Y16 → jet colormap conversion happens inside)
+                        // viewerDepthScale is mm/raw (same unit as getValueScale), decodeSlot uses raw*scale/1000
                         if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::DEPTH, data, size, cap->depthScale,
+                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::DEPTH, data, size, viewerDepthScale,
                                              cap->depthMinM, cap->depthMaxM);
                         std::lock_guard<std::mutex> lock(sf->countMtx);
                         sf->frameCounts[OB_FRAME_DEPTH]++;
