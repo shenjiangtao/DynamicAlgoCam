@@ -746,14 +746,6 @@ int main(int argc, char** argv) try {
                         float maxDist = cap->depthMaxM;
                         float alpha = cap->alpha;
 
-                        // Jet colormap函数
-                        auto jetColormap = [](uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
-                            float x = v / 255.0f;
-                            r = static_cast<uint8_t>(255 * std::min(1.0f, std::max(0.0f, 1.5f - fabs(4 * x - 3))));
-                            g = static_cast<uint8_t>(255 * std::min(1.0f, std::max(0.0f, 1.5f - fabs(4 * x - 2))));
-                            b = static_cast<uint8_t>(255 * std::min(1.0f, std::max(0.0f, 1.5f - fabs(4 * x - 1))));
-                        };
-
                         // Alpha-blend: output = (1-alpha)*color + alpha*jet(depth)
                         auto fuseDepthColor = [&](const uint16_t* depthPtr, int depthW, int depthH) {
                             int blendW = std::min(w, depthW);

@@ -3,32 +3,30 @@
 //
 // nio_sdl_viewer.hpp — SDL2-based live preview for multi-device capture.
 //
-// Displays color/depth/IR streams from all Orbbec devices in a single window.
-// Layout: one row per device, channels tiled horizontally within each row.
+// Layout per device row:
+//   型号_序列号
+//   ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
+//   │Color │ │Depth │ │IR-L  │ │IR-R  │
+//   │      │ │      │ │      │ │      │
+//   └──────┘ └──────┘ └──────┘ └──────┘
+//    MJPG      Y16      Y8       Y8
 //
-// Format handling:
-// - Depth Y16 → jet colormap (same palette as D2C fusion)
-// - IR Y8 → grayscale (R=G=B=Y8)
-// - Color YUYV → RGB24 via libswscale (YUYV422→RGB24, preserves 4:2:2)
-// - Color MJPG → RGB24 via decodeColorToRGB (JPEG decode + sws)
-//
-// Threading model:
-// - pushFrame() is called from the OrbbecSDK callback thread (one per device)
-// - renderLoop() runs on a dedicated thread at RENDER_FPS (default 30 fps)
-// - Per-slot mutex + updated flag: pushFrame converts to RGB under lock,
-//   renderLoop only uploads texture when updated==true (avoids redundant work)
+// Threading model (zero impact on SDK recording):
+// - pushFrame(): SDK callback → memcpy raw data into slot.rawBuf (~us)
+// - decodeThread_(): converts rawBuf → RGB24 into slot.renderBuf (parallel)
+// - renderLoop_(): uploads renderBuf to textures + draws text overlays (30fps)
 
 #pragma once
 
 #include <SDL2/SDL.h>
 #include <cstdint>
-#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <condition_variable>
 #include <vector>
 #include <atomic>
+#include <chrono>
 
 #include <libobsensor/ObSensor.hpp>
 
@@ -41,114 +39,120 @@ extern "C" {
 
 namespace nio {
 
-// ViewerChannel: identifies which sensor slot to push a frame into.
-// IR is for Gemini 305 (single IR sensor); IR_LEFT/IR_RIGHT for 335L/336L.
 enum class ViewerChannel { COLOR, DEPTH, IR, IR_LEFT, IR_RIGHT };
 
-// ViewerSlot: holds one channel's preview state (e.g. "Gemini_305 Color").
-// Stored as unique_ptr in SDLViewer because std::mutex is non-movable.
 struct ViewerSlot {
-    std::string label;             // display label (e.g. "Gemini_305 Depth")
-    OBFormat format = OB_FORMAT_UNKNOWN; // original pixel format from device
-    int w = 0;                     // frame width in pixels
-    int h = 0;                     // frame height in pixels
-    std::vector<uint8_t> rgbBuf;   // converted RGB24 buffer (w*h*3 bytes)
-    std::mutex mtx;                // protects rgbBuf + updated during push/render
-    bool updated = false;          // true after pushFrame, cleared by renderLoop
+    std::string label;
+    std::string formatStr;
+    OBFormat format = OB_FORMAT_UNKNOWN;
+    int w = 0;
+    int h = 0;
 
-    // MJPG decoder resources (only allocated for OB_FORMAT_MJPG slots)
+    // Raw frame buffer (written by pushFrame, read by decodeThread)
+    std::vector<uint8_t> rawBuf;
+    uint32_t rawSize = 0;
+    float depthScale = 0.001f;
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
+    std::mutex rawMtx;
+    std::atomic<bool> rawUpdated{false};
+
+    // RGB render buffer (written by decodeThread, read by renderLoop)
+    std::vector<uint8_t> renderBuf;
+    std::mutex renderMtx;
+    std::atomic<bool> renderUpdated{false};
+
+    // MJPG decoder
     std::shared_ptr<MjpgDecoderRes> mjpgRes;
 
-    // YUYV→RGB conversion state (lazily initialized on first pushFrame)
-    SwsContext* yuyvSws = nullptr;     // sws context: YUYV422 → RGB24
-    AVFrame* yuyvSrcFrame = nullptr;   // source frame for sws_scale input
-    AVFrame* yuyvDstFrame = nullptr;   // destination frame for sws_scale output
-    bool yuyvSwsInit = false;          // true after first-frame sws creation
+    // YUYV sws state
+    SwsContext* yuyvSws = nullptr;
+    AVFrame* yuyvSrcFrame = nullptr;
+    AVFrame* yuyvDstFrame = nullptr;
+    bool yuyvSwsInit = false;
 };
 
-// SDLViewer: multi-device live preview window.
-// Usage: init() → addDevice()* → pushFrame()* (from callback) → close()
-// The render thread starts automatically when the first device is added.
 class SDLViewer {
 public:
     SDLViewer();
     ~SDLViewer();
 
-    // init: initialize SDL2 video subsystem. Safe to call even if no
-    // display is available (e.g. SSH) — returns false in that case.
     bool init();
-
-    // close: stop render thread, destroy SDL resources. Called by destructor.
     void close();
 
-  // addDevice: register a device and its available sensor channels.
-  // Returns device index (>=0) for use in pushFrame(), or -1 on failure.
-  // Window/texture/render-thread creation is deferred to createWindow() after
-  // all devices are registered, so that window size and texture array are
-  // sized correctly for every device.
-  int addDevice(const std::string& name,
-  const std::string& cameraType, const std::string& serialNumber,
-  bool hasColor, OBFormat colorFmt, int cw, int ch,
-  bool hasDepth, OBFormat depthFmt, int dw, int dh,
-  bool hasIR, int irw, int irh,
-  bool hasIRLeft, int ilw, int ilh,
-  bool hasIRRight, int irw2, int irh2);
+    int addDevice(const std::string& name,
+                  const std::string& cameraType,
+                  const std::string& serialNumber,
+                  bool hasColor, OBFormat colorFmt, int cw, int ch,
+                  bool hasDepth, OBFormat depthFmt, int dw, int dh,
+                  bool hasIR, int irw, int irh,
+                  bool hasIRLeft, int ilw, int ilh,
+                  bool hasIRRight, int irw2, int irh2);
 
-  // createWindow: create SDL window, renderer, textures and start render
-  // thread. Must be called after all addDevice() calls. Returns false if
-  // SDL resource creation fails (safe to continue without preview).
-  bool createWindow();
+    bool createWindow();
 
-    // pushFrame: convert a raw sensor frame to RGB and store in the slot.
-    // Called from OrbbecSDK callback — must be fast (no encoding, just conversion).
-    // depthScale/depthMinM/depthMaxM are only used for Y16 depth → jet colormap.
     void pushFrame(int devIdx, ViewerChannel ch,
                    const uint8_t* data, uint32_t size,
                    float depthScale = 0.001f,
                    float depthMinM = 0.3f, float depthMaxM = 5.0f);
 
 private:
-    // renderLoop: main loop of the render thread. Polls SDL events,
-    // uploads updated textures, and renders all slots at RENDER_FPS.
+    void decodeThreadFunc();
     void renderLoop();
+    void decodeSlot(ViewerSlot& slot);
+    void cleanupSlot(ViewerSlot& slot);
+    static std::string obFormatToString(OBFormat fmt);
 
-    // Format conversion helpers (called from pushFrame under slot mutex):
-    void y16ToJetRGB(const uint16_t* y16, int w, int h,
-                     uint8_t* rgb, float scale, float minM, float maxM);
-    void y8ToRGB(const uint8_t* y8, int w, int h, uint8_t* rgb);
-    bool yuyvToRGB(const uint8_t* yuyv, int w, int h, uint8_t* rgb, ViewerSlot& slot);
-    bool mjpgToRGB(const uint8_t* data, uint32_t size, int w, int h,
-                   uint8_t* rgb, std::shared_ptr<MjpgDecoderRes> mjpg);
+    void rebuildLabelTextures(int winW, int winH);
 
-    // DeviceRow: one row in the viewer layout. Maps channel types to slot indices.
-  struct DeviceRow {
-    std::string name;
-    std::string cameraType;
-    std::string serialNumber;
-    std::vector<int> slotIndices; // all slot indices for this row (left→right)
-    int colorSlot = -1; // index into slots_ (-1 if no color sensor)
-    int depthSlot = -1;
-    int irSlot = -1; // Gemini 305 single IR
-    int irLeftSlot = -1; // Gemini 335L/336L IR left
-    int irRightSlot = -1; // Gemini 335L/336L IR right
-  };
+    struct DeviceRow {
+        std::string name;
+        std::string cameraType;
+        std::string serialNumber;
+        std::vector<int> slotIndices;
+        int colorSlot = -1;
+        int depthSlot = -1;
+        int irSlot = -1;
+        int irLeftSlot = -1;
+        int irRightSlot = -1;
+    };
 
-  std::vector<DeviceRow> devices_;
-  std::vector<std::unique_ptr<ViewerSlot>> slots_; // unique_ptr because mutex is non-movable
+    std::vector<DeviceRow> devices_;
+    std::vector<std::unique_ptr<ViewerSlot>> slots_;
 
-  SDL_Window* window_ = nullptr;
-  SDL_Renderer* renderer_ = nullptr;
-  std::vector<SDL_Texture*> textures_; // one per slot, RGB24 STREAMING
+    SDL_Window* window_ = nullptr;
+    SDL_Renderer* renderer_ = nullptr;
+    std::vector<SDL_Texture*> textures_;      // video textures (per slot)
 
-  std::thread renderThread_; // independent render thread
-  std::atomic<bool> running_{false}; // false → render thread exits
-  bool initialized_ = false; // true after createWindow() succeeds
+    // Cached label textures (rebuilt when window size changes)
+    struct LabelTex {
+        SDL_Texture* tex = nullptr;
+        int w = 0;
+        int h = 0;
+    };
+    std::vector<LabelTex> titleTexs_;         // per-device: "型号_序列号"
+    std::vector<LabelTex> formatTexs_;        // per-slot: "MJPG"/"Y16"/"Y8"
+    std::vector<LabelTex> channelTexs_;       // per-slot: "Color"/"Depth"/etc.
+    int cachedWinW_ = 0;
+    int cachedWinH_ = 0;
 
-    int tileW_ = 0;           // max slot width (used for scaling)
-    int tileH_ = 0;           // max slot height (used for scaling)
-    int maxSlotsPerRow_ = 0;  // max channels across all devices (for column count)
+    std::thread decodeThread_;
+    std::thread renderThread_;
+    std::atomic<bool> running_{false};
+    bool initialized_ = false;
 
-    static const int RENDER_FPS = 30; // render thread frame rate
+    int tileW_ = 0;
+    int tileH_ = 0;
+    int maxSlotsPerRow_ = 0;
+
+    std::mutex decodeCvMtx_;
+    std::condition_variable decodeCv_;
+    std::atomic<bool> decodeWakeup_{false};
+
+    static const int RENDER_FPS = 30;
+    static const int ROW_HEADER_H = 36;
+    static const int FORMAT_BAR_H = 26;
+    static const int FONT_SCALE = 3;
 };
 
 } // namespace nio
