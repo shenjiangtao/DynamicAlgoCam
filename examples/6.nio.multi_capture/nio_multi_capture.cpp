@@ -59,7 +59,8 @@ using namespace nio;
 // Data structures
 // ---------------------------------------------------------------------------
 
-struct DeviceCapture {
+struct DeviceCapture
+{
     std::shared_ptr<ob::Pipeline> videoPipeline;
     std::shared_ptr<ob::Pipeline> imuPipeline;
     std::string deviceName;
@@ -91,7 +92,8 @@ struct DeviceCapture {
     std::shared_ptr<ImuStreamTask> imuTask;
 };
 
-struct CaptureConfig {
+struct CaptureConfig
+{
     std::vector<std::string> cameraFilter;
     std::string saveDir;
     float alpha = 0.5f;
@@ -183,8 +185,8 @@ static CaptureConfig parseArgs(int argc, char** argv) {
 }
 
 static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
-                                      std::shared_ptr<ob::StreamProfile> colorProfile,
-                                      std::shared_ptr<ob::StreamProfile> depthProfile) {
+                                     std::shared_ptr<ob::StreamProfile> colorProfile,
+                                     std::shared_ptr<ob::StreamProfile> depthProfile) {
     auto hwD2CDepthProfiles = pipe->getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE);
     if (!hwD2CDepthProfiles || hwD2CDepthProfiles->getCount() == 0) {
         return false;
@@ -513,7 +515,7 @@ int main(int argc, char** argv) try {
                     std::cout << " IR Right: " << irRW << "x" << irRH << "@" << irRFps << " format=" << irRightFormat
                               << std::endl;
                     NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps
-                                                        << " format=" << irRightFormat);
+                                                       << " format=" << irRightFormat);
                 }
                 break;
             case OB_SENSOR_ACCEL:
@@ -567,8 +569,8 @@ int main(int argc, char** argv) try {
                 std::make_shared<std::ofstream>(baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
             cap->depthEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_depth_enc", sf->depth);
             cap->depthEncodeTask->start();
-            cap->depthRawTask = std::make_shared<DepthRawTask>(devId + "_depth_raw", sf->depthRawFile,
-                                                               depthW, depthH, cap->depthScale);
+            cap->depthRawTask =
+                std::make_shared<DepthRawTask>(devId + "_depth_raw", sf->depthRawFile, depthW, depthH, cap->depthScale);
             cap->depthRawTask->start();
             NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
         }
@@ -643,12 +645,9 @@ int main(int argc, char** argv) try {
                 cap->mjpgRes = std::make_shared<MjpgDecoderRes>();
                 cap->mjpgRes->init(colorW, colorH, colorFormat);
                 cap->fusionTask = std::make_shared<FusionStreamTask>(
-                    devId + "_fusion",
-                    colorW, colorH, colorFormat, cap->fusedFps,
-                    fusedEncoder, fusedFile, cap->fusedMtx,
-                    cap->alignFilter, cap->hwD2CMode,
-                    cfg.alpha, cfg.depthMinM, cfg.depthMaxM, cap->depthScale,
-                    cap->mjpgRes);
+                    devId + "_fusion", colorW, colorH, colorFormat, cap->fusedFps, fusedEncoder, fusedFile,
+                    cap->fusedMtx, cap->alignFilter, cap->hwD2CMode, cfg.alpha, cfg.depthMinM, cfg.depthMaxM,
+                    cap->depthScale, cap->mjpgRes);
                 cap->fusionTask->start();
                 std::cout << "  D2C Fusion: " << colorW << "x" << colorH << "@" << cap->fusedFps
                           << " alpha=" << cfg.alpha << " depth=[" << cfg.depthMinM << "m, " << cfg.depthMaxM << "m]"
@@ -706,7 +705,7 @@ int main(int argc, char** argv) try {
                 if (auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR)) {
                     if (cap->colorEncodeTask)
                         cap->colorEncodeTask->enqueue(colorFrame->getData(), colorFrame->getDataSize(),
-                                                     colorFrame->getTimeStampUs());
+                                                      colorFrame->getTimeStampUs());
                     if (cap->viewerIdx >= 0)
                         viewer.pushFrame(cap->viewerIdx, ViewerChannel::COLOR, colorFrame->getData(),
                                          colorFrame->getDataSize());
@@ -746,8 +745,7 @@ int main(int argc, char** argv) try {
                         cap->irEncodeTask->enqueue(irFrame->getData(), irFrame->getDataSize(),
                                                    irFrame->getTimeStampUs());
                     if (cap->viewerIdx >= 0)
-                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR, irFrame->getData(),
-                                         irFrame->getDataSize());
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR, irFrame->getData(), irFrame->getDataSize());
                     std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
                     cap->sensorFiles->frameCounts[OB_FRAME_IR]++;
                 }
@@ -813,8 +811,8 @@ int main(int argc, char** argv) try {
                                          std::chrono::system_clock::now().time_since_epoch())
                                          .count();
                         std::ostringstream oss;
-                        oss << nowMs << ",ACCEL," << ts << "," << val.x << "," << val.y << "," << val.z
-                            << "," << temp << "\n";
+                        oss << nowMs << ",ACCEL," << ts << "," << val.x << "," << val.y << "," << val.z << "," << temp
+                            << "\n";
                         if (cap->imuTask)
                             cap->imuTask->enqueueLine(oss.str());
                     } catch (...) {
@@ -833,8 +831,8 @@ int main(int argc, char** argv) try {
                                          std::chrono::system_clock::now().time_since_epoch())
                                          .count();
                         std::ostringstream oss;
-                        oss << nowMs << ",GYRO," << ts << "," << val.x << "," << val.y << "," << val.z
-                            << "," << temp << "\n";
+                        oss << nowMs << ",GYRO," << ts << "," << val.x << "," << val.y << "," << val.z << "," << temp
+                            << "\n";
                         if (cap->imuTask)
                             cap->imuTask->enqueueLine(oss.str());
                     } catch (...) {

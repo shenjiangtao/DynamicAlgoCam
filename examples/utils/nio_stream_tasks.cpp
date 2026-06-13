@@ -13,10 +13,10 @@ namespace nio {
 
 // === EncodeStreamTask ===
 
-EncodeStreamTask::EncodeStreamTask(const std::string &name, std::shared_ptr<StreamEncoder> se)
-    : StreamTask(name), se_(std::move(se)) {}
+EncodeStreamTask::EncodeStreamTask(const std::string& name, std::shared_ptr<StreamEncoder> se)
+: StreamTask(name), se_(std::move(se)) {}
 
-void EncodeStreamTask::processFrame(const FrameBlob &blob) {
+void EncodeStreamTask::processFrame(const FrameBlob& blob) {
     if (se_ && se_->file && se_->file->is_open()) {
         writeStreamFrame(se_.get(), blob.data.data(), blob.size, blob.timestampUs);
     }
@@ -25,43 +25,39 @@ void EncodeStreamTask::processFrame(const FrameBlob &blob) {
 
 // === DepthRawTask ===
 
-DepthRawTask::DepthRawTask(const std::string &name, std::shared_ptr<std::ofstream> file,
-                           int width, int height, float depthScale)
-    : StreamTask(name), file_(std::move(file)), width_(width), height_(height), depthScale_(depthScale) {}
+DepthRawTask::DepthRawTask(const std::string& name, std::shared_ptr<std::ofstream> file, int width, int height,
+                           float depthScale)
+: StreamTask(name), file_(std::move(file)), width_(width), height_(height), depthScale_(depthScale) {}
 
-void DepthRawTask::processFrame(const FrameBlob &blob) {
+void DepthRawTask::processFrame(const FrameBlob& blob) {
     if (!file_ || !file_->is_open())
         return;
 
-    writeDepthRawWithHeader(*file_, blob.data.data(), blob.size,
-                            width_, height_, depthScale_, frameIdx_++, fileMtx_, blob.timestampUs);
+    writeDepthRawWithHeader(*file_, blob.data.data(), blob.size, width_, height_, depthScale_, frameIdx_++, fileMtx_,
+                            blob.timestampUs);
 }
 
 // === FusionStreamTask ===
 
-FusionStreamTask::FusionStreamTask(const std::string &name,
-                                   int colorW, int colorH, OBFormat colorFormat, int /*fusedFps*/,
-                                   std::shared_ptr<H264Encoder> fusedEncoder,
-                                   std::shared_ptr<std::ofstream> fusedFile,
-                                   std::mutex &fusedMtx,
-                                   std::shared_ptr<ob::Align> alignFilter,
-                                   bool hwD2CMode,
-                                   float alpha, float depthMinM, float depthMaxM, float depthScale,
-                                   std::shared_ptr<MjpgDecoderRes> mjpgRes)
-    : StreamTask(name, 4)
-    , colorW_(colorW)
-    , colorH_(colorH)
-    , colorFormat_(colorFormat)
-    , fusedEncoder_(std::move(fusedEncoder))
-    , fusedFile_(std::move(fusedFile))
-    , fusedMtx_(fusedMtx)
-    , alignFilter_(std::move(alignFilter))
-    , hwD2CMode_(hwD2CMode)
-    , alpha_(alpha)
-    , depthMinM_(depthMinM)
-    , depthMaxM_(depthMaxM)
-    , depthScale_(depthScale)
-    , mjpgRes_(std::move(mjpgRes)) {
+FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, OBFormat colorFormat,
+                                   int /*fusedFps*/, std::shared_ptr<H264Encoder> fusedEncoder,
+                                   std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx,
+                                   std::shared_ptr<ob::Align> alignFilter, bool hwD2CMode, float alpha, float depthMinM,
+                                   float depthMaxM, float depthScale, std::shared_ptr<MjpgDecoderRes> mjpgRes)
+: StreamTask(name, 4)
+, colorW_(colorW)
+, colorH_(colorH)
+, colorFormat_(colorFormat)
+, fusedEncoder_(std::move(fusedEncoder))
+, fusedFile_(std::move(fusedFile))
+, fusedMtx_(fusedMtx)
+, alignFilter_(std::move(alignFilter))
+, hwD2CMode_(hwD2CMode)
+, alpha_(alpha)
+, depthMinM_(depthMinM)
+, depthMaxM_(depthMaxM)
+, depthScale_(depthScale)
+, mjpgRes_(std::move(mjpgRes)) {
     int rgbBufSize = colorW * colorH * 3;
     colorRGBBuf_ = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
     fusedRGBBuf_ = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
@@ -80,7 +76,7 @@ void FusionStreamTask::enqueueFrameSet(std::shared_ptr<ob::FrameSet> frameSet) {
     wakeup();
 }
 
-void FusionStreamTask::enqueueColor(const uint8_t *data, uint32_t size, uint64_t timestampUs) {
+void FusionStreamTask::enqueueColor(const uint8_t* data, uint32_t size, uint64_t timestampUs) {
     {
         std::lock_guard<std::mutex> lock(colorMtx_);
         if (latestColor_.data.size() < size)
@@ -93,7 +89,7 @@ void FusionStreamTask::enqueueColor(const uint8_t *data, uint32_t size, uint64_t
     wakeup();
 }
 
-void FusionStreamTask::enqueueDepth(const uint8_t *data, uint32_t size, uint64_t timestampUs, float depthScale) {
+void FusionStreamTask::enqueueDepth(const uint8_t* data, uint32_t size, uint64_t timestampUs, float depthScale) {
     {
         std::lock_guard<std::mutex> lock(depthMtx_);
         if (latestDepth_.data.size() < size)
@@ -107,7 +103,7 @@ void FusionStreamTask::enqueueDepth(const uint8_t *data, uint32_t size, uint64_t
     wakeup();
 }
 
-void FusionStreamTask::processFrame(const FrameBlob &) {
+void FusionStreamTask::processFrame(const FrameBlob&) {
     onIdle();
 }
 
@@ -128,9 +124,8 @@ void FusionStreamTask::onIdle() {
             depthReady_ = false;
         }
 
-        doBlend(colorBuf.data.data(), colorBuf.size, colorBuf.timestampUs,
-                depthBuf.data.data(), depthBuf.size, depthBuf.timestampUs,
-                depthBuf.depthScale);
+        doBlend(colorBuf.data.data(), colorBuf.size, colorBuf.timestampUs, depthBuf.data.data(), depthBuf.size,
+                depthBuf.timestampUs, depthBuf.depthScale);
     } else {
         if (!frameSetReady_.load())
             return;
@@ -163,20 +158,17 @@ void FusionStreamTask::onIdle() {
         } catch (...) {
         }
 
-        doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(),
-                depthFrame->getData(), depthFrame->getDataSize(), depthFrame->getTimeStampUs(),
-                depthScaleForFusion);
+        doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(), depthFrame->getData(),
+                depthFrame->getDataSize(), depthFrame->getTimeStampUs(), depthScaleForFusion);
     }
 }
 
-void FusionStreamTask::doBlend(const uint8_t *colorData, uint32_t colorSize, uint64_t /*colorTs*/,
-                               const uint8_t *depthData, uint32_t depthSize, uint64_t depthTs,
-                               float depthScale) {
+void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uint64_t /*colorTs*/,
+                               const uint8_t* depthData, uint32_t depthSize, uint64_t depthTs, float depthScale) {
     int w = colorW_;
     int h = colorH_;
 
-    bool colorOk = decodeColorToRGB(colorData, colorSize,
-                                     colorFormat_, w, h, colorRGBBuf_->data(), mjpgRes_);
+    bool colorOk = decodeColorToRGB(colorData, colorSize, colorFormat_, w, h, colorRGBBuf_->data(), mjpgRes_);
     if (!colorOk) {
         std::memset(colorRGBBuf_->data(), 128, w * h * 3);
     }
@@ -190,7 +182,7 @@ void FusionStreamTask::doBlend(const uint8_t *colorData, uint32_t colorSize, uin
     float al = alpha_;
 
     if (depthSize >= static_cast<uint32_t>(w * h * 2)) {
-        const uint16_t *depthPtr = reinterpret_cast<const uint16_t *>(depthData);
+        const uint16_t* depthPtr = reinterpret_cast<const uint16_t*>(depthData);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 uint16_t rawVal = depthPtr[y * w + x];
@@ -223,21 +215,20 @@ void FusionStreamTask::doBlend(const uint8_t *colorData, uint32_t colorSize, uin
 
 // === ImuStreamTask ===
 
-ImuStreamTask::ImuStreamTask(const std::string &name, std::shared_ptr<std::ofstream> imuFile)
-    : StreamTask(name, 8), imuFile_(std::move(imuFile)) {}
+ImuStreamTask::ImuStreamTask(const std::string& name, std::shared_ptr<std::ofstream> imuFile)
+: StreamTask(name, 8), imuFile_(std::move(imuFile)) {}
 
-void ImuStreamTask::processFrame(const FrameBlob &blob) {
+void ImuStreamTask::processFrame(const FrameBlob& blob) {
     if (!imuFile_ || !imuFile_->is_open())
         return;
-    std::string line(reinterpret_cast<const char *>(blob.data.data()), blob.size);
+    std::string line(reinterpret_cast<const char*>(blob.data.data()), blob.size);
     std::lock_guard<std::mutex> lock(fileMtx_);
     *imuFile_ << line;
     imuFile_->flush();
 }
 
 void ImuStreamTask::enqueueLine(std::string line) {
-    enqueue(reinterpret_cast<const uint8_t *>(line.data()),
-            static_cast<uint32_t>(line.size()), 0);
+    enqueue(reinterpret_cast<const uint8_t*>(line.data()), static_cast<uint32_t>(line.size()), 0);
 }
 
 } // namespace nio

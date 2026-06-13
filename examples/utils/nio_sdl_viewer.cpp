@@ -23,116 +23,126 @@ namespace nio {
 // Covers: A-Z, 0-9, underscore, dash, dot, slash, space, bracket, colon
 static const uint8_t font5x7[][7] = {
     // Space (index 0)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
     // A
-    {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
+    { 0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 },
     // B
-    {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
+    { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E },
     // C
-    {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
+    { 0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E },
     // D
-    {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
+    { 0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E },
     // E
-    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
+    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F },
     // F
-    {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
+    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 },
     // G
-    {0x0E,0x11,0x10,0x17,0x11,0x11,0x0E},
+    { 0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E },
     // H
-    {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
+    { 0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 },
     // I
-    {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
+    { 0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E },
     // J
-    {0x01,0x01,0x01,0x01,0x01,0x11,0x0E},
+    { 0x01, 0x01, 0x01, 0x01, 0x01, 0x11, 0x0E },
     // K
-    {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
+    { 0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11 },
     // L
-    {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
+    { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F },
     // M
-    {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
+    { 0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11 },
     // N
-    {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
+    { 0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11 },
     // O
-    {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
+    { 0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E },
     // P
-    {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
+    { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 },
     // Q
-    {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
+    { 0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D },
     // R
-    {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
+    { 0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11 },
     // S
-    {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},
+    { 0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E },
     // T
-    {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
+    { 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 },
     // U
-    {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
+    { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E },
     // V
-    {0x11,0x11,0x11,0x11,0x0A,0x0A,0x04},
+    { 0x11, 0x11, 0x11, 0x11, 0x0A, 0x0A, 0x04 },
     // W
-    {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
+    { 0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11 },
     // X
-    {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
+    { 0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11 },
     // Y
-    {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
+    { 0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04 },
     // Z
-    {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
+    { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F },
     // 0
-    {0x0E,0x13,0x15,0x15,0x15,0x19,0x0E},
+    { 0x0E, 0x13, 0x15, 0x15, 0x15, 0x19, 0x0E },
     // 1
-    {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},
+    { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E },
     // 2
-    {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},
+    { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F },
     // 3
-    {0x0E,0x11,0x01,0x06,0x01,0x11,0x0E},
+    { 0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E },
     // 4
-    {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},
+    { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 },
     // 5
-    {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},
+    { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E },
     // 6
-    {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},
+    { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E },
     // 7
-    {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},
+    { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 },
     // 8
-    {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},
+    { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E },
     // 9
-    {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C},
+    { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C },
     // _ (underscore)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x1F},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F },
     // - (dash)
-    {0x00,0x00,0x00,0x1F,0x00,0x00,0x00},
+    { 0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00 },
     // . (dot)
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x04},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04 },
     // / (slash)
-    {0x01,0x01,0x02,0x04,0x08,0x10,0x10},
+    { 0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10 },
     // [ (left bracket)
-    {0x06,0x04,0x04,0x04,0x04,0x04,0x06},
+    { 0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x06 },
     // ] (right bracket)
-    {0x0C,0x04,0x04,0x04,0x04,0x04,0x0C},
+    { 0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0C },
     // : (colon)
-    {0x00,0x00,0x04,0x00,0x04,0x00,0x00},
+    { 0x00, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00 },
 };
 
 // Map ASCII char to font5x7 index
 static int charToFontIdx(char c) {
-    if (c == ' ')  return 0;
-    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-    if (c >= 'a' && c <= 'z') return 1 + (c - 'a'); // lowercase → uppercase
-    if (c >= '0' && c <= '9') return 27 + (c - '0');
-    if (c == '_') return 37;
-    if (c == '-') return 38;
-    if (c == '.') return 39;
-    if (c == '/') return 40;
-    if (c == '[') return 41;
-    if (c == ']') return 42;
-    if (c == ':') return 43;
+    if (c == ' ')
+        return 0;
+    if (c >= 'A' && c <= 'Z')
+        return 1 + (c - 'A');
+    if (c >= 'a' && c <= 'z')
+        return 1 + (c - 'a'); // lowercase → uppercase
+    if (c >= '0' && c <= '9')
+        return 27 + (c - '0');
+    if (c == '_')
+        return 37;
+    if (c == '-')
+        return 38;
+    if (c == '.')
+        return 39;
+    if (c == '/')
+        return 40;
+    if (c == '[')
+        return 41;
+    if (c == ']')
+        return 42;
+    if (c == ':')
+        return 43;
     return 0; // unknown → space
 }
 
 // Render a text string into an RGBA surface using the scaled bitmap font.
 // Returns a new SDL_Surface (caller must free), or nullptr.
-static SDL_Surface* renderBitmapText(const std::string& text, int scale,
-    uint8_t fgR, uint8_t fgG, uint8_t fgB,
-    uint8_t bgR, uint8_t bgG, uint8_t bgB) {
+static SDL_Surface* renderBitmapText(const std::string& text, int scale, uint8_t fgR, uint8_t fgG, uint8_t fgB,
+                                     uint8_t bgR, uint8_t bgG, uint8_t bgB) {
 
     int charW = 5 * scale;
     int charH = 7 * scale;
@@ -140,9 +150,9 @@ static SDL_Surface* renderBitmapText(const std::string& text, int scale,
     int surfW = static_cast<int>(text.size()) * (charW + gap) + gap;
     int surfH = charH + scale * 2; // top/bottom padding
 
-    SDL_Surface* surf = SDL_CreateRGBSurface(0, surfW, surfH, 32,
-        0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
-    if (!surf) return nullptr;
+    SDL_Surface* surf = SDL_CreateRGBSurface(0, surfW, surfH, 32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    if (!surf)
+        return nullptr;
 
     // Fill background
     uint32_t bgPixel = (0xFF << 24) | (bgB << 16) | (bgG << 8) | bgR;
@@ -166,8 +176,7 @@ static SDL_Surface* renderBitmapText(const std::string& text, int scale,
                             int py = baseY + row * scale + sy;
                             if (px < surfW && py < surfH) {
                                 uint32_t* pixels = static_cast<uint32_t*>(surf->pixels);
-                                pixels[py * surfW + px] =
-                                    (0xFF << 24) | (fgB << 16) | (fgG << 8) | fgR;
+                                pixels[py * surfW + px] = (0xFF << 24) | (fgB << 16) | (fgG << 8) | fgR;
                             }
                         }
                     }
@@ -183,22 +192,33 @@ static SDL_Surface* renderBitmapText(const std::string& text, int scale,
 
 std::string SDLViewer::obFormatToString(OBFormat fmt) {
     switch (fmt) {
-    case OB_FORMAT_MJPG:   return "MJPG";
-    case OB_FORMAT_YUYV:   return "YUYV";
-    case OB_FORMAT_Y16:    return "Y16";
-    case OB_FORMAT_Y8:     return "Y8";
-    case OB_FORMAT_RGB:    return "RGB";
-    case OB_FORMAT_BGR:    return "BGR";
-    case OB_FORMAT_H264:   return "H264";
-    case OB_FORMAT_H265:   return "H265";
-    default:               return "???";
+    case OB_FORMAT_MJPG:
+        return "MJPG";
+    case OB_FORMAT_YUYV:
+        return "YUYV";
+    case OB_FORMAT_Y16:
+        return "Y16";
+    case OB_FORMAT_Y8:
+        return "Y8";
+    case OB_FORMAT_RGB:
+        return "RGB";
+    case OB_FORMAT_BGR:
+        return "BGR";
+    case OB_FORMAT_H264:
+        return "H264";
+    case OB_FORMAT_H265:
+        return "H265";
+    default:
+        return "???";
     }
 }
 
 // === Section 1: Lifecycle ===
 
 SDLViewer::SDLViewer() {}
-SDLViewer::~SDLViewer() { close(); }
+SDLViewer::~SDLViewer() {
+    close();
+}
 
 bool SDLViewer::init() {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -211,12 +231,10 @@ bool SDLViewer::init() {
 
 // === Section 2: Device registration ===
 
-int SDLViewer::addDevice(const std::string& name, const std::string& cameraType,
-    const std::string& serialNumber, bool hasColor, OBFormat colorFmt, int cw, int ch,
-    bool hasDepth, OBFormat depthFmt, int dw, int dh,
-    bool hasIR, int irw, int irh,
-    bool hasIRLeft, int ilw, int ilh,
-    bool hasIRRight, int irw2, int irh2) {
+int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
+                         bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth, OBFormat depthFmt, int dw,
+                         int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight,
+                         int irw2, int irh2) {
 
     DeviceRow row;
     row.name = name;
@@ -233,10 +251,14 @@ int SDLViewer::addDevice(const std::string& name, const std::string& cameraType,
         s.w = w;
         s.h = h;
         size_t rawMax = 0;
-        if (fmt == OB_FORMAT_Y16)       rawMax = w * h * 2;
-        else if (fmt == OB_FORMAT_Y8)   rawMax = w * h;
-        else if (fmt == OB_FORMAT_YUYV) rawMax = w * h * 2;
-        else                             rawMax = w * h * 4;
+        if (fmt == OB_FORMAT_Y16)
+            rawMax = w * h * 2;
+        else if (fmt == OB_FORMAT_Y8)
+            rawMax = w * h;
+        else if (fmt == OB_FORMAT_YUYV)
+            rawMax = w * h * 2;
+        else
+            rawMax = w * h * 4;
         s.rawBuf.resize(rawMax, 0);
         s.renderBuf.resize(w * h * 3, 0);
         if (fmt == OB_FORMAT_MJPG)
@@ -272,8 +294,7 @@ int SDLViewer::addDevice(const std::string& name, const std::string& cameraType,
 
     devices_.push_back(row);
     int devIdx = static_cast<int>(devices_.size()) - 1;
-    NIO_LOG_INFO_S("SDLViewer: added device " << name << " devIdx=" << devIdx
-        << " slots=" << row.slotIndices.size());
+    NIO_LOG_INFO_S("SDLViewer: added device " << name << " devIdx=" << devIdx << " slots=" << row.slotIndices.size());
     return devIdx;
 }
 
@@ -297,9 +318,8 @@ bool SDLViewer::createWindow() {
     int winW = maxSlotsPerRow_ * tileW_;
     int rows = static_cast<int>(devices_.size());
     int winH = rows * (tileH_ + ROW_HEADER_H + FORMAT_BAR_H);
-    window_ = SDL_CreateWindow("NIO Capture Monitor",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+    window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
+                               SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
         return false;
@@ -313,8 +333,7 @@ bool SDLViewer::createWindow() {
     }
 
     for (auto& s : slots_) {
-        auto* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24,
-            SDL_TEXTUREACCESS_STREAMING, s->w, s->h);
+        auto* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, s->w, s->h);
         textures_.push_back(tex);
     }
 
@@ -325,26 +344,37 @@ bool SDLViewer::createWindow() {
     decodeThread_ = std::thread(&SDLViewer::decodeThreadFunc, this);
     renderThread_ = std::thread(&SDLViewer::renderLoop, this);
     initialized_ = true;
-    NIO_LOG_INFO_S("SDLViewer: window created " << winW << "x" << winH
-        << " slots=" << slots_.size() << " devices=" << devices_.size());
+    NIO_LOG_INFO_S("SDLViewer: window created " << winW << "x" << winH << " slots=" << slots_.size()
+                                                << " devices=" << devices_.size());
     return true;
 }
 
 // Rebuild all cached label textures when window size changes
 void SDLViewer::rebuildLabelTextures(int winW, int winH) {
     // Destroy old textures
-    for (auto& lt : titleTexs_)   { if (lt.tex) SDL_DestroyTexture(lt.tex); }
-    for (auto& lt : formatTexs_)  { if (lt.tex) SDL_DestroyTexture(lt.tex); }
-    for (auto& lt : channelTexs_) { if (lt.tex) SDL_DestroyTexture(lt.tex); }
+    for (auto& lt : titleTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
+    for (auto& lt : formatTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
+    for (auto& lt : channelTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
     titleTexs_.clear();
     formatTexs_.clear();
     channelTexs_.clear();
 
-    if (!renderer_) return;
+    if (!renderer_)
+        return;
 
     // Compute scale factor (same as renderLoop)
     int numRows = static_cast<int>(devices_.size());
-    if (numRows == 0 || maxSlotsPerRow_ == 0) return;
+    if (numRows == 0 || maxSlotsPerRow_ == 0)
+        return;
     int rowTotalH = ROW_HEADER_H + tileH_ + FORMAT_BAR_H;
     int totalContentH = numRows * rowTotalH;
     float scaleX = static_cast<float>(winW) / (maxSlotsPerRow_ * tileW_);
@@ -353,11 +383,11 @@ void SDLViewer::rebuildLabelTextures(int winW, int winH) {
 
     // Choose font scale proportional to window scale, minimum 2x
     int fscale = std::max(2, static_cast<int>(FONT_SCALE * scale));
-    if (fscale < 1) fscale = 1;
+    if (fscale < 1)
+        fscale = 1;
 
-    auto makeLabel = [&](const std::string& text,
-        uint8_t fgR, uint8_t fgG, uint8_t fgB,
-        uint8_t bgR, uint8_t bgG, uint8_t bgB) -> LabelTex {
+    auto makeLabel = [&](const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB, uint8_t bgR, uint8_t bgG,
+                         uint8_t bgB) -> LabelTex {
         LabelTex lt;
         SDL_Surface* surf = renderBitmapText(text, fscale, fgR, fgG, fgB, bgR, bgG, bgB);
         if (surf) {
@@ -388,31 +418,59 @@ void SDLViewer::rebuildLabelTextures(int winW, int winH) {
 // === Section 4: Cleanup ===
 
 void SDLViewer::cleanupSlot(ViewerSlot& s) {
-    if (s.yuyvSws) { sws_freeContext(s.yuyvSws); s.yuyvSws = nullptr; }
-    if (s.yuyvSrcFrame) { av_frame_free(&s.yuyvSrcFrame); }
-    if (s.yuyvDstFrame) { av_frame_free(&s.yuyvDstFrame); }
+    if (s.yuyvSws) {
+        sws_freeContext(s.yuyvSws);
+        s.yuyvSws = nullptr;
+    }
+    if (s.yuyvSrcFrame) {
+        av_frame_free(&s.yuyvSrcFrame);
+    }
+    if (s.yuyvDstFrame) {
+        av_frame_free(&s.yuyvDstFrame);
+    }
     s.yuyvSwsInit = false;
 }
 
 void SDLViewer::close() {
     running_ = false;
     decodeCv_.notify_all();
-    if (decodeThread_.joinable()) decodeThread_.join();
-    if (renderThread_.joinable()) renderThread_.join();
+    if (decodeThread_.joinable())
+        decodeThread_.join();
+    if (renderThread_.joinable())
+        renderThread_.join();
 
-    for (auto& lt : titleTexs_)   { if (lt.tex) SDL_DestroyTexture(lt.tex); }
-    for (auto& lt : formatTexs_)  { if (lt.tex) SDL_DestroyTexture(lt.tex); }
-    for (auto& lt : channelTexs_) { if (lt.tex) SDL_DestroyTexture(lt.tex); }
+    for (auto& lt : titleTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
+    for (auto& lt : formatTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
+    for (auto& lt : channelTexs_) {
+        if (lt.tex)
+            SDL_DestroyTexture(lt.tex);
+    }
     titleTexs_.clear();
     formatTexs_.clear();
     channelTexs_.clear();
 
-    for (auto* tex : textures_) { if (tex) SDL_DestroyTexture(tex); }
+    for (auto* tex : textures_) {
+        if (tex)
+            SDL_DestroyTexture(tex);
+    }
     textures_.clear();
-    for (auto& s : slots_) cleanupSlot(*s);
+    for (auto& s : slots_)
+        cleanupSlot(*s);
 
-    if (renderer_) { SDL_DestroyRenderer(renderer_); renderer_ = nullptr; }
-    if (window_) { SDL_DestroyWindow(window_); window_ = nullptr; }
+    if (renderer_) {
+        SDL_DestroyRenderer(renderer_);
+        renderer_ = nullptr;
+    }
+    if (window_) {
+        SDL_DestroyWindow(window_);
+        window_ = nullptr;
+    }
     if (initialized_) {
         SDL_Quit();
         initialized_ = false;
@@ -421,26 +479,40 @@ void SDLViewer::close() {
 
 // === Section 5: pushFrame (SDK callback — memcpy only) ===
 
-void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uint32_t size,
-    float depthScale, float depthMinM, float depthMaxM) {
-    if (!initialized_) return;
-    if (devIdx < 0 || devIdx >= static_cast<int>(devices_.size())) return;
+void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uint32_t size, float depthScale,
+                          float depthMinM, float depthMaxM) {
+    if (!initialized_)
+        return;
+    if (devIdx < 0 || devIdx >= static_cast<int>(devices_.size()))
+        return;
     auto& dev = devices_[devIdx];
 
     int slotIdx = -1;
     switch (ch) {
-    case ViewerChannel::COLOR:    slotIdx = dev.colorSlot;    break;
-    case ViewerChannel::DEPTH:    slotIdx = dev.depthSlot;    break;
-    case ViewerChannel::IR:       slotIdx = dev.irSlot;       break;
-    case ViewerChannel::IR_LEFT:  slotIdx = dev.irLeftSlot;   break;
-    case ViewerChannel::IR_RIGHT: slotIdx = dev.irRightSlot;  break;
+    case ViewerChannel::COLOR:
+        slotIdx = dev.colorSlot;
+        break;
+    case ViewerChannel::DEPTH:
+        slotIdx = dev.depthSlot;
+        break;
+    case ViewerChannel::IR:
+        slotIdx = dev.irSlot;
+        break;
+    case ViewerChannel::IR_LEFT:
+        slotIdx = dev.irLeftSlot;
+        break;
+    case ViewerChannel::IR_RIGHT:
+        slotIdx = dev.irRightSlot;
+        break;
     }
-    if (slotIdx < 0 || slotIdx >= static_cast<int>(slots_.size())) return;
+    if (slotIdx < 0 || slotIdx >= static_cast<int>(slots_.size()))
+        return;
     auto& slot = *slots_[slotIdx];
 
     {
         std::lock_guard<std::mutex> lock(slot.rawMtx);
-        if (size > slot.rawBuf.size()) return;
+        if (size > slot.rawBuf.size())
+            return;
         memcpy(slot.rawBuf.data(), data, size);
         slot.rawSize = size;
         slot.depthScale = depthScale;
@@ -465,7 +537,8 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
     float ds, dmin, dmax;
     {
         std::lock_guard<std::mutex> lock(slot.rawMtx);
-        if (!slot.rawUpdated) return;
+        if (!slot.rawUpdated)
+            return;
         rawCopy.assign(slot.rawBuf.data(), slot.rawBuf.data() + slot.rawSize);
         rawSz = slot.rawSize;
         ds = slot.depthScale;
@@ -483,7 +556,9 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
             for (int i = 0; i < w * h; i++) {
                 uint16_t raw = y16[i];
                 if (raw == 0) {
-                    rgb[i * 3 + 0] = 0; rgb[i * 3 + 1] = 0; rgb[i * 3 + 2] = 0;
+                    rgb[i * 3 + 0] = 0;
+                    rgb[i * 3 + 1] = 0;
+                    rgb[i * 3 + 2] = 0;
                 } else {
                     float distM = raw * ds / 1000.0f;
                     float norm = (distM - dmin) / (dmax - dmin);
@@ -506,9 +581,10 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
     } else if (fmt == OB_FORMAT_YUYV) {
         std::lock_guard<std::mutex> lock(slot.rawMtx);
         if (!slot.yuyvSwsInit) {
-            slot.yuyvSws = sws_getContext(w, h, AV_PIX_FMT_YUYV422, w, h,
-                AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
-            if (!slot.yuyvSws) return;
+            slot.yuyvSws = sws_getContext(w, h, AV_PIX_FMT_YUYV422, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr,
+                                          nullptr, nullptr);
+            if (!slot.yuyvSws)
+                return;
             slot.yuyvSrcFrame = av_frame_alloc();
             slot.yuyvDstFrame = av_frame_alloc();
             slot.yuyvSrcFrame->format = AV_PIX_FMT_YUYV422;
@@ -523,13 +599,12 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
         }
         if (rawSz >= static_cast<uint32_t>(w * h * 2)) {
             memcpy(slot.yuyvSrcFrame->data[0], rawCopy.data(), w * h * 2);
-            sws_scale(slot.yuyvSws,
-                slot.yuyvSrcFrame->data, slot.yuyvSrcFrame->linesize, 0, h,
-                slot.yuyvDstFrame->data, slot.yuyvDstFrame->linesize);
+            sws_scale(slot.yuyvSws, slot.yuyvSrcFrame->data, slot.yuyvSrcFrame->linesize, 0, h, slot.yuyvDstFrame->data,
+                      slot.yuyvDstFrame->linesize);
             int stride = w * 3;
             for (int y = 0; y < h; y++) {
-                memcpy(rgb.data() + y * stride,
-                    slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0], stride);
+                memcpy(rgb.data() + y * stride, slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0],
+                       stride);
             }
             ok = true;
         }
@@ -558,10 +633,11 @@ void SDLViewer::decodeThreadFunc() {
         {
             std::unique_lock<std::mutex> lk(decodeCvMtx_);
             decodeCv_.wait_for(lk, std::chrono::milliseconds(50),
-                [this]() { return decodeWakeup_.load() || !running_.load(); });
+                               [this]() { return decodeWakeup_.load() || !running_.load(); });
             decodeWakeup_ = false;
         }
-        if (!running_) break;
+        if (!running_)
+            break;
 
         for (auto& slot : slots_) {
             if (slot->rawUpdated) {
@@ -617,8 +693,9 @@ void SDLViewer::renderLoop() {
                 auto& lt = titleTexs_[di];
                 int dstH = std::min(lt.h, static_cast<int>(ROW_HEADER_H * scale));
                 int dstW = static_cast<int>(lt.w * static_cast<float>(dstH) / lt.h);
-                if (dstW > winW) dstW = winW;
-                SDL_Rect dst = {0, rowY, dstW, dstH};
+                if (dstW > winW)
+                    dstW = winW;
+                SDL_Rect dst = { 0, rowY, dstW, dstH };
                 SDL_RenderCopy(renderer_, lt.tex, nullptr, &dst);
             }
 
@@ -644,7 +721,7 @@ void SDLViewer::renderLoop() {
                 int dstH = static_cast<int>(slot.h * scale);
                 int xOff = si * colW + (colW - dstW) / 2;
 
-                SDL_Rect dstRect = {xOff, videoY, dstW, dstH};
+                SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
                 SDL_RenderCopy(renderer_, tex, nullptr, &dstRect);
 
                 // Channel label (top-left of tile)
@@ -652,7 +729,7 @@ void SDLViewer::renderLoop() {
                     auto& clt = channelTexs_[slotIdx];
                     int clH = std::min(clt.h, static_cast<int>(ROW_HEADER_H * scale * 0.7f));
                     int clW = static_cast<int>(clt.w * static_cast<float>(clH) / clt.h);
-                    SDL_Rect cdst = {xOff + 2, videoY + 2, clW, clH};
+                    SDL_Rect cdst = { xOff + 2, videoY + 2, clW, clH };
                     SDL_RenderCopy(renderer_, clt.tex, nullptr, &cdst);
                 }
 
@@ -663,7 +740,7 @@ void SDLViewer::renderLoop() {
                     int flW = static_cast<int>(flt.w * static_cast<float>(flH) / flt.h);
                     int fmtX = xOff + (dstW - flW) / 2;
                     int fmtY = videoY + dstH + 1;
-                    SDL_Rect fdst = {fmtX, fmtY, flW, flH};
+                    SDL_Rect fdst = { fmtX, fmtY, flW, flH };
                     SDL_RenderCopy(renderer_, flt.tex, nullptr, &fdst);
                 }
             }

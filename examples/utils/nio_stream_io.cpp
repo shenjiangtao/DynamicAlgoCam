@@ -168,10 +168,10 @@ void writeStreamFrame(StreamEncoder* se, const uint8_t* data, uint32_t size, uin
         return;
 
     if (se->isNativeH264) {
-writeH264Frame(*se->file, data, size, se->h264KeyFrameWritten, se->mtx);
-} else if (se->encoder) {
-se->encoder->encode(data, size, *se->file, se->mtx, deviceTsUs, se->writeSEI);
-} else {
+        writeH264Frame(*se->file, data, size, se->h264KeyFrameWritten, se->mtx);
+    } else if (se->encoder) {
+        se->encoder->encode(data, size, *se->file, se->mtx, deviceTsUs, se->writeSEI);
+    } else {
         std::lock_guard<std::mutex> lock(se->mtx);
         se->file->write(reinterpret_cast<const char*>(data), size);
         se->file->flush();

@@ -15,7 +15,7 @@
 
 namespace nio {
 
-void setThreadName(const std::string &name) {
+void setThreadName(const std::string& name) {
 #ifdef __linux__
     std::string truncated = name;
     if (truncated.size() > 15)
@@ -25,9 +25,7 @@ void setThreadName(const std::string &name) {
     (void)name;
 }
 
-StreamTask::StreamTask(const std::string &name, size_t queueCapacity)
-    : name_(name)
-    , queueCapacity_(queueCapacity) {
+StreamTask::StreamTask(const std::string& name, size_t queueCapacity) : name_(name), queueCapacity_(queueCapacity) {
     queue_.resize(queueCapacity_ + 1);
 }
 
@@ -44,23 +42,21 @@ void StreamTask::start() {
 
 void StreamTask::stop() {
     running_ = false;
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-    }
+    { std::lock_guard<std::mutex> lock(mtx_); }
     cv_.notify_one();
     if (thread_.joinable())
         thread_.join();
 }
 
-bool StreamTask::enqueue(const uint8_t *data, uint32_t size, uint64_t timestampUs,
-                         float depthScale, float depthMinM, float depthMaxM) {
+bool StreamTask::enqueue(const uint8_t* data, uint32_t size, uint64_t timestampUs, float depthScale, float depthMinM,
+                         float depthMaxM) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
         if (count_ >= queueCapacity_) {
             head_ = (head_ + 1) % queue_.size();
             count_--;
         }
-        auto &slot = queue_[tail_];
+        auto& slot = queue_[tail_];
         if (slot.data.size() < size)
             slot.data.resize(size);
         std::memcpy(slot.data.data(), data, size);
@@ -88,9 +84,7 @@ void StreamTask::run() {
         FrameBlob blob;
         {
             std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait_for(lock, std::chrono::milliseconds(100), [this]() {
-                return count_ > 0 || !running_.load();
-            });
+            cv_.wait_for(lock, std::chrono::milliseconds(100), [this]() { return count_ > 0 || !running_.load(); });
             if (count_ > 0) {
                 blob = std::move(queue_[head_]);
                 head_ = (head_ + 1) % queue_.size();
