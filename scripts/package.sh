@@ -242,7 +242,7 @@ collect_system_libs
 echo ""
 echo "[4/6] 复制文档..."
 
-MULTI_CAPTURE_DIR="${PROJECT_ROOT}/examples/6.nio.multi_capture"
+MULTI_CAPTURE_DIR="${PROJECT_ROOT}/app/nio_multi_capture"
 
 if [ -f "${MULTI_CAPTURE_DIR}/use_guide.md" ]; then
     cp -v "${MULTI_CAPTURE_DIR}/use_guide.md" "${STAGE_DIR}/docs/"
