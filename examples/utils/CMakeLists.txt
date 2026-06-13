@@ -33,6 +33,10 @@ add_library(ob_examples_utils STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_color_convert.cpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_sdl_viewer.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_sdl_viewer.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_thread.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_thread.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_stream_tasks.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_stream_tasks.cpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC

@@ -36,6 +36,7 @@ extern "C" {
 }
 
 #include "nio_color_convert.hpp"
+#include "nio_thread.hpp"
 
 namespace nio {
 

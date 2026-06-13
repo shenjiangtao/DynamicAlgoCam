@@ -553,6 +553,7 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
 }
 
 void SDLViewer::decodeThreadFunc() {
+    setThreadName("nio-sdl-decode");
     while (running_) {
         {
             std::unique_lock<std::mutex> lk(decodeCvMtx_);
@@ -573,6 +574,7 @@ void SDLViewer::decodeThreadFunc() {
 // === Section 7: Render thread (textures + text overlays at 30fps) ===
 
 void SDLViewer::renderLoop() {
+    setThreadName("nio-sdl-render");
     while (running_) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {

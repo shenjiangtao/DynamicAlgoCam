@@ -7,6 +7,15 @@
 // depth (jet colormap) with color, saving the fused result as H.264.
 // Uses shared nio:: utilities from examples/utils/.
 //
+// Threading model:
+//   - SDK video callback: lightweight — enqueues frame data to per-stream
+//     EncodeStreamTask / DepthRawTask / FusionStreamTask threads, and pushes
+//     to SDLViewer (memcpy only). No encoding/fusion occurs in the callback.
+//   - SDK IMU callback: formats CSV lines, enqueues to ImuStreamTask.
+//   - Each stream has its own named worker thread for H.264 encoding, depth
+//     raw writing, fusion blending, or IMU CSV logging.
+//   - SDLViewer runs its own named decode + render threads.
+//
 // Usage:
 //   ./nio_multi_capture                                          # all devices
 //   ./nio_multi_capture -c "305" "336L"                          # filter by camera type
@@ -19,6 +28,8 @@
 #include "nio_log.hpp"
 #include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
+#include "nio_stream_tasks.hpp"
+#include "nio_thread.hpp"
 #include "utils.hpp"
 #include <libobsensor/ObSensor.hpp>
 
@@ -48,51 +59,47 @@ using namespace nio;
 // Data structures
 // ---------------------------------------------------------------------------
 
-// Per-device capture state: pipelines, encoders, fusion buffers, and metadata.
-// One DeviceCapture is created for each matched Orbbec device.
-struct DeviceCapture
-{
-    // Video pipeline handles color/depth/IR streams; IMU pipeline is separate
-    // because OrbbecSDK requires accel+gyro on a dedicated pipeline instance.
+struct DeviceCapture {
     std::shared_ptr<ob::Pipeline> videoPipeline;
     std::shared_ptr<ob::Pipeline> imuPipeline;
-    std::string deviceName;                   // device name with spaces replaced by '_'
-    std::shared_ptr<SensorFiles> sensorFiles; // per-stream encoders & output files
+    std::string deviceName;
+    std::shared_ptr<SensorFiles> sensorFiles;
     bool hasIMU = false;
-    float depthScale = 0.001f; // raw Y16 → meters conversion factor
+    float depthScale = 0.001f;
 
-    // D2C (depth-to-color) fusion fields — only used when enableFusion=true
-    std::shared_ptr<ob::Align> alignFilter;            // SW alignment filter (null if HW D2C)
-    std::shared_ptr<H264Encoder> fusedEncoder;         // RGB→H264 encoder for fused output
-    std::shared_ptr<std::ofstream> fusedFile;          // fused .h264 output file
-    std::mutex fusedMtx;                               // protects fusedFile writes
-    std::shared_ptr<MjpgDecoderRes> mjpgRes;           // MJPEG decoder for color→RGB conversion
-    std::shared_ptr<std::vector<uint8_t>> colorRGBBuf; // decoded color RGB buffer
-    std::shared_ptr<std::vector<uint8_t>> fusedRGBBuf; // alpha-blended fusion output
-    int colorW = 0;                                    // color stream width (also fusion width)
-    int colorH = 0;                                    // color stream height (also fusion height)
-    int fusedFps = 30;                                 // fusion output fps (min of color & depth)
-    OBFormat colorFormat = OB_FORMAT_UNKNOWN;          // actual color pixel format from device
-    float alpha = 0.5f;                                // depth overlay opacity (0=only color, 1=only depth)
-    float depthMinM = 0.3f;                            // min depth for jet colormap normalization (meters)
-    float depthMaxM = 5.0f;                            // max depth for jet colormap normalization (meters)
-    bool enableFusion = true;
-    bool hwD2CMode = false;                                 // true if device supports hardware D2C alignment
-    std::shared_ptr<std::atomic<uint64_t>> fusedFrameCount; // FPS counter for fusion stream
-    int viewerIdx = -1;                                     // SDLViewer device index (-1 = not registered with viewer)
-};
-
-// CLI configuration parsed from command-line arguments.
-struct CaptureConfig
-{
-    std::vector<std::string> cameraFilter; // e.g. {"305", "336L"} — only open matching devices
-    std::string saveDir;                   // output root directory (default: "capture_output")
+    std::shared_ptr<ob::Align> alignFilter;
+    std::mutex fusedMtx;
+    std::shared_ptr<MjpgDecoderRes> mjpgRes;
+    int colorW = 0;
+    int colorH = 0;
+    int fusedFps = 30;
+    OBFormat colorFormat = OB_FORMAT_UNKNOWN;
     float alpha = 0.5f;
     float depthMinM = 0.3f;
     float depthMaxM = 5.0f;
     bool enableFusion = true;
-    bool noFusion = false; // set by --no-fusion; converted to enableFusion=false
-    bool noShow = false;   // set by --no-show; skip SDL viewer entirely
+    bool hwD2CMode = false;
+    int viewerIdx = -1;
+
+    std::shared_ptr<EncodeStreamTask> colorEncodeTask;
+    std::shared_ptr<EncodeStreamTask> depthEncodeTask;
+    std::shared_ptr<EncodeStreamTask> irEncodeTask;
+    std::shared_ptr<EncodeStreamTask> irLeftEncodeTask;
+    std::shared_ptr<EncodeStreamTask> irRightEncodeTask;
+    std::shared_ptr<DepthRawTask> depthRawTask;
+    std::shared_ptr<FusionStreamTask> fusionTask;
+    std::shared_ptr<ImuStreamTask> imuTask;
+};
+
+struct CaptureConfig {
+    std::vector<std::string> cameraFilter;
+    std::string saveDir;
+    float alpha = 0.5f;
+    float depthMinM = 0.3f;
+    float depthMaxM = 5.0f;
+    bool enableFusion = true;
+    bool noFusion = false;
+    bool noShow = false;
 };
 
 static void printUsage(const char* prog) {
@@ -176,8 +183,8 @@ static CaptureConfig parseArgs(int argc, char** argv) {
 }
 
 static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
-                                     std::shared_ptr<ob::StreamProfile> colorProfile,
-                                     std::shared_ptr<ob::StreamProfile> depthProfile) {
+                                      std::shared_ptr<ob::StreamProfile> colorProfile,
+                                      std::shared_ptr<ob::StreamProfile> depthProfile) {
     auto hwD2CDepthProfiles = pipe->getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE);
     if (!hwD2CDepthProfiles || hwD2CDepthProfiles->getCount() == 0) {
         return false;
@@ -196,9 +203,6 @@ static bool checkIfSupportHWD2CAlign(std::shared_ptr<ob::Pipeline> pipe,
 }
 
 int main(int argc, char** argv) try {
-    // -----------------------------------------------------------------------
-    // Signal handling & CLI parsing
-    // -----------------------------------------------------------------------
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
@@ -231,8 +235,6 @@ int main(int argc, char** argv) try {
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
-    // Check USB transfer buffer size — multiple high-res devices may exhaust
-    // the default usbfs_memory_mb (usually 16MB). Warn if < 128MB with >1 device.
     {
         std::ifstream usbfsFile("/sys/module/usbcore/parameters/usbfs_memory_mb");
         if (usbfsFile.is_open()) {
@@ -252,18 +254,8 @@ int main(int argc, char** argv) try {
     // -----------------------------------------------------------------------
     // Device enumeration & per-device setup
     // -----------------------------------------------------------------------
-    // For each discovered Orbbec device that matches the camera filter:
-    //  1. Create output directory  <saveDir>/<timestamp>/<deviceName>/
-    //  2. Enumerate sensors, select stream profiles
-    //  3. Set up H264 encoders + output files for each stream
-    //  4. Configure D2C alignment (HW or SW)
-    //  5. Start video pipeline with frame callback
-    //  6. Start separate IMU pipeline if accel+gyro are present
-    // -----------------------------------------------------------------------
     std::vector<std::shared_ptr<DeviceCapture>> captures;
 
-    // Initialize SDL2 live preview — if init fails (e.g. no display), continue
-    // without preview (viewerIdx will stay -1, pushFrame calls will be no-ops)
     SDLViewer viewer;
     if (!cfg.noShow) {
         if (!viewer.init()) {
@@ -294,6 +286,11 @@ int main(int argc, char** argv) try {
         std::string serialNumber = devInfo->getSerialNumber();
         safeName = safeName + "_" + serialNumber;
 
+        // Short device ID for thread names (first 8 chars, no spaces)
+        std::string devId = safeName;
+        if (devId.size() > 8)
+            devId = devId.substr(0, 8);
+
         std::string deviceOutputDir = outputRootDir + "/" + safeName;
         mkdirp(deviceOutputDir);
         NIO_LOG_DEBUG_S("Created output dir: " << deviceOutputDir);
@@ -305,7 +302,6 @@ int main(int argc, char** argv) try {
         cap->depthMinM = cfg.depthMinM;
         cap->depthMaxM = cfg.depthMaxM;
         cap->enableFusion = cfg.enableFusion;
-        cap->fusedFrameCount = std::make_shared<std::atomic<uint64_t>>(0);
 
         auto startTs = getTimestampMs();
         std::string baseName = deviceOutputDir + "/" + safeName;
@@ -353,11 +349,6 @@ int main(int argc, char** argv) try {
         bool is305 = ob_smpl::isGemini305Device(vid, pid);
         OBFormat colorPreferredFmt = is305 ? OB_FORMAT_YUYV : OB_FORMAT_MJPG;
 
-        // Enumerate all sensors on this device and select best stream profile for each.
-        // Profile selection priority: prefer the requested format (YUYV for Gemini 305
-        // color per SDK config, MJPG for others; Y16 for depth, Y8 for IR).
-        // If the preferred format is unavailable, fall back to the first profile
-        // with a known format.
         for (uint32_t s = 0; s < sensorList->getCount(); s++) {
             auto sensorType = sensorList->getSensorType(s);
             auto sensor = sensorList->getSensor(s);
@@ -437,8 +428,6 @@ int main(int argc, char** argv) try {
                     NIO_LOG_INFO_S("Depth stream: " << depthW << "x" << depthH << "@" << depthFps
                                                     << " format=" << depthFormat);
                 }
-                // Depth precision determines the Y16→meters scale factor.
-                // E.g. precision_level=0 → 1mm, precision_level=1 → 0.5mm, etc.
                 try {
                     int32_t precisionLevel = device->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     switch (precisionLevel) {
@@ -524,7 +513,7 @@ int main(int argc, char** argv) try {
                     std::cout << " IR Right: " << irRW << "x" << irRH << "@" << irRFps << " format=" << irRightFormat
                               << std::endl;
                     NIO_LOG_INFO_S("IR Right stream: " << irRW << "x" << irRH << "@" << irRFps
-                                                       << " format=" << irRightFormat);
+                                                        << " format=" << irRightFormat);
                 }
                 break;
             case OB_SENSOR_ACCEL:
@@ -538,8 +527,6 @@ int main(int argc, char** argv) try {
             }
         }
 
-        // Gemini 305g reports an IR_LEFT sensor but it is non-functional; disable it
-        // to avoid pipeline start failures.
         if (ob_smpl::isGemini305gDevice(vid, pid, devInfo->getConnectionType())) {
             config->disableStream(OB_SENSOR_IR_LEFT);
             hasIRLeft = false;
@@ -547,10 +534,6 @@ int main(int argc, char** argv) try {
             NIO_LOG_INFO("Gemini 305g detected, disabled IR_LEFT stream");
         }
 
-        // Check if device supports hardware depth-to-color alignment.
-        // If supported, the D2C alignment happens on-device and the output
-        // FrameSet already contains aligned depth; otherwise we use the SW
-        // Align filter in the frame callback.
         bool hwD2CSupported = false;
         if (hasColor && hasDepth && colorProfile && depthProfile) {
             hwD2CSupported = checkIfSupportHWD2CAlign(cap->videoPipeline, colorProfile, depthProfile);
@@ -566,16 +549,15 @@ int main(int argc, char** argv) try {
         }
 
         // -----------------------------------------------------------------------
-        // Create H264 encoders + output files for each sensor stream
+        // Create H264 encoders + output files + per-stream tasks
         // -----------------------------------------------------------------------
-        // Each stream gets a StreamEncoder (which wraps an H264Encoder + buffered
-        // file). For native H264/H265 devices the encoder is skipped and raw NALUs
-        // are written directly. Depth also gets a parallel .raw file with Y16 data.
         auto sf = cap->sensorFiles;
 
         if (hasColor && colorFormat != OB_FORMAT_UNKNOWN) {
             sf->color = createStreamEncoder(baseName + "_color_" + startTs + ".h264", colorFormat, colorW, colorH,
                                             colorFps, nullptr, false);
+            cap->colorEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_color_enc", sf->color);
+            cap->colorEncodeTask->start();
             NIO_LOG_INFO_S("Color output: " << baseName + "_color_" + startTs + ".h264" << " fmt=" << colorFormat);
         }
         if (hasDepth && depthFormat != OB_FORMAT_UNKNOWN) {
@@ -583,33 +565,43 @@ int main(int argc, char** argv) try {
                                             depthFps, nullptr, false);
             sf->depthRawFile =
                 std::make_shared<std::ofstream>(baseName + "_depth_raw_" + startTs + ".raw", std::ios::binary);
+            cap->depthEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_depth_enc", sf->depth);
+            cap->depthEncodeTask->start();
+            cap->depthRawTask = std::make_shared<DepthRawTask>(devId + "_depth_raw", sf->depthRawFile,
+                                                               depthW, depthH, cap->depthScale);
+            cap->depthRawTask->start();
             NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
         }
         if (hasIR && irFormat != OB_FORMAT_UNKNOWN) {
             sf->ir =
                 createStreamEncoder(baseName + "_ir_" + startTs + ".h264", irFormat, irW, irH, irFps, nullptr, false);
+            cap->irEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_ir_enc", sf->ir);
+            cap->irEncodeTask->start();
             NIO_LOG_INFO_S("IR output: " << baseName + "_ir_" + startTs + ".h264");
         }
         if (hasIRLeft && irLeftFormat != OB_FORMAT_UNKNOWN) {
             sf->irLeft = createStreamEncoder(baseName + "_ir_left_" + startTs + ".h264", irLeftFormat, irLW, irLH,
                                              irLFps, nullptr, false);
+            cap->irLeftEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_irl_enc", sf->irLeft);
+            cap->irLeftEncodeTask->start();
             NIO_LOG_INFO_S("IR Left output: " << baseName + "_ir_left_" + startTs + ".h264");
         }
         if (hasIRRight && irRightFormat != OB_FORMAT_UNKNOWN) {
             sf->irRight = createStreamEncoder(baseName + "_ir_right_" + startTs + ".h264", irRightFormat, irRW, irRH,
                                               irRFps, nullptr, false);
+            cap->irRightEncodeTask = std::make_shared<EncodeStreamTask>(devId + "_irr_enc", sf->irRight);
+            cap->irRightEncodeTask->start();
             NIO_LOG_INFO_S("IR Right output: " << baseName + "_ir_right_" + startTs + ".h264");
         }
         if (hasAccel || hasGyro) {
             sf->imuFile = std::make_shared<std::ofstream>(baseName + "_imu_" + startTs + ".txt");
             *sf->imuFile << "# host_ts_ms,type,device_ts_us,x,y,z,temperature\n";
             sf->imuFile->flush();
+            cap->imuTask = std::make_shared<ImuStreamTask>(devId + "_imu", sf->imuFile);
+            cap->imuTask->start();
             NIO_LOG_INFO_S("IMU output: " << baseName + "_imu_" + startTs + ".txt");
         }
 
-        // Register device with SDL viewer for live preview.
-        // Returns device index used for pushFrame() calls in the SDK callback.
-        // If viewer.init() failed, addDevice is still safe (returns -1, pushFrame becomes no-op).
         OBFormat depthSlotFmt = OB_FORMAT_Y16;
         int depthSlotW = depthW;
         int depthSlotH = depthH;
@@ -628,11 +620,6 @@ int main(int argc, char** argv) try {
         // -----------------------------------------------------------------------
         // D2C fusion setup
         // -----------------------------------------------------------------------
-        // When both color and depth are available, create a separate H264 output
-        // that alpha-blends depth (jet colormap) onto the color image.
-        // Pipeline: color frame → decodeColorToRGB() → RGB24 buffer
-        //           depth frame → align to color → jet colormap
-        //           blend with alpha → fusedEncoder->encodeRGB() → .h264
         bool canFuse = cfg.enableFusion && hasColor && hasDepth;
         if (canFuse) {
             if (!cap->hwD2CMode) {
@@ -644,10 +631,10 @@ int main(int argc, char** argv) try {
             cap->fusedFps = std::min(colorFps, depthFps);
 
             std::string fusedPath = baseName + "_d2c_fused_" + startTs + ".h264";
-            cap->fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
+            auto fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
 
-            cap->fusedEncoder = std::make_shared<H264Encoder>();
-            if (!cap->fusedEncoder->initRGB(colorW, colorH, cap->fusedFps)) {
+            auto fusedEncoder = std::make_shared<H264Encoder>();
+            if (!fusedEncoder->initRGB(colorW, colorH, cap->fusedFps)) {
                 std::cerr << "  Failed to init fused H264 encoder for " << safeName << std::endl;
                 NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName << " " << colorW << "x" << colorH
                                                                          << "@" << cap->fusedFps);
@@ -655,9 +642,14 @@ int main(int argc, char** argv) try {
             } else {
                 cap->mjpgRes = std::make_shared<MjpgDecoderRes>();
                 cap->mjpgRes->init(colorW, colorH, colorFormat);
-                int rgbBufSize = colorW * colorH * 3;
-                cap->colorRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
-                cap->fusedRGBBuf = std::make_shared<std::vector<uint8_t>>(rgbBufSize, 0);
+                cap->fusionTask = std::make_shared<FusionStreamTask>(
+                    devId + "_fusion",
+                    colorW, colorH, colorFormat, cap->fusedFps,
+                    fusedEncoder, fusedFile, cap->fusedMtx,
+                    cap->alignFilter, cap->hwD2CMode,
+                    cfg.alpha, cfg.depthMinM, cfg.depthMaxM, cap->depthScale,
+                    cap->mjpgRes);
+                cap->fusionTask->start();
                 std::cout << "  D2C Fusion: " << colorW << "x" << colorH << "@" << cap->fusedFps
                           << " alpha=" << cfg.alpha << " depth=[" << cfg.depthMinM << "m, " << cfg.depthMaxM << "m]"
                           << " mode=" << (cap->hwD2CMode ? "HW" : "SW") << std::endl;
@@ -674,16 +666,8 @@ int main(int argc, char** argv) try {
             NIO_LOG_DEBUG_S("D2C Fusion skipped for " << safeName << ": no depth sensor");
         }
 
-        auto depthFrameIdx = std::make_shared<std::atomic<uint64_t>>(0);
-
         // -----------------------------------------------------------------------
-        // Start video pipeline with frame callback
-        // -----------------------------------------------------------------------
-        // The callback processes every incoming FrameSet from the device:
-        //  1. D2C fusion: align depth→color, decode color to RGB, alpha-blend,
-        //     encode fused result to H264
-        //  2. Individual streams: encode each frame to H264 (or write raw NALUs
-        //     for native H264 devices), and write depth .raw with headers
+        // Start video pipeline with lightweight frame callback
         // -----------------------------------------------------------------------
         try {
             cap->videoPipeline->enableFrameSync();
@@ -691,219 +675,103 @@ int main(int argc, char** argv) try {
         }
 
         try {
-            cap->videoPipeline->start(config, [sf, hasColor, hasDepth, hasIR, hasIRLeft, hasIRRight, cap, depthFrameIdx,
-                                               canFuse, &viewer](std::shared_ptr<ob::FrameSet> frameSet) {
+            cap->videoPipeline->start(config, [cap, canFuse, &viewer](std::shared_ptr<ob::FrameSet> frameSet) {
                 if (!frameSet)
                     return;
 
-                // ---- D2C fusion path ----
-                if (canFuse) {
-                    // For HW D2C mode the frameSet is already aligned by the device;
-                    // for SW D2C mode we apply the Align filter manually.
-                    std::shared_ptr<ob::FrameSet> alignedFS;
+                // ---- D2C fusion: enqueue to fusion task ----
+                if (canFuse && cap->fusionTask) {
                     if (cap->hwD2CMode) {
-                        alignedFS = frameSet;
-                    } else if (cap->alignFilter) {
-                        auto alignedFrame = cap->alignFilter->process(frameSet);
-                        alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
-                        if (!alignedFS)
-                            alignedFS = frameSet;
+                        auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+                        auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+                        if (colorFrame && depthFrame) {
+                            cap->fusionTask->enqueueColor(colorFrame->getData(), colorFrame->getDataSize(),
+                                                          colorFrame->getTimeStampUs());
+                            float depthScaleForFusion = cap->depthScale;
+                            try {
+                                auto depthF = depthFrame->as<ob::DepthFrame>();
+                                if (depthF)
+                                    depthScaleForFusion = depthF->getValueScale();
+                            } catch (...) {
+                            }
+                            cap->fusionTask->enqueueDepth(depthFrame->getData(), depthFrame->getDataSize(),
+                                                          depthFrame->getTimeStampUs(), depthScaleForFusion);
+                        }
                     } else {
-                        alignedFS = frameSet;
-                    }
-
-                    auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
-                    auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
-
-                    if (colorFrame && depthFrame) {
-                        uint64_t colorTsUs = colorFrame->getTimeStampUs();
-                        (void)colorTsUs;
-
-                        int w = cap->colorW;
-                        int h = cap->colorH;
-
-                        // Decode color frame to RGB24 (handles MJPG/YUYV/BGR/etc.)
-                        bool colorOk = decodeColorToRGB(colorFrame->getData(), colorFrame->getDataSize(),
-                                                        cap->colorFormat, w, h, cap->colorRGBBuf->data(), cap->mjpgRes);
-
-                        if (!colorOk) {
-                            memset(cap->colorRGBBuf->data(), 128, w * h * 3);
-                        }
-
-                        auto depthData = depthFrame->getData();
-                        auto depthSize = depthFrame->getDataSize();
-                        auto depthFmt = depthFrame->getFormat();
-
-                        // Depth value scale: prefer per-frame getValueScale(), fallback to
-                        // the device-level depthScale queried at init time.
-                        float scale = cap->depthScale;
-                        try {
-                            auto depthF = depthFrame->as<ob::DepthFrame>();
-                            if (depthF) {
-                                scale = depthF->getValueScale();
-                            }
-                        } catch (...) {
-                        }
-
-                        int depthW = w;
-                        int depthH = h;
-                        try {
-                            auto depthVF = depthFrame->as<ob::VideoFrame>();
-                            if (depthVF) {
-                                depthW = static_cast<int>(depthVF->getWidth());
-                                depthH = static_cast<int>(depthVF->getHeight());
-                            }
-                        } catch (...) {
-                        }
-
-                        float minDist = cap->depthMinM;
-                        float maxDist = cap->depthMaxM;
-                        float alpha = cap->alpha;
-
-                        // Alpha-blend: output = (1-alpha)*color + alpha*jet(depth)
-                        auto fuseDepthColor = [&](const uint16_t* depthPtr, int depthW, int depthH) {
-                            int blendW = std::min(w, depthW);
-                            int blendH = std::min(h, depthH);
-                            for (int y = 0; y < blendH; y++) {
-                                for (int x = 0; x < blendW; x++) {
-                                    uint16_t rawVal = depthPtr[y * depthW + x];
-                                    int idx = (y * w + x) * 3;
-                                    if (rawVal == 0) {
-                                        (*cap->fusedRGBBuf)[idx + 0] = (*cap->colorRGBBuf)[idx + 0];
-                                        (*cap->fusedRGBBuf)[idx + 1] = (*cap->colorRGBBuf)[idx + 1];
-                                        (*cap->fusedRGBBuf)[idx + 2] = (*cap->colorRGBBuf)[idx + 2];
-                                    } else {
-                                        float distM = rawVal * scale / 1000.0f;
-                                        float norm = (distM - minDist) / (maxDist - minDist);
-                                        norm = std::max(0.0f, std::min(1.0f, norm));
-                                        uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-                                        uint8_t cr, cg, cb;
-                                        jetColormap(v, cr, cg, cb);
-                                        float inv = 1.0f - alpha;
-                                        (*cap->fusedRGBBuf)[idx + 0] =
-                                            static_cast<uint8_t>(inv * (*cap->colorRGBBuf)[idx + 0] + alpha * cr);
-                                        (*cap->fusedRGBBuf)[idx + 1] =
-                                            static_cast<uint8_t>(inv * (*cap->colorRGBBuf)[idx + 1] + alpha * cg);
-                                        (*cap->fusedRGBBuf)[idx + 2] =
-                                            static_cast<uint8_t>(inv * (*cap->colorRGBBuf)[idx + 2] + alpha * cb);
-                                    }
-                                }
-                            }
-                        };
-
-                        if (depthFmt == OB_FORMAT_Y16 && depthData && depthSize >= (uint32_t)(depthW * depthH * 2)) {
-                            const uint16_t* depthPtr = reinterpret_cast<const uint16_t*>(depthData);
-                            fuseDepthColor(depthPtr, depthW, depthH);
-                            int blendH = std::min(h, depthH);
-                            for (int y = blendH; y < h; y++) {
-                                memcpy(cap->fusedRGBBuf->data() + y * w * 3, cap->colorRGBBuf->data() + y * w * 3,
-                                       w * 3);
-                            }
-                        } else {
-                            memcpy(cap->fusedRGBBuf->data(), cap->colorRGBBuf->data(), w * h * 3);
-                        }
-
-                        cap->fusedEncoder->encodeRGB(cap->fusedRGBBuf->data(), *cap->fusedFile, cap->fusedMtx,
-                                                     depthFrame->getTimeStampUs());
-                        (*cap->fusedFrameCount)++;
+                        cap->fusionTask->enqueueFrameSet(frameSet);
                     }
                 }
 
-                // ---- Individual stream recording (color/depth/IR) ----
-                // These write to separate .h264 files independently of the fusion path.
-                if (hasColor) {
-                    auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-                    if (colorFrame) {
-                        writeStreamFrame(sf->color.get(), colorFrame->getData(), colorFrame->getDataSize(),
-                                         colorFrame->getTimeStampUs());
-                        // Push color frame to SDL viewer for live preview (YUYV/MJPG → RGB conversion happens inside)
-                        if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::COLOR, colorFrame->getData(),
-                                             colorFrame->getDataSize());
-                        std::lock_guard<std::mutex> lock(sf->countMtx);
-                        sf->frameCounts[OB_FRAME_COLOR]++;
-                    }
+                // ---- Individual stream recording: enqueue to per-stream tasks ----
+                if (auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR)) {
+                    if (cap->colorEncodeTask)
+                        cap->colorEncodeTask->enqueue(colorFrame->getData(), colorFrame->getDataSize(),
+                                                     colorFrame->getTimeStampUs());
+                    if (cap->viewerIdx >= 0)
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::COLOR, colorFrame->getData(),
+                                         colorFrame->getDataSize());
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_COLOR]++;
                 }
 
-                if (hasDepth) {
-                    auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-                    if (depthFrame) {
-                        auto format = depthFrame->getFormat();
-                        auto data = depthFrame->getData();
-                        auto size = depthFrame->getDataSize();
+                if (auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH)) {
+                    auto format = depthFrame->getFormat();
+                    auto data = depthFrame->getData();
+                    auto size = depthFrame->getDataSize();
 
-                        // Write raw Y16 depth data with per-frame header for offline replay.
-                        // Skipped for native H264/H265 depth streams.
-                        if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                            if (sf->depthRawFile && sf->depthRawFile->is_open()) {
-                                uint64_t idx = depthFrameIdx->fetch_add(1);
-                                writeDepthRawWithHeader(*sf->depthRawFile, data, size,
-                                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->width : 0,
-                                                        cap->sensorFiles->depth ? cap->sensorFiles->depth->height : 0,
-                                                        cap->depthScale, idx, sf->depthRawMtx,
-                                                        depthFrame->getTimeStampUs());
-                            }
-                        }
-
-                        float viewerDepthScale = cap->depthScale;
-                        try {
-                            auto depthF = depthFrame->as<ob::DepthFrame>();
-                            if (depthF) {
-                                viewerDepthScale = depthF->getValueScale();
-                            }
-                        } catch (...) {
-                        }
-                        writeStreamFrame(sf->depth.get(), data, size, depthFrame->getTimeStampUs());
-                        // Push depth frame to SDL viewer (Y16 → jet colormap conversion happens inside)
-                        // viewerDepthScale is mm/raw (same unit as getValueScale), decodeSlot uses raw*scale/1000
-                        if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::DEPTH, data, size, viewerDepthScale,
-                                             cap->depthMinM, cap->depthMaxM);
-                        std::lock_guard<std::mutex> lock(sf->countMtx);
-                        sf->frameCounts[OB_FRAME_DEPTH]++;
+                    if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+                        if (cap->depthRawTask)
+                            cap->depthRawTask->enqueue(data, size, depthFrame->getTimeStampUs());
                     }
+
+                    if (cap->depthEncodeTask)
+                        cap->depthEncodeTask->enqueue(data, size, depthFrame->getTimeStampUs());
+
+                    float viewerDepthScale = cap->depthScale;
+                    try {
+                        auto depthF = depthFrame->as<ob::DepthFrame>();
+                        if (depthF)
+                            viewerDepthScale = depthF->getValueScale();
+                    } catch (...) {
+                    }
+                    if (cap->viewerIdx >= 0)
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::DEPTH, data, size, viewerDepthScale,
+                                         cap->depthMinM, cap->depthMaxM);
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_DEPTH]++;
                 }
 
-                if (hasIR) {
-                    auto irFrame = frameSet->getFrame(OB_FRAME_IR);
-                    if (irFrame) {
-                        writeStreamFrame(sf->ir.get(), irFrame->getData(), irFrame->getDataSize(),
-                                         irFrame->getTimeStampUs());
-                        // Push IR frame to SDL viewer (Y8 → grayscale conversion happens inside)
-                        if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR, irFrame->getData(),
-                                             irFrame->getDataSize());
-                        std::lock_guard<std::mutex> lock(sf->countMtx);
-                        sf->frameCounts[OB_FRAME_IR]++;
-                    }
+                if (auto irFrame = frameSet->getFrame(OB_FRAME_IR)) {
+                    if (cap->irEncodeTask)
+                        cap->irEncodeTask->enqueue(irFrame->getData(), irFrame->getDataSize(),
+                                                   irFrame->getTimeStampUs());
+                    if (cap->viewerIdx >= 0)
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR, irFrame->getData(),
+                                         irFrame->getDataSize());
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_IR]++;
                 }
 
-                if (hasIRLeft) {
-                    auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT);
-                    if (irLeftFrame) {
-                        writeStreamFrame(sf->irLeft.get(), irLeftFrame->getData(), irLeftFrame->getDataSize(),
-                                         irLeftFrame->getTimeStampUs());
-                        // Push IR-Left frame to SDL viewer (Y8 → grayscale, for Gemini 335L/336L stereo IR)
-                        if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
-                                             irLeftFrame->getDataSize());
-                        std::lock_guard<std::mutex> lock(sf->countMtx);
-                        sf->frameCounts[OB_FRAME_IR_LEFT]++;
-                    }
+                if (auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT)) {
+                    if (cap->irLeftEncodeTask)
+                        cap->irLeftEncodeTask->enqueue(irLeftFrame->getData(), irLeftFrame->getDataSize(),
+                                                       irLeftFrame->getTimeStampUs());
+                    if (cap->viewerIdx >= 0)
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
+                                         irLeftFrame->getDataSize());
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_IR_LEFT]++;
                 }
 
-                if (hasIRRight) {
-                    auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT);
-                    if (irRightFrame) {
-                        writeStreamFrame(sf->irRight.get(), irRightFrame->getData(), irRightFrame->getDataSize(),
-                                         irRightFrame->getTimeStampUs());
-                        // Push IR-Right frame to SDL viewer (Y8 → grayscale, for Gemini 335L/336L stereo IR)
-                        if (cap->viewerIdx >= 0)
-                            viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
-                                             irRightFrame->getDataSize());
-                        std::lock_guard<std::mutex> lock(sf->countMtx);
-                        sf->frameCounts[OB_FRAME_IR_RIGHT]++;
-                    }
+                if (auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT)) {
+                    if (cap->irRightEncodeTask)
+                        cap->irRightEncodeTask->enqueue(irRightFrame->getData(), irRightFrame->getDataSize(),
+                                                        irRightFrame->getTimeStampUs());
+                    if (cap->viewerIdx >= 0)
+                        viewer.pushFrame(cap->viewerIdx, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
+                                         irRightFrame->getDataSize());
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_IR_RIGHT]++;
                 }
             });
         } catch (ob::Error& e) {
@@ -916,10 +784,7 @@ int main(int argc, char** argv) try {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // -----------------------------------------------------------------------
-        // Start IMU pipeline (separate from video pipeline)
-        // -----------------------------------------------------------------------
-        // OrbbecSDK requires accel+gyro to be started on a dedicated pipeline
-        // instance. The callback writes timestamped CSV lines to the IMU file.
+        // Start IMU pipeline with lightweight callback (enqueue CSV lines)
         // -----------------------------------------------------------------------
         cap->hasIMU = (hasAccel && hasGyro);
         if (cap->hasIMU) {
@@ -931,51 +796,51 @@ int main(int argc, char** argv) try {
             imuConfig->enableGyroStream();
             imuConfig->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
 
-            cap->imuPipeline->start(imuConfig, [sf](std::shared_ptr<ob::FrameSet> frameSet) {
+            cap->imuPipeline->start(imuConfig, [cap](std::shared_ptr<ob::FrameSet> frameSet) {
                 if (!frameSet)
                     return;
 
                 auto accelFrameRaw = frameSet->getFrame(OB_FRAME_ACCEL);
                 auto gyroFrameRaw = frameSet->getFrame(OB_FRAME_GYRO);
 
-                std::lock_guard<std::mutex> lock(sf->imuMtx);
-                if (sf->imuFile && sf->imuFile->is_open()) {
-                    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::system_clock::now().time_since_epoch())
-                                     .count();
-
-                    if (accelFrameRaw) {
-                        try {
-                            auto accelFrame = accelFrameRaw->as<ob::AccelFrame>();
-                            auto val = accelFrame->getValue();
-                            auto ts = accelFrame->getTimeStampUs();
-                            auto temp = accelFrame->getTemperature();
-                            *sf->imuFile << nowMs << ",ACCEL," << ts << "," << val.x << "," << val.y << "," << val.z
-                                         << "," << temp << "\n";
-                        } catch (...) {
-                        }
+                if (accelFrameRaw) {
+                    try {
+                        auto accelFrame = accelFrameRaw->as<ob::AccelFrame>();
+                        auto val = accelFrame->getValue();
+                        auto ts = accelFrame->getTimeStampUs();
+                        auto temp = accelFrame->getTemperature();
+                        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
+                        std::ostringstream oss;
+                        oss << nowMs << ",ACCEL," << ts << "," << val.x << "," << val.y << "," << val.z
+                            << "," << temp << "\n";
+                        if (cap->imuTask)
+                            cap->imuTask->enqueueLine(oss.str());
+                    } catch (...) {
                     }
-
-                    if (gyroFrameRaw) {
-                        try {
-                            auto gyroFrame = gyroFrameRaw->as<ob::GyroFrame>();
-                            auto val = gyroFrame->getValue();
-                            auto ts = gyroFrame->getTimeStampUs();
-                            auto temp = gyroFrame->getTemperature();
-                            *sf->imuFile << nowMs << ",GYRO," << ts << "," << val.x << "," << val.y << "," << val.z
-                                         << "," << temp << "\n";
-                        } catch (...) {
-                        }
-                    }
-                    sf->imuFile->flush();
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_ACCEL]++;
                 }
 
-                {
-                    std::lock_guard<std::mutex> cLock(sf->countMtx);
-                    if (accelFrameRaw)
-                        sf->frameCounts[OB_FRAME_ACCEL]++;
-                    if (gyroFrameRaw)
-                        sf->frameCounts[OB_FRAME_GYRO]++;
+                if (gyroFrameRaw) {
+                    try {
+                        auto gyroFrame = gyroFrameRaw->as<ob::GyroFrame>();
+                        auto val = gyroFrame->getValue();
+                        auto ts = gyroFrame->getTimeStampUs();
+                        auto temp = gyroFrame->getTemperature();
+                        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
+                        std::ostringstream oss;
+                        oss << nowMs << ",GYRO," << ts << "," << val.x << "," << val.y << "," << val.z
+                            << "," << temp << "\n";
+                        if (cap->imuTask)
+                            cap->imuTask->enqueueLine(oss.str());
+                    } catch (...) {
+                    }
+                    std::lock_guard<std::mutex> lock(cap->sensorFiles->countMtx);
+                    cap->sensorFiles->frameCounts[OB_FRAME_GYRO]++;
                 }
             });
         }
@@ -983,9 +848,6 @@ int main(int argc, char** argv) try {
         captures.push_back(std::move(cap));
     }
 
-    // Create SDL window + textures + render thread now that all devices are registered.
-    // If init() failed earlier (no display), createWindow is a no-op.
-    // Skip entirely when --no-show is set.
     if (!cfg.noShow) {
         if (!viewer.createWindow()) {
             std::cerr << "SDL viewer window creation failed, continuing without preview" << std::endl;
@@ -1023,10 +885,6 @@ int main(int argc, char** argv) try {
     // -----------------------------------------------------------------------
     // Main recording loop
     // -----------------------------------------------------------------------
-    // Polls keyboard every ~1s (then every ~2s after first report).
-    // Prints per-stream FPS statistics on each reporting interval.
-    // Exits on Ctrl+C (SIGINT/SIGTERM → g_running=false), 'q', or ESC.
-    // -----------------------------------------------------------------------
     auto lastReportTime = ob_smpl::getNowTimesMs();
     uint32_t waitTime = 1000;
 
@@ -1042,11 +900,6 @@ int main(int argc, char** argv) try {
             uint64_t reportDuration = currentTime - lastReportTime;
             lastReportTime = currentTime;
 
-            // -----------------------------------------------------------------------
-            // Shutdown: stop pipelines, close encoders, flush files
-            // -----------------------------------------------------------------------
-            // Order matters: stop pipelines first (no more callbacks), then close
-            // encoders (flushes buffered H264 frames), then close files.
             for (auto& cap : captures) {
                 std::map<OBFrameType, uint64_t> tempCounts;
                 {
@@ -1060,7 +913,7 @@ int main(int argc, char** argv) try {
                 }
 
                 std::cout << "[" << cap->deviceName << "] ";
-                if (tempCounts.empty() && !cap->fusedEncoder) {
+                if (tempCounts.empty() && !cap->fusionTask) {
                     std::cout << "Recording... waiting for frames";
                 } else {
                     std::cout << "Recording... FPS: ";
@@ -1073,8 +926,8 @@ int main(int argc, char** argv) try {
                         NIO_LOG_TRACE_S("[" << cap->deviceName << "] " << name << "=" << std::fixed
                                             << std::setprecision(1) << rate);
                     }
-                    if (cap->fusedEncoder) {
-                        uint64_t fusedCount = cap->fusedFrameCount->exchange(0);
+                    if (cap->fusionTask) {
+                        uint64_t fusedCount = cap->fusionTask->frameCount.exchange(0);
                         float fusedRate = (reportDuration > 0) ? (fusedCount / (reportDuration / 1000.0f)) : 0.0f;
                         std::cout << sep << "fused=" << std::fixed << std::setprecision(1) << fusedRate;
                         NIO_LOG_TRACE_S("[" << cap->deviceName << "] fused=" << std::fixed << std::setprecision(1)
@@ -1096,6 +949,25 @@ int main(int argc, char** argv) try {
         if (cap->hasIMU && cap->imuPipeline)
             cap->imuPipeline->stop();
 
+        // Stop all stream tasks (joins threads, drains queues)
+        if (cap->colorEncodeTask)
+            cap->colorEncodeTask->stop();
+        if (cap->depthEncodeTask)
+            cap->depthEncodeTask->stop();
+        if (cap->depthRawTask)
+            cap->depthRawTask->stop();
+        if (cap->irEncodeTask)
+            cap->irEncodeTask->stop();
+        if (cap->irLeftEncodeTask)
+            cap->irLeftEncodeTask->stop();
+        if (cap->irRightEncodeTask)
+            cap->irRightEncodeTask->stop();
+        if (cap->fusionTask)
+            cap->fusionTask->stop();
+        if (cap->imuTask)
+            cap->imuTask->stop();
+
+        // Close encoders and files
         auto& sf = cap->sensorFiles;
         if (sf->color && sf->color->encoder)
             sf->color->encoder->close();
@@ -1123,17 +995,12 @@ int main(int argc, char** argv) try {
         if (sf->imuFile)
             sf->imuFile->close();
 
-        if (cap->fusedEncoder)
-            cap->fusedEncoder->close();
-        if (cap->fusedFile)
-            cap->fusedFile->close();
         cap->mjpgRes.reset();
 
         std::cout << "Stopped: " << cap->deviceName << std::endl;
         NIO_LOG_INFO_S("Stopped device: " << cap->deviceName);
     }
 
-    // Stop SDL viewer: joins render thread and destroys SDL resources
     viewer.close();
 
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
@@ -1141,7 +1008,6 @@ int main(int argc, char** argv) try {
     NIO_LOG_SHUTDOWN();
     return 0;
 } catch (ob::Error& e) {
-    // Top-level catch for unhandled OrbbecSDK errors
     std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what() << "\n status: " << e.getStatus() << std::endl;
     NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
     NIO_LOG_SHUTDOWN();
