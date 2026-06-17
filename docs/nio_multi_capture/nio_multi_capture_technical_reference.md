@@ -470,7 +470,7 @@ Gemini 305g 报告了 IR_LEFT 传感器但实际不可用，启用后会导致 P
 
 ### 10.1 `parse_depth_raw.py` — 深度原始数据解析
 
-> 文件：`app/nio_multi_capture/parse_depth_raw.py`
+> 文件：`scripts/nio_multi_capture/parse_depth_raw.py`
 
 ```bash
 # 查看头部信息与统计
@@ -495,7 +495,7 @@ python3 parse_depth_raw.py <file.raw> --min-depth 300 --max-depth 3000 --colorma
 
 ### 10.2 `colorize_from_video.py` — 视频伪彩色渲染
 
-> 文件：`app/nio_multi_capture/colorize_from_video.py`
+> 文件：`scripts/nio_multi_capture/colorize_from_video.py`
 
 ```bash
 python3 colorize_from_video.py input.mp4 output.mp4 --colormap viridis --min 0 --max 4.0 --fps 30
@@ -507,7 +507,7 @@ python3 colorize_from_video.py input.mp4 output.mp4 --colormap viridis --min 0 -
 
 ### 10.3 `colorize_from_video.sh` — 一键深度着色脚本
 
-> 文件：`app/nio_multi_capture/colorize_from_video.sh`
+> 文件：`scripts/nio_multi_capture/colorize_from_video.sh`
 
 ```bash
 ./colorize_from_video.sh input.h264 output.mp4 --colormap viridis --min 0 --max 4.0 --fps 30
@@ -517,7 +517,7 @@ python3 colorize_from_video.py input.mp4 output.mp4 --colormap viridis --min 0 -
 
 ### 10.4 `batch_wrap_color_depth.sh` — 批量 H264 封装
 
-> 文件：`app/nio_multi_capture/batch_wrap_color_depth.sh`
+> 文件：`scripts/nio_multi_capture/batch_wrap_color_depth.sh`
 
 ```bash
 # 批量封装目录中 .h264 → .mp4

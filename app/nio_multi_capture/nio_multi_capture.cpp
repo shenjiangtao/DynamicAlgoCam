@@ -346,6 +346,8 @@ int main(int argc, char** argv) try {
         int irLW = 0, irLH = 0, irLFps = 30;
         int irRW = 0, irRH = 0, irRFps = 30;
 
+        OBCameraIntrinsic depthIntrinsic = {};
+        OBCameraIntrinsic colorIntrinsic = {};
         std::shared_ptr<ob::VideoStreamProfile> colorProfile, depthProfile, irProfile, irLeftProfile, irRightProfile;
 
         bool is305 = ob_smpl::isGemini305Device(vid, pid);
@@ -392,6 +394,19 @@ int main(int argc, char** argv) try {
                               << std::endl;
                     NIO_LOG_INFO_S("Color stream: " << colorW << "x" << colorH << "@" << colorFps
                                                     << " format=" << colorFormat);
+                    try {
+                        if (colorProfile) {
+                            colorIntrinsic = colorProfile->as<ob::VideoStreamProfile>()->getIntrinsic();
+                            std::cout << " Color intrinsic: fx=" << colorIntrinsic.fx << " fy=" << colorIntrinsic.fy
+                                      << " cx=" << colorIntrinsic.cx << " cy=" << colorIntrinsic.cy << std::endl;
+                            NIO_LOG_INFO_S("Color intrinsic: fx=" << colorIntrinsic.fx << " fy=" << colorIntrinsic.fy
+                                                                  << " cx=" << colorIntrinsic.cx
+                                                                  << " cy=" << colorIntrinsic.cy);
+                        }
+                    } catch (...) {
+                        std::cout << " Color intrinsic: not available" << std::endl;
+                        NIO_LOG_WARN_S("Color intrinsic not available for " << safeName);
+                    }
                 }
                 break;
             case OB_SENSOR_DEPTH:
@@ -455,6 +470,19 @@ int main(int argc, char** argv) try {
                 } catch (...) {
                     cap->depthScale = 0.001f;
                     std::cout << " Depth scale: 0.001 (default)" << std::endl;
+                }
+                try {
+                    if (depthProfile) {
+                        depthIntrinsic = depthProfile->as<ob::VideoStreamProfile>()->getIntrinsic();
+                        std::cout << " Depth intrinsic: fx=" << depthIntrinsic.fx << " fy=" << depthIntrinsic.fy
+                                  << " cx=" << depthIntrinsic.cx << " cy=" << depthIntrinsic.cy << std::endl;
+                        NIO_LOG_INFO_S("Depth intrinsic: fx=" << depthIntrinsic.fx << " fy=" << depthIntrinsic.fy
+                                                              << " cx=" << depthIntrinsic.cx
+                                                              << " cy=" << depthIntrinsic.cy);
+                    }
+                } catch (...) {
+                    std::cout << " Depth intrinsic: not available" << std::endl;
+                    NIO_LOG_WARN_S("Depth intrinsic not available for " << safeName);
                 }
                 break;
             case OB_SENSOR_IR:
@@ -573,6 +601,25 @@ int main(int argc, char** argv) try {
                 std::make_shared<DepthRawTask>(devId + "_depth_raw", sf->depthRawFile, depthW, depthH, cap->depthScale);
             cap->depthRawTask->start();
             NIO_LOG_INFO_S("Depth output: " << baseName + "_depth_" + startTs + ".h264" << " + raw");
+
+            {
+                std::string intrinsicPath = baseName + "_depth_intrinsic_" + startTs + ".json";
+                std::ofstream jf(intrinsicPath);
+                if (jf.is_open()) {
+                    jf << "{\n";
+                    jf << "  \"depth\": {\"fx\":" << depthIntrinsic.fx << ",\"fy\":" << depthIntrinsic.fy
+                       << ",\"cx\":" << depthIntrinsic.cx << ",\"cy\":" << depthIntrinsic.cy
+                       << ",\"width\":" << depthIntrinsic.width << ",\"height\":" << depthIntrinsic.height << "},\n";
+                    jf << "  \"color\": {\"fx\":" << colorIntrinsic.fx << ",\"fy\":" << colorIntrinsic.fy
+                       << ",\"cx\":" << colorIntrinsic.cx << ",\"cy\":" << colorIntrinsic.cy
+                       << ",\"width\":" << colorIntrinsic.width << ",\"height\":" << colorIntrinsic.height << "},\n";
+                    jf << "  \"depth_scale\":" << cap->depthScale << ",\n";
+                    jf << "  \"device\":\"" << safeName << "\"\n";
+                    jf << "}\n";
+                    std::cout << " Intrinsic: " << intrinsicPath << std::endl;
+                    NIO_LOG_INFO_S("Intrinsic JSON: " << intrinsicPath);
+                }
+            }
         }
         if (hasIR && irFormat != OB_FORMAT_UNKNOWN) {
             sf->ir =

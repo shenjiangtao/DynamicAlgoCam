@@ -34,12 +34,36 @@ Options:
   --min-depth D   Minimum depth for colormap (mm)
   --max-depth D   Maximum depth for colormap (mm)
   --no-header     Force no-header mode (raw Y16 from start)
+
+Point cloud options:
+  --pointcloud    Generate 3D point cloud from depth (PLY format)
+  --fx F          Focal length X (default: auto-estimate from width)
+  --fy F          Focal length Y (default: auto-estimate from height)
+  --cx C          Principal point X (default: width/2)
+  --cy C          Principal point Y (default: height/2)
+  --view          Open interactive 3D viewer (requires open3d)
+  --max-depth-m M Max depth in meters for point cloud filtering (default: 10.0)
+
+Point cloud examples:
+  # Default intrinsics (estimated from resolution):
+  python3 parse_depth_raw.py capture.raw --pointcloud
+
+  # With known intrinsics (e.g. Gemini2 640x480):
+  python3 parse_depth_raw.py capture.raw --pointcloud --fx 481.2 --fy 480.0 --cx 319.5 --cy 239.5
+
+  # Interactive 3D viewer:
+  python3 parse_depth_raw.py capture.raw --pointcloud --view
+
+  # All frames as point clouds:
+  python3 parse_depth_raw.py capture.raw --pointcloud --all
 """
 
 import sys
 import os
 import struct
 import argparse
+import json
+import glob as _glob
 import numpy as np
 
 def parse_header(data):
@@ -124,6 +148,36 @@ def parse_raw_file(filepath, width=640, height=480, scale=0.001, force_no_header
         frames.append(depth_arr)
 
     return frames, w, h, sc
+
+
+def load_intrinsic_json(raw_path):
+    raw_base = os.path.splitext(raw_path)[0]
+    candidates = [
+        raw_base + "_intrinsic.json",
+        raw_base.replace("_depth_raw_", "_depth_intrinsic_") + ".json",
+    ]
+    raw_dir = os.path.dirname(raw_path)
+    raw_name = os.path.basename(raw_path)
+    raw_name_base = os.path.splitext(raw_name)[0]
+    ts_match = raw_name_base.rsplit('_', 1)[-1] if '_' in raw_name_base else ''
+    if ts_match and len(ts_match) >= 13:
+        candidates.append(
+            os.path.join(raw_dir, raw_name_base.replace("_depth_raw_", "_depth_intrinsic_") + ".json"))
+    if raw_dir:
+        for fn in sorted(os.listdir(raw_dir)):
+            if '_depth_intrinsic_' in fn and fn.endswith('.json'):
+                candidates.append(os.path.join(raw_dir, fn))
+
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                print(f"  Loaded intrinsic: {path}")
+                return data
+            except Exception as e:
+                print(f"  WARNING: Failed to load {path}: {e}")
+    return None
 
 
 def print_ascii_depth(depth, w_out=80, h_out=24, scale=0.001):
@@ -258,6 +312,91 @@ def save_histogram(depth, filepath, scale=0.001):
     print(f"  Saved: {filepath}")
 
 
+def depth_to_pointcloud(depth, scale, fx, fy, cx, cy, max_depth_m=10.0):
+    h, w = depth.shape
+    z = depth.astype(np.float64) * scale
+    valid = (depth > 0) & (z <= max_depth_m)
+    u = np.tile(np.arange(w, dtype=np.float64), (h, 1))
+    v = np.tile(np.arange(h, dtype=np.float64).reshape(-1, 1), (1, w))
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+    points = np.stack([x[valid], y[valid], z[valid]], axis=-1)
+    return points
+
+
+def save_ply(points, filepath):
+    with open(filepath, 'wb') as f:
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {len(points)}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "end_header\n"
+        )
+        f.write(header.encode('ascii'))
+        f.write(points.astype(np.float32).tobytes())
+    print(f"  Saved: {filepath} ({len(points)} points)")
+
+
+def save_ply_with_color(points, colors, filepath):
+    with open(filepath, 'wb') as f:
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {len(points)}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "property uchar red\n"
+            "property uchar green\n"
+            "property uchar blue\n"
+            "end_header\n"
+        )
+        f.write(header.encode('ascii'))
+        f.write(points.astype(np.float32).tobytes())
+        f.write(colors.astype(np.uint8).tobytes())
+    print(f"  Saved: {filepath} ({len(points)} points)")
+
+
+def depth_to_colored_pointcloud(depth, scale, fx, fy, cx, cy, max_depth_m=10.0,
+                                 min_depth_m=0.3, colormap='jet'):
+    points = depth_to_pointcloud(depth, scale, fx, fy, cx, cy, max_depth_m)
+    if len(points) == 0:
+        return points, np.zeros((0, 3), dtype=np.uint8)
+    z_valid = points[:, 2]
+    norm = (z_valid - min_depth_m) / (max_depth_m - min_depth_m)
+    norm = np.clip(norm, 0.0, 1.0)
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        cm = plt.get_cmap(colormap)
+        colors = (cm(norm)[:, :3] * 255).astype(np.uint8)
+    except ImportError:
+        r = (norm * 255).astype(np.uint8)
+        g = ((1.0 - np.abs(norm - 0.5) * 2) * 255).astype(np.uint8)
+        b = ((1.0 - norm) * 255).astype(np.uint8)
+        colors = np.stack([r, g, b], axis=-1)
+    return points, colors
+
+
+def view_pointcloud_open3d(points, colors=None):
+    try:
+        import open3d as o3d
+    except ImportError:
+        print("ERROR: open3d required for interactive viewer. Install: pip3 install open3d")
+        return
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    if colors is not None:
+        pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
+    print("Controls: mouse=rotate/translate, scroll=zoom, q/ESC=quit")
+    o3d.visualization.draw_geometries([pcd], window_name="Depth Point Cloud",
+                                      width=1280, height=720)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Orbbec Depth RAW Parser & Visualizer')
     parser.add_argument('file', help='Path to .raw file')
@@ -274,6 +413,13 @@ def main():
     parser.add_argument('--min-depth', type=float, default=None, help='Min depth (mm)')
     parser.add_argument('--max-depth', type=float, default=None, help='Max depth (mm)')
     parser.add_argument('--no-header', action='store_true', help='Force no-header mode')
+    parser.add_argument('--pointcloud', action='store_true', help='Generate 3D point cloud (PLY)')
+    parser.add_argument('--fx', type=float, default=None, help='Focal length X')
+    parser.add_argument('--fy', type=float, default=None, help='Focal length Y')
+    parser.add_argument('--cx', type=float, default=None, help='Principal point X')
+    parser.add_argument('--cy', type=float, default=None, help='Principal point Y')
+    parser.add_argument('--view', action='store_true', help='Open interactive 3D viewer (open3d)')
+    parser.add_argument('--max-depth-m', type=float, default=10.0, help='Max depth in meters for point cloud')
     args = parser.parse_args()
 
     if not os.path.exists(args.file):
@@ -337,6 +483,49 @@ def main():
         if args.histogram:
             hpath = os.path.join(args.output, f"histogram_{idx:06d}.png")
             save_histogram(frames[idx], hpath, scale)
+
+    if args.pointcloud or args.view:
+        intrinsic_data = load_intrinsic_json(args.file)
+        if intrinsic_data:
+            depth_intr = intrinsic_data.get('depth', {})
+            color_intr = intrinsic_data.get('color', {})
+        else:
+            depth_intr = {}
+            color_intr = {}
+
+        fx = args.fx if args.fx is not None else depth_intr.get('fx', w * 0.75)
+        fy = args.fy if args.fy is not None else depth_intr.get('fy', h * 0.75)
+        cx = args.cx if args.cx is not None else depth_intr.get('cx', w / 2.0)
+        cy = args.cy if args.cy is not None else depth_intr.get('cy', h / 2.0)
+        min_depth_m = (args.min_depth / 1000.0) if args.min_depth else 0.3
+        max_depth_m = args.max_depth_m
+
+        src = "JSON" if intrinsic_data and 'fx' in depth_intr else ("CLI" if args.fx is not None else "estimated")
+        print(f"\n=== Point Cloud ===")
+        print(f"  Intrinsics (fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}) [{src}]")
+        print(f"  Depth range: [{min_depth_m:.2f}m, {max_depth_m:.2f}m]")
+
+        os.makedirs(args.output, exist_ok=True)
+
+        if args.all:
+            for i, frame in enumerate(frames):
+                points, colors = depth_to_colored_pointcloud(
+                    frame, scale, fx, fy, cx, cy, max_depth_m, min_depth_m, args.colormap)
+                ply_path = os.path.join(args.output, f"pointcloud_{i:06d}.ply")
+                save_ply_with_color(points, colors, ply_path)
+        else:
+            idx = min(args.frame, len(frames) - 1)
+            points, colors = depth_to_colored_pointcloud(
+                frames[idx], scale, fx, fy, cx, cy, max_depth_m, min_depth_m, args.colormap)
+            print(f"  Frame {idx}: {len(points)} valid points")
+            if len(points) > 0:
+                print(f"  X range: [{points[:,0].min():.3f}, {points[:,0].max():.3f}] m")
+                print(f"  Y range: [{points[:,1].min():.3f}, {points[:,1].max():.3f}] m")
+                print(f"  Z range: [{points[:,2].min():.3f}, {points[:,2].max():.3f}] m")
+            ply_path = os.path.join(args.output, f"pointcloud_{idx:06d}.ply")
+            save_ply_with_color(points, colors, ply_path)
+            if args.view:
+                view_pointcloud_open3d(points, colors)
 
     print("\nDone!")
 
