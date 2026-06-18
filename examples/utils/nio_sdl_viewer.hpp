@@ -90,6 +90,8 @@ public:
                   bool hasIRLeft, int ilw, int ilh,
                   bool hasIRRight, int irw2, int irh2);
 
+    int addViewerSlot(const std::string& label, OBFormat fmt, int w, int h);
+
     bool createWindow();
 
     void pushFrame(int devIdx, ViewerChannel ch,
@@ -97,14 +99,32 @@ public:
                    float depthScale = 1.0f,
                    float depthMinM = 0.3f, float depthMaxM = 5.0f);
 
+    struct LabelTex {
+        SDL_Texture* tex = nullptr;
+        int w = 0;
+        int h = 0;
+    };
+
 private:
     void decodeThreadFunc();
     void renderLoop();
+    void renderDeviceRow(int di, int rowY, float scale, int colW, int winW);
+    void renderSlotLabel(int slotIdx, int xOff, int videoY, int dstW, int dstH, float scale);
     void decodeSlot(ViewerSlot& slot);
+    bool decodeY16Slot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                       std::vector<uint8_t>& rgb);
+    bool decodeY8Slot(const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h, std::vector<uint8_t>& rgb);
+    bool decodeYuyvSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                        std::vector<uint8_t>& rgb);
+    bool decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                        std::vector<uint8_t>& rgb);
     void cleanupSlot(ViewerSlot& slot);
     static std::string obFormatToString(OBFormat fmt);
 
     void rebuildLabelTextures(int winW, int winH);
+    void destroyLabelTextures();
+    void makeLabelTex(LabelTex& out, const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB,
+                      uint8_t bgR, uint8_t bgG, uint8_t bgB, int fscale);
 
     struct DeviceRow {
         std::string name;
@@ -126,11 +146,6 @@ private:
     std::vector<SDL_Texture*> textures_;      // video textures (per slot)
 
     // Cached label textures (rebuilt when window size changes)
-    struct LabelTex {
-        SDL_Texture* tex = nullptr;
-        int w = 0;
-        int h = 0;
-    };
     std::vector<LabelTex> titleTexs_;         // per-device: "型号_序列号"
     std::vector<LabelTex> formatTexs_;        // per-slot: "MJPG"/"Y16"/"Y8"
     std::vector<LabelTex> channelTexs_;       // per-slot: "Color"/"Depth"/etc.

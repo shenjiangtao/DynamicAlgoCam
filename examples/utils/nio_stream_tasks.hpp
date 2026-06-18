@@ -79,6 +79,8 @@ public:
 protected:
     void processFrame(const FrameBlob &blob) override;
     void onIdle() override;
+    void onIdleHwD2C();
+    void onIdleSwD2C();
 
 private:
     void doBlend(const uint8_t *colorData, uint32_t colorSize, uint64_t colorTs,

@@ -73,10 +73,18 @@ public:
 private:
     // decodeMjpg: decode MJPEG bytes → YUV420P frame (lazy sws init)
     AVFrame *decodeMjpg(const uint8_t *data, uint32_t size);
+    bool initMjpgSws(AVPixelFormat decFmt);
     bool initEncoder(int width, int height, int fps, int bitRate);
+    bool initEncoderFrame(int width, int height);
+    void setupEncoderVui();
     bool initSws(AVPixelFormat srcFmt, int width, int height);
+    AVPixelFormat mapOBFormatToAV(OBFormat srcFormat);
+    void initMjpgDecoder(int width, int height);
     bool writeFrame(std::ofstream &outFile, std::mutex &mtx,
                     uint64_t deviceTimestampUs, bool writeSEI);
+    bool swsConvertFrame(const uint8_t *data, uint32_t size);
+    void computeSrcStrides(int srcStride[4]);
+    void computeSrcSlices(const uint8_t *data, const uint8_t *srcSlice[4]);
 
     // --- H.264 encoder state ---
     AVCodecContext *codecCtx_;      // x264 encoder context

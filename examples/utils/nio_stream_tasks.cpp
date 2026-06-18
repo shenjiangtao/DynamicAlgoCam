@@ -107,59 +107,73 @@ void FusionStreamTask::processFrame(const FrameBlob&) {
     onIdle();
 }
 
+// onIdle for hardware D2C mode: blend from latest color+depth buffers
+// 硬件D2C模式空闲回调：从最新color+depth缓冲进行融合
+void FusionStreamTask::onIdleHwD2C() {
+    if (!colorReady_.load() || !depthReady_.load())
+        return;
+
+    FrameBuf colorBuf, depthBuf;
+    {
+        std::lock_guard<std::mutex> lock(colorMtx_);
+        colorBuf = latestColor_;
+        colorReady_ = false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(depthMtx_);
+        depthBuf = latestDepth_;
+        depthReady_ = false;
+    }
+
+    doBlend(colorBuf.data.data(), colorBuf.size, colorBuf.timestampUs, depthBuf.data.data(), depthBuf.size,
+            depthBuf.timestampUs, depthBuf.depthScale);
+}
+
+// onIdle for software D2C mode: align FrameSet then blend color+depth
+// 软件D2C模式空闲回调：对齐FrameSet后融合color+depth
+void FusionStreamTask::onIdleSwD2C() {
+    if (!frameSetReady_.load())
+        return;
+
+    std::shared_ptr<ob::FrameSet> frameSet;
+    {
+        std::lock_guard<std::mutex> lock(frameSetMtx_);
+        frameSet = std::move(latestFrameSet_);
+        frameSetReady_ = false;
+    }
+
+    if (!frameSet || !alignFilter_)
+        return;
+
+    auto alignedFrame = alignFilter_->process(frameSet);
+    auto alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
+    if (!alignedFS)
+        alignedFS = frameSet;
+
+    auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
+    auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
+    if (!colorFrame || !depthFrame)
+        return;
+
+    float depthScaleForFusion = depthScale_;
+    try {
+        auto depthF = depthFrame->as<ob::DepthFrame>();
+        if (depthF)
+            depthScaleForFusion = depthF->getValueScale();
+    } catch (...) {
+    }
+
+    doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(), depthFrame->getData(),
+            depthFrame->getDataSize(), depthFrame->getTimeStampUs(), depthScaleForFusion);
+}
+
+// onIdle: dispatch to HW or SW D2C path
+// 空闲回调：分派至硬件或软件D2C路径
 void FusionStreamTask::onIdle() {
     if (hwD2CMode_) {
-        if (!colorReady_.load() || !depthReady_.load())
-            return;
-
-        FrameBuf colorBuf, depthBuf;
-        {
-            std::lock_guard<std::mutex> lock(colorMtx_);
-            colorBuf = latestColor_;
-            colorReady_ = false;
-        }
-        {
-            std::lock_guard<std::mutex> lock(depthMtx_);
-            depthBuf = latestDepth_;
-            depthReady_ = false;
-        }
-
-        doBlend(colorBuf.data.data(), colorBuf.size, colorBuf.timestampUs, depthBuf.data.data(), depthBuf.size,
-                depthBuf.timestampUs, depthBuf.depthScale);
+        onIdleHwD2C();
     } else {
-        if (!frameSetReady_.load())
-            return;
-
-        std::shared_ptr<ob::FrameSet> frameSet;
-        {
-            std::lock_guard<std::mutex> lock(frameSetMtx_);
-            frameSet = std::move(latestFrameSet_);
-            frameSetReady_ = false;
-        }
-
-        if (!frameSet || !alignFilter_)
-            return;
-
-        auto alignedFrame = alignFilter_->process(frameSet);
-        auto alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
-        if (!alignedFS)
-            alignedFS = frameSet;
-
-        auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
-        auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
-        if (!colorFrame || !depthFrame)
-            return;
-
-        float depthScaleForFusion = depthScale_;
-        try {
-            auto depthF = depthFrame->as<ob::DepthFrame>();
-            if (depthF)
-                depthScaleForFusion = depthF->getValueScale();
-        } catch (...) {
-        }
-
-        doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(), depthFrame->getData(),
-                depthFrame->getDataSize(), depthFrame->getTimeStampUs(), depthScaleForFusion);
+        onIdleSwD2C();
     }
 }
 

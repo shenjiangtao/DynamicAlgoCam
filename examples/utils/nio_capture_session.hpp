@@ -84,10 +84,20 @@ public:
                    const std::string &deviceOutputDir,
                    const CaptureConfig &cfg);
 
+    // Initialize device: sync timer, enumerate sensors, create encoders/tasks/fusion.
     bool setup();
+
+    // Start video pipeline with SDL viewer (or headless if noShow).
+    // Spawns video consumer thread; SDK callback pushes to VideoFrameQueue.
     void startVideoPipeline(SDLViewer &viewer, bool noShow);
+
+    // Start IMU pipeline. Spawns IMU consumer thread; SDK callback pushes to ImuFrameQueue.
     void startImuPipeline();
+
+    // Stop all pipelines, join consumer threads, stop tasks, close files.
     void stop();
+
+    // Print per-stream FPS to stdout for the last reportDurationMs interval.
     void reportFps(uint64_t reportDurationMs);
 
     const std::string &deviceName() const { return safeName_; }
@@ -98,20 +108,47 @@ public:
     uint64_t getAndResetFusionCount();
 
 private:
+    // --- Sensor enumeration helpers (called from enumerateSensors) ---
     bool enumerateSensors();
-    // Create H264 encoders, StreamEncoder entries, and FrameConsumer objects
-    // for each active sensor. Consumers are stored in frameConsumers_ and
-    // started immediately; viewer is bound later via setViewer().
-    void createEncodersAndTasks();
-    void setupFusion();
-    void writeIntrinsicJson();
-    bool checkHWD2CAlign();
-    // Video consumer thread entry: dequeues FrameSets from videoQueue_,
-    // dispatches to fusionTask_ (if enabled), then iterates frameConsumers_.
-    void videoConsumerLoop();
+    void enumerateColorSensor(const std::shared_ptr<ob::StreamProfileList> &profiles, OBFormat preferredFmt);
+    void enumerateDepthSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
+    void enumerateIRSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
+    void enumerateIRLeftSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
+    void enumerateIRRightSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
+    void detectDepthScale();
+    void applyDeviceQuirks();
 
-    // IMU consumer thread entry: dequeues CSV lines from imuQueue_,
-    // forwards to ImuStreamTask for file write.
+    // --- Encoder / task creation helpers ---
+    void createEncodersAndTasks();
+    void createColorEncoder();
+    void createDepthEncoder();
+    void createIREncoder(OBFrameType type, const std::string &suffix, OBFormat fmt,
+                         int w, int h, int fps, ViewerChannel ch);
+    void createImuTask();
+
+    // --- Fusion ---
+    void setupFusion();
+
+    // --- Intrinsic JSON ---
+    void writeIntrinsicJson();
+
+    // --- HW alignment check ---
+    bool checkHWD2CAlign();
+
+    // --- Viewer setup ---
+    void setupViewerSlot(SDLViewer &viewer);
+
+    // --- IMU callback helper ---
+    void onImuFrameSet(std::shared_ptr<ob::FrameSet> frameSet);
+
+    // --- Teardown helpers ---
+    void closeEncoders();
+    void closeFiles();
+
+    // --- Consumer thread loops ---
+    // Video consumer thread: dequeues FrameSets, dispatches to fusion + frameConsumers_.
+    void videoConsumerLoop();
+    // IMU consumer thread: dequeues CSV lines, forwards to ImuStreamTask.
     void imuConsumerLoop();
 
     std::shared_ptr<ob::Device> device_;

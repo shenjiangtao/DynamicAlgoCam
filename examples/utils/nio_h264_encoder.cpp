@@ -51,54 +51,18 @@ H264Encoder::~H264Encoder() {
     close();
 }
 
-// --- initEncoder: create x264 AVCodecContext with BT.709 full-range VUI ---
-bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
-    width_ = width;
-    height_ = height;
-
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    if (!codec) {
-        std::cerr << "H264 encoder not found" << std::endl;
-        NIO_LOG_ERROR_S("H264 encoder not found, " << width << "x" << height);
-        return false;
-    }
-
-    codecCtx_ = avcodec_alloc_context3(codec);
-    if (!codecCtx_)
-        return false;
-
-    codecCtx_->bit_rate = bitRate;
-    codecCtx_->width = width;
-    codecCtx_->height = height;
-    AVRational tb = { 1, fps };
-    AVRational fr = { fps, 1 };
-    codecCtx_->time_base = tb;
-    codecCtx_->framerate = fr;
-    codecCtx_->gop_size = fps;
-    codecCtx_->max_b_frames = 0;
-    codecCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
-    codecCtx_->qmin = 10;
-    codecCtx_->qmax = 30;
-
-    // x264 ultrafast + zerolatency: lowest CPU overhead, suitable for realtime
-    av_opt_set(codecCtx_->priv_data, "preset", "ultrafast", 0);
-    av_opt_set(codecCtx_->priv_data, "tune", "zerolatency", 0);
-
-    // VUI color-space signals: tell the decoder this is BT.709 full range.
-    // Without these, decoders assume limited range (16-235 luma) → washed out.
+// Set VUI color-space signals on codecCtx_: BT.709 full range
+// 设置VUI色彩空间信号：BT.709全范围，避免解码后颜色偏白
+void H264Encoder::setupEncoderVui() {
     codecCtx_->color_range = AVCOL_RANGE_JPEG;
     codecCtx_->color_primaries = AVCOL_PRI_BT709;
     codecCtx_->color_trc = AVCOL_TRC_BT709;
     codecCtx_->colorspace = AVCOL_SPC_BT709;
+}
 
-    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
-        std::cerr << "Failed to open H264 encoder" << std::endl;
-        NIO_LOG_ERROR_S("Failed to open H264 encoder, " << width << "x" << height);
-        avcodec_free_context(&codecCtx_);
-        codecCtx_ = nullptr;
-        return false;
-    }
-
+// Allocate AVFrame + AVPacket for the encoder
+// 为编码器分配AVFrame + AVPacket
+bool H264Encoder::initEncoderFrame(int width, int height) {
     frame_ = av_frame_alloc();
     if (!frame_) {
         close();
@@ -117,8 +81,49 @@ bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
         close();
         return false;
     }
-
     return true;
+}
+
+// Create x264 AVCodecContext, configure params, allocate frame/packet
+// 创建x264编码器上下文，配置参数，分配帧/包
+bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
+    width_ = width;
+    height_ = height;
+
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if (!codec) {
+        std::cerr << "H264 encoder not found" << std::endl;
+        NIO_LOG_ERROR_S("H264 encoder not found, " << width << "x" << height);
+        return false;
+    }
+
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_)
+        return false;
+
+    codecCtx_->bit_rate = bitRate;
+    codecCtx_->width = width;
+    codecCtx_->height = height;
+    codecCtx_->time_base = { 1, fps };
+    codecCtx_->framerate = { fps, 1 };
+    codecCtx_->gop_size = fps;
+    codecCtx_->max_b_frames = 0;
+    codecCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
+    codecCtx_->qmin = 10;
+    codecCtx_->qmax = 30;
+    av_opt_set(codecCtx_->priv_data, "preset", "ultrafast", 0);
+    av_opt_set(codecCtx_->priv_data, "tune", "zerolatency", 0);
+    setupEncoderVui();
+
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
+        std::cerr << "Failed to open H264 encoder" << std::endl;
+        NIO_LOG_ERROR_S("Failed to open H264 encoder, " << width << "x" << height);
+        avcodec_free_context(&codecCtx_);
+        codecCtx_ = nullptr;
+        return false;
+    }
+
+    return initEncoderFrame(width, height);
 }
 
 // --- initSws: create SwsContext with BT.709 full-range color-space details ---
@@ -144,9 +149,48 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
     return true;
 }
 
-// --- init: main entry point — selects pixel format, creates encoder + sws ---
-// For MJPEG: srcFmt is set to YUV420P as a decoder hint, but swsSrcFmt=NONE
-// so the sws context is NOT created here (done lazily in decodeMjpg).
+// Map OBFormat to AVPixelFormat for sws_getContext
+// 将OBFormat映射为FFmpeg AVPixelFormat
+AVPixelFormat H264Encoder::mapOBFormatToAV(OBFormat srcFormat) {
+    switch (srcFormat) {
+    case OB_FORMAT_YUYV:  return AV_PIX_FMT_YUYV422;
+    case OB_FORMAT_UYVY:  return AV_PIX_FMT_UYVY422;
+    case OB_FORMAT_RGB:   return AV_PIX_FMT_RGB24;
+    case OB_FORMAT_BGR:   return AV_PIX_FMT_BGR24;
+    case OB_FORMAT_RGBA:  return AV_PIX_FMT_RGBA;
+    case OB_FORMAT_BGRA:  return AV_PIX_FMT_BGRA;
+    case OB_FORMAT_NV12:  return AV_PIX_FMT_NV12;
+    case OB_FORMAT_NV21:  return AV_PIX_FMT_NV21;
+    case OB_FORMAT_Y16:   return AV_PIX_FMT_GRAY16LE;
+    case OB_FORMAT_Y8:    return AV_PIX_FMT_GRAY8;
+    case OB_FORMAT_I420:  return AV_PIX_FMT_YUV420P;
+    case OB_FORMAT_MJPG:  return AV_PIX_FMT_YUV420P;
+    default:              return AV_PIX_FMT_NONE;
+    }
+}
+
+// Pre-create MJPEG decoder context (pix_fmt hint only, actual format determined at decode)
+// 预创建MJPEG解码器上下文（pix_fmt仅为提示，实际格式在解码时确定）
+void H264Encoder::initMjpgDecoder(int width, int height) {
+    mjpgCodec_ = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
+    if (mjpgCodec_) {
+        mjpgCtx_ = avcodec_alloc_context3(mjpgCodec_);
+        if (mjpgCtx_) {
+            mjpgCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
+            mjpgCtx_->width = width;
+            mjpgCtx_->height = height;
+            if (avcodec_open2(mjpgCtx_, mjpgCodec_, nullptr) < 0) {
+                avcodec_free_context(&mjpgCtx_);
+                mjpgCtx_ = nullptr;
+            }
+        }
+    }
+    mjpgPkt_ = av_packet_alloc();
+    mjpgDecFrame_ = av_frame_alloc();
+}
+
+// init: main entry point — create encoder + sws for the given OBFormat
+// init：主入口 — 根据OBFormat创建编码器 + sws转换上下文
 bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int bitRate, const char* seiUuid) {
     srcFormat_ = srcFormat;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
@@ -154,60 +198,18 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
     if (!initEncoder(width, height, fps, bitRate))
         return false;
 
-    // Map OBFormat → AVPixelFormat for sws_getContext.
-    // For MJPEG: srcFmt=YUV420P is only a decoder hint — swsSrcFmt is set
-    // to NONE below so sws is deferred to decodeMjpg().
-    AVPixelFormat srcFmt = AV_PIX_FMT_NONE;
-    switch (srcFormat) {
-    case OB_FORMAT_YUYV:
-        srcFmt = AV_PIX_FMT_YUYV422;
-        break;
-    case OB_FORMAT_UYVY:
-        srcFmt = AV_PIX_FMT_UYVY422;
-        break;
-    case OB_FORMAT_RGB:
-        srcFmt = AV_PIX_FMT_RGB24;
-        break;
-    case OB_FORMAT_BGR:
-        srcFmt = AV_PIX_FMT_BGR24;
-        break;
-    case OB_FORMAT_RGBA:
-        srcFmt = AV_PIX_FMT_RGBA;
-        break;
-    case OB_FORMAT_BGRA:
-        srcFmt = AV_PIX_FMT_BGRA;
-        break;
-    case OB_FORMAT_NV12:
-        srcFmt = AV_PIX_FMT_NV12;
-        break;
-    case OB_FORMAT_NV21:
-        srcFmt = AV_PIX_FMT_NV21;
-        break;
-    case OB_FORMAT_Y16:
-        srcFmt = AV_PIX_FMT_GRAY16LE;
-        break;
-    case OB_FORMAT_Y8:
-        srcFmt = AV_PIX_FMT_GRAY8;
-        break;
-    case OB_FORMAT_I420:
-        srcFmt = AV_PIX_FMT_YUV420P;
-        break;
-    case OB_FORMAT_MJPG:
-        srcFmt = AV_PIX_FMT_YUV420P;
-        break;
-    default:
+    AVPixelFormat srcFmt = mapOBFormatToAV(srcFormat);
+    if (srcFmt == AV_PIX_FMT_NONE) {
         std::cerr << "Unsupported format for H264 encoding: " << srcFormat << std::endl;
         NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << srcFormat << " " << width << "x" << height);
         close();
         return false;
     }
 
-    // Defer sws creation for MJPEG: the actual decoder output format
-    // (typically YUVJ422P) is unknown until the first frame is decoded.
+    // Defer sws creation for MJPEG: actual decoder output format unknown until first frame
     AVPixelFormat swsSrcFmt = srcFmt;
-    if (srcFormat == OB_FORMAT_MJPG || srcFormat == OB_FORMAT_MJPEG) {
+    if (srcFormat == OB_FORMAT_MJPG || srcFormat == OB_FORMAT_MJPEG)
         swsSrcFmt = AV_PIX_FMT_NONE;
-    }
 
     AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
     if (swsSrcFmt != AV_PIX_FMT_NONE && swsSrcFmt != dstFmt) {
@@ -224,25 +226,7 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
         sws_setColorspaceDetails(swsCtx_, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
     }
 
-    // Pre-create the MJPEG decoder. pix_fmt=YUV420P is only a preference —
-    // the actual decoder output format is determined by the JPEG internals
-    // (usually YUVJ422P for 4:2:2 chroma subsampled JPEGs from Orbbec cameras).
-    mjpgCodec_ = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
-    if (mjpgCodec_) {
-        mjpgCtx_ = avcodec_alloc_context3(mjpgCodec_);
-        if (mjpgCtx_) {
-            mjpgCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
-            mjpgCtx_->width = width;
-            mjpgCtx_->height = height;
-            if (avcodec_open2(mjpgCtx_, mjpgCodec_, nullptr) < 0) {
-                avcodec_free_context(&mjpgCtx_);
-                mjpgCtx_ = nullptr;
-            }
-        }
-    }
-    mjpgPkt_ = av_packet_alloc();
-    mjpgDecFrame_ = av_frame_alloc();
-
+    initMjpgDecoder(width, height);
     initialized_ = true;
     return true;
 }
@@ -302,11 +286,49 @@ void H264Encoder::close() {
     initialized_ = false;
 }
 
-// --- decodeMjpg: decode MJPEG frame → YUV420P via MJPEG decoder + sws ---
-// On the first decoded frame, inspects the actual decoder output format
-// (e.g. YUVJ422P) and creates the sws context with the correct source
-// pixel format and color range.  This lazy initialization fixes the chroma
-// misalignment bug that occurred when sws was pre-created with YUV420P.
+// Lazily create sws context for MJPEG decoder output format on first frame
+// 首帧时根据MJPEG解码器实际输出格式延迟创建sws上下文
+bool H264Encoder::initMjpgSws(AVPixelFormat decFmt) {
+    const char* pixFmtName = av_get_pix_fmt_name(decFmt);
+    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder::decodeMjpg"
+                   << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
+                   << " color_range=" << mjpgDecFrame_->color_range << " w=" << mjpgDecFrame_->width
+                   << " h=" << mjpgDecFrame_->height << " stride_Y=" << mjpgDecFrame_->linesize[0]
+                   << " stride_U=" << mjpgDecFrame_->linesize[1] << " stride_V=" << mjpgDecFrame_->linesize[2]);
+    if (mjpgDecFrame_->data[0]) {
+        const uint8_t* y0 = mjpgDecFrame_->data[0];
+        const uint8_t* u0 = mjpgDecFrame_->data[1];
+        const uint8_t* v0 = mjpgDecFrame_->data[2];
+        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder sample Y[0..4]={"
+                       << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << "," << (int)y0[3] << "} U[0..4]={"
+                       << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2] << "," << (int)u0[3] << "} V[0..4]={"
+                       << (int)v0[0] << "," << (int)v0[1] << "," << (int)v0[2] << "," << (int)v0[3] << "}");
+    }
+
+    if (swsCtx_) {
+        sws_freeContext(swsCtx_);
+        swsCtx_ = nullptr;
+    }
+    mjpgDecFmt_ = decFmt;
+    swsCtx_ = sws_getContext(width_, height_, decFmt, width_, height_, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr,
+                             nullptr, nullptr);
+    if (!swsCtx_) {
+        NIO_LOG_ERROR_S("Failed to create sws context for MJPEG, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
+        return false;
+    }
+    const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+    const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+    int srcRange = (mjpgDecFrame_->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
+    sws_setColorspaceDetails(swsCtx_, srcCoeffs, srcRange, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+    NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] sws recreated: srcFmt=" << (pixFmtName ? pixFmtName : "unknown")
+                                                                     << " dstFmt=YUV420P srcRange=" << srcRange
+                                                                     << " dstRange=1 cs=BT709");
+    mjpgSwsInitialized_ = true;
+    return true;
+}
+
+// decodeMjpg: decode MJPEG bytes → YUV420P frame with lazy sws init
+// decodeMjpg：解码MJPEG字节 → YUV420P帧，延迟初始化sws
 AVFrame* H264Encoder::decodeMjpg(const uint8_t* data, uint32_t size) {
     if (!mjpgCtx_)
         return nullptr;
@@ -324,46 +346,9 @@ AVFrame* H264Encoder::decodeMjpg(const uint8_t* data, uint32_t size) {
 
     AVPixelFormat decFmt = static_cast<AVPixelFormat>(mjpgDecFrame_->format);
 
-    // First frame: inspect actual decoder output, create sws lazily
     if (!mjpgSwsInitialized_) {
-        const char* pixFmtName = av_get_pix_fmt_name(decFmt);
-        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder::decodeMjpg"
-                       << " decoder_output_fmt=" << (pixFmtName ? pixFmtName : "unknown") << " (" << decFmt << ")"
-                       << " color_range=" << mjpgDecFrame_->color_range << " w=" << mjpgDecFrame_->width
-                       << " h=" << mjpgDecFrame_->height << " stride_Y=" << mjpgDecFrame_->linesize[0]
-                       << " stride_U=" << mjpgDecFrame_->linesize[1] << " stride_V=" << mjpgDecFrame_->linesize[2]);
-        if (mjpgDecFrame_->data[0]) {
-            const uint8_t* y0 = mjpgDecFrame_->data[0];
-            const uint8_t* u0 = mjpgDecFrame_->data[1];
-            const uint8_t* v0 = mjpgDecFrame_->data[2];
-            NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] H264Encoder sample Y[0..4]={"
-                           << (int)y0[0] << "," << (int)y0[1] << "," << (int)y0[2] << "," << (int)y0[3] << "} U[0..4]={"
-                           << (int)u0[0] << "," << (int)u0[1] << "," << (int)u0[2] << "," << (int)u0[3] << "} V[0..4]={"
-                           << (int)v0[0] << "," << (int)v0[1] << "," << (int)v0[2] << "," << (int)v0[3] << "}");
-        }
-
-        if (swsCtx_) {
-            sws_freeContext(swsCtx_);
-            swsCtx_ = nullptr;
-        }
-        mjpgDecFmt_ = decFmt;
-        swsCtx_ = sws_getContext(width_, height_, decFmt, width_, height_, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr,
-                                 nullptr, nullptr);
-        if (!swsCtx_) {
-            NIO_LOG_ERROR_S("Failed to create sws context for MJPEG, srcFmt=" << (pixFmtName ? pixFmtName : "unknown"));
+        if (!initMjpgSws(decFmt))
             return nullptr;
-        }
-        const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-        const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-        // Detect color range from decoded frame:
-        // AVCOL_RANGE_JPEG (1) = full range 0-255
-        // AVCOL_RANGE_MPEG (0) = limited range 16-235
-        int srcRange = (mjpgDecFrame_->color_range == AVCOL_RANGE_JPEG) ? 1 : 0;
-        sws_setColorspaceDetails(swsCtx_, srcCoeffs, srcRange, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
-        NIO_LOG_INFO_S("[MJPEG_DEC_FORMAT_CHECK] sws recreated: srcFmt=" << (pixFmtName ? pixFmtName : "unknown")
-                                                                         << " dstFmt=YUV420P srcRange=" << srcRange
-                                                                         << " dstRange=1 cs=BT709");
-        mjpgSwsInitialized_ = true;
     }
 
     if (!swsCtx_)
@@ -422,10 +407,89 @@ bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t d
     return wrote;
 }
 
-// --- encode: top-level encode entry point ---
-// Dispatches to MJPEG decode path or direct sws_scale path depending on
-// srcFormat_.  Computes source strides, calls sws_scale, then sends the
-// YUV420P frame to the H.264 encoder and writes output NALs.
+// Compute source strides based on srcFormat_ for sws_scale
+// 根据srcFormat_计算sws_scale所需的源步幅
+void H264Encoder::computeSrcStrides(int srcStride[4]) {
+    switch (srcFormat_) {
+    case OB_FORMAT_YUYV:
+    case OB_FORMAT_UYVY:
+        srcStride[0] = width_ * 2;
+        break;
+    case OB_FORMAT_RGB:
+    case OB_FORMAT_BGR:
+        srcStride[0] = width_ * 3;
+        break;
+    case OB_FORMAT_RGBA:
+    case OB_FORMAT_BGRA:
+        srcStride[0] = width_ * 4;
+        break;
+    case OB_FORMAT_Y16:
+        srcStride[0] = width_ * 2;
+        break;
+    case OB_FORMAT_Y8:
+        srcStride[0] = width_;
+        break;
+    case OB_FORMAT_I420:
+        srcStride[0] = width_;
+        srcStride[1] = width_ / 2;
+        srcStride[2] = width_ / 2;
+        break;
+    case OB_FORMAT_NV12:
+    case OB_FORMAT_NV21:
+        srcStride[0] = width_;
+        srcStride[1] = width_;
+        break;
+    default:
+        break;
+    }
+}
+
+// Compute source slice pointers for I420/NV12/NV21 or single-plane formats
+// 计算I420/NV12/NV21或多平面格式的源切片指针
+void H264Encoder::computeSrcSlices(const uint8_t* data, const uint8_t* srcSlice[4]) {
+    srcSlice[0] = data;
+    srcSlice[1] = nullptr;
+    srcSlice[2] = nullptr;
+    srcSlice[3] = nullptr;
+    if (srcFormat_ == OB_FORMAT_I420) {
+        srcSlice[0] = data;
+        srcSlice[1] = data + width_ * height_;
+        srcSlice[2] = data + width_ * height_ * 5 / 4;
+    } else if (srcFormat_ == OB_FORMAT_NV12 || srcFormat_ == OB_FORMAT_NV21) {
+        srcSlice[0] = data;
+        srcSlice[1] = data + width_ * height_;
+    }
+}
+
+// Convert raw frame data to YUV420P via sws_scale (non-MJPEG paths)
+// 通过sws_scale将原始帧数据转为YUV420P（非MJPEG路径）
+bool H264Encoder::swsConvertFrame(const uint8_t* data, uint32_t /*size*/) {
+    if (swsCtx_) {
+        int srcStride[4] = { 0, 0, 0, 0 };
+        computeSrcStrides(srcStride);
+
+        const uint8_t* srcSlice[4] = { nullptr, nullptr, nullptr, nullptr };
+        computeSrcSlices(data, srcSlice);
+
+        if (av_frame_make_writable(frame_) < 0)
+            return false;
+        sws_scale(swsCtx_, srcSlice, srcStride, 0, height_, frame_->data, frame_->linesize);
+    } else {
+        if (av_frame_make_writable(frame_) < 0)
+            return false;
+        for (int i = 0; i < height_; i++)
+            memcpy(frame_->data[0] + i * frame_->linesize[0], data + i * width_, width_);
+        for (int i = 0; i < height_ / 2; i++) {
+            memcpy(frame_->data[1] + i * frame_->linesize[1], data + width_ * height_ + i * width_ / 2, width_ / 2);
+            memcpy(frame_->data[2] + i * frame_->linesize[2], data + width_ * height_ * 5 / 4 + i * width_ / 2,
+                   width_ / 2);
+        }
+    }
+    return true;
+}
+
+// encode: top-level entry — decode MJPEG or sws_convert, then send to H264 encoder
+// encode：顶层入口 — 解码MJPEG或sws_convert，然后发送至H264编码器
 bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outFile, std::mutex& mtx,
                          uint64_t deviceTimestampUs, bool writeSEI) {
     if (!initialized_ || !codecCtx_)
@@ -438,65 +502,8 @@ bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outF
         if (!srcFrame)
             return false;
     } else {
-        if (swsCtx_) {
-            int srcStride[4] = { 0, 0, 0, 0 };
-            switch (srcFormat_) {
-            case OB_FORMAT_YUYV:
-            case OB_FORMAT_UYVY:
-                srcStride[0] = width_ * 2;
-                break;
-            case OB_FORMAT_RGB:
-            case OB_FORMAT_BGR:
-                srcStride[0] = width_ * 3;
-                break;
-            case OB_FORMAT_RGBA:
-            case OB_FORMAT_BGRA:
-                srcStride[0] = width_ * 4;
-                break;
-            case OB_FORMAT_Y16:
-                srcStride[0] = width_ * 2;
-                break;
-            case OB_FORMAT_Y8:
-                srcStride[0] = width_;
-                break;
-            case OB_FORMAT_I420:
-                srcStride[0] = width_;
-                srcStride[1] = width_ / 2;
-                srcStride[2] = width_ / 2;
-                break;
-            case OB_FORMAT_NV12:
-            case OB_FORMAT_NV21:
-                srcStride[0] = width_;
-                srcStride[1] = width_;
-                break;
-            default:
-                break;
-            }
-
-            const uint8_t* srcSlice[4] = { data, nullptr, nullptr, nullptr };
-            if (srcFormat_ == OB_FORMAT_I420) {
-                srcSlice[0] = data;
-                srcSlice[1] = data + width_ * height_;
-                srcSlice[2] = data + width_ * height_ * 5 / 4;
-            } else if (srcFormat_ == OB_FORMAT_NV12 || srcFormat_ == OB_FORMAT_NV21) {
-                srcSlice[0] = data;
-                srcSlice[1] = data + width_ * height_;
-            }
-
-            if (av_frame_make_writable(frame_) < 0)
-                return false;
-            sws_scale(swsCtx_, srcSlice, srcStride, 0, height_, frame_->data, frame_->linesize);
-        } else {
-            if (av_frame_make_writable(frame_) < 0)
-                return false;
-            for (int i = 0; i < height_; i++)
-                memcpy(frame_->data[0] + i * frame_->linesize[0], data + i * width_, width_);
-            for (int i = 0; i < height_ / 2; i++) {
-                memcpy(frame_->data[1] + i * frame_->linesize[1], data + width_ * height_ + i * width_ / 2, width_ / 2);
-                memcpy(frame_->data[2] + i * frame_->linesize[2], data + width_ * height_ * 5 / 4 + i * width_ / 2,
-                       width_ / 2);
-            }
-        }
+        if (!swsConvertFrame(data, size))
+            return false;
         srcFrame = frame_;
     }
 

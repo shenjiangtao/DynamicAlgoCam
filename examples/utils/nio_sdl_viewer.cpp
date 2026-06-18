@@ -231,63 +231,66 @@ bool SDLViewer::init() {
 
 // === Section 2: Device registration ===
 
-int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
-                         bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth, OBFormat depthFmt, int dw,
-                         int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight,
-                         int irw2, int irh2) {
+// Add a single viewer slot (one video panel) and return its index
+// 添加单个viewer slot（一个视频面板）并返回其索引
+int SDLViewer::addViewerSlot(const std::string& label, OBFormat fmt, int w, int h) {
+    int idx = static_cast<int>(slots_.size());
+    slots_.push_back(std::unique_ptr<ViewerSlot>(new ViewerSlot()));
+    auto& s = *slots_.back();
+    s.label = label;
+    s.format = fmt;
+    s.formatStr = obFormatToString(fmt);
+    s.w = w;
+    s.h = h;
+    size_t rawMax = 0;
+    if (fmt == OB_FORMAT_Y16)
+        rawMax = w * h * 2;
+    else if (fmt == OB_FORMAT_Y8)
+        rawMax = w * h;
+    else if (fmt == OB_FORMAT_YUYV)
+        rawMax = w * h * 2;
+    else
+        rawMax = w * h * 4;
+    s.rawBuf.resize(rawMax, 0);
+    s.renderBuf.resize(w * h * 3, 0);
+    if (fmt == OB_FORMAT_MJPG)
+        s.mjpgRes = std::make_shared<MjpgDecoderRes>();
+    return idx;
+}
 
+// Add a device row with selected video slots (color/depth/IR/IR-L/IR-R)
+// 添加一个设备行，包含选定的视频slot（彩色/深度/红外/左红外/右红外）
+int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
+                          bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth, OBFormat depthFmt, int dw,
+                          int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight,
+                          int irw2, int irh2) {
     DeviceRow row;
     row.name = name;
     row.cameraType = cameraType;
     row.serialNumber = serialNumber;
 
-    auto addSlot = [&](const std::string& label, OBFormat fmt, int w, int h) -> int {
-        int idx = static_cast<int>(slots_.size());
-        slots_.push_back(std::unique_ptr<ViewerSlot>(new ViewerSlot()));
-        auto& s = *slots_.back();
-        s.label = label;
-        s.format = fmt;
-        s.formatStr = obFormatToString(fmt);
-        s.w = w;
-        s.h = h;
-        size_t rawMax = 0;
-        if (fmt == OB_FORMAT_Y16)
-            rawMax = w * h * 2;
-        else if (fmt == OB_FORMAT_Y8)
-            rawMax = w * h;
-        else if (fmt == OB_FORMAT_YUYV)
-            rawMax = w * h * 2;
-        else
-            rawMax = w * h * 4;
-        s.rawBuf.resize(rawMax, 0);
-        s.renderBuf.resize(w * h * 3, 0);
-        if (fmt == OB_FORMAT_MJPG)
-            s.mjpgRes = std::make_shared<MjpgDecoderRes>();
-        return idx;
-    };
-
     if (hasColor) {
-        int idx = addSlot("Color", colorFmt, cw, ch);
+        int idx = addViewerSlot("Color", colorFmt, cw, ch);
         row.slotIndices.push_back(idx);
         row.colorSlot = idx;
     }
     if (hasDepth) {
-        int idx = addSlot("Depth", depthFmt, dw, dh);
+        int idx = addViewerSlot("Depth", depthFmt, dw, dh);
         row.slotIndices.push_back(idx);
         row.depthSlot = idx;
     }
     if (hasIR) {
-        int idx = addSlot("IR", OB_FORMAT_Y8, irw, irh);
+        int idx = addViewerSlot("IR", OB_FORMAT_Y8, irw, irh);
         row.slotIndices.push_back(idx);
         row.irSlot = idx;
     }
     if (hasIRLeft) {
-        int idx = addSlot("IR-L", OB_FORMAT_Y8, ilw, ilh);
+        int idx = addViewerSlot("IR-L", OB_FORMAT_Y8, ilw, ilh);
         row.slotIndices.push_back(idx);
         row.irLeftSlot = idx;
     }
     if (hasIRRight) {
-        int idx = addSlot("IR-R", OB_FORMAT_Y8, irw2, irh2);
+        int idx = addViewerSlot("IR-R", OB_FORMAT_Y8, irw2, irh2);
         row.slotIndices.push_back(idx);
         row.irRightSlot = idx;
     }
@@ -349,9 +352,9 @@ bool SDLViewer::createWindow() {
     return true;
 }
 
-// Rebuild all cached label textures when window size changes
-void SDLViewer::rebuildLabelTextures(int winW, int winH) {
-    // Destroy old textures
+// Destroy all cached label textures and clear vectors
+// 销毁所有缓存的标签纹理并清空向量
+void SDLViewer::destroyLabelTextures() {
     for (auto& lt : titleTexs_) {
         if (lt.tex)
             SDL_DestroyTexture(lt.tex);
@@ -367,11 +370,28 @@ void SDLViewer::rebuildLabelTextures(int winW, int winH) {
     titleTexs_.clear();
     formatTexs_.clear();
     channelTexs_.clear();
+}
 
+// Create a single LabelTex from text with specified fg/bg colors and font scale
+// 用指定前景/背景色和字体缩放创建单个标签纹理
+void SDLViewer::makeLabelTex(LabelTex& out, const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB,
+                              uint8_t bgR, uint8_t bgG, uint8_t bgB, int fscale) {
+    SDL_Surface* surf = renderBitmapText(text, fscale, fgR, fgG, fgB, bgR, bgG, bgB);
+    if (surf) {
+        out.tex = SDL_CreateTextureFromSurface(renderer_, surf);
+        out.w = surf->w;
+        out.h = surf->h;
+        SDL_FreeSurface(surf);
+    }
+}
+
+// Rebuild all cached label textures when window size changes
+// 窗口尺寸变化时重建所有缓存的标签纹理
+void SDLViewer::rebuildLabelTextures(int winW, int winH) {
+    destroyLabelTextures();
     if (!renderer_)
         return;
 
-    // Compute scale factor (same as renderLoop)
     int numRows = static_cast<int>(devices_.size());
     if (numRows == 0 || maxSlotsPerRow_ == 0)
         return;
@@ -380,35 +400,25 @@ void SDLViewer::rebuildLabelTextures(int winW, int winH) {
     float scaleX = static_cast<float>(winW) / (maxSlotsPerRow_ * tileW_);
     float scaleY = static_cast<float>(winH) / totalContentH;
     float scale = std::min(scaleX, scaleY);
-
-    // Choose font scale proportional to window scale, minimum 2x
     int fscale = std::max(2, static_cast<int>(FONT_SCALE * scale));
     if (fscale < 1)
         fscale = 1;
 
-    auto makeLabel = [&](const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB, uint8_t bgR, uint8_t bgG,
-                         uint8_t bgB) -> LabelTex {
-        LabelTex lt;
-        SDL_Surface* surf = renderBitmapText(text, fscale, fgR, fgG, fgB, bgR, bgG, bgB);
-        if (surf) {
-            lt.tex = SDL_CreateTextureFromSurface(renderer_, surf);
-            lt.w = surf->w;
-            lt.h = surf->h;
-            SDL_FreeSurface(surf);
-        }
-        return lt;
-    };
-
     // Title textures: "型号_序列号" (white on dark bg)
     for (auto& dev : devices_) {
         std::string title = dev.cameraType + "_" + dev.serialNumber;
-        titleTexs_.push_back(makeLabel(title, 255, 255, 255, 30, 30, 30));
+        LabelTex lt;
+        makeLabelTex(lt, title, 255, 255, 255, 30, 30, 30, fscale);
+        titleTexs_.push_back(lt);
     }
 
     // Channel + format label textures per slot
     for (auto& slot : slots_) {
-        channelTexs_.push_back(makeLabel(slot->label, 200, 200, 255, 30, 30, 30));
-        formatTexs_.push_back(makeLabel(slot->formatStr, 100, 255, 100, 30, 30, 30));
+        LabelTex clt, flt;
+        makeLabelTex(clt, slot->label, 200, 200, 255, 30, 30, 30, fscale);
+        makeLabelTex(flt, slot->formatStr, 100, 255, 100, 30, 30, 30, fscale);
+        channelTexs_.push_back(clt);
+        formatTexs_.push_back(flt);
     }
 
     cachedWinW_ = winW;
@@ -439,21 +449,7 @@ void SDLViewer::close() {
     if (renderThread_.joinable())
         renderThread_.join();
 
-    for (auto& lt : titleTexs_) {
-        if (lt.tex)
-            SDL_DestroyTexture(lt.tex);
-    }
-    for (auto& lt : formatTexs_) {
-        if (lt.tex)
-            SDL_DestroyTexture(lt.tex);
-    }
-    for (auto& lt : channelTexs_) {
-        if (lt.tex)
-            SDL_DestroyTexture(lt.tex);
-    }
-    titleTexs_.clear();
-    formatTexs_.clear();
-    channelTexs_.clear();
+    destroyLabelTextures();
 
     for (auto* tex : textures_) {
         if (tex)
@@ -529,21 +525,105 @@ void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uin
 
 // === Section 6: Decode thread (raw → RGB24 conversion) ===
 
+// Decode Y16 depth frame → jet colormap RGB
+// Y16深度帧解码 → jet色图RGB
+bool SDLViewer::decodeY16Slot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                              std::vector<uint8_t>& rgb) {
+    if (rawSz < static_cast<uint32_t>(w * h * 2))
+        return false;
+    const uint16_t* y16 = reinterpret_cast<const uint16_t*>(rawCopy.data());
+    for (int i = 0; i < w * h; i++) {
+        uint16_t raw = y16[i];
+        if (raw == 0) {
+            rgb[i * 3 + 0] = 0;
+            rgb[i * 3 + 1] = 0;
+            rgb[i * 3 + 2] = 0;
+        } else {
+            float distM = raw * slot.depthScale / 1000.0f;
+            float norm = (distM - slot.depthMinM) / (slot.depthMaxM - slot.depthMinM);
+            norm = std::max(0.0f, std::min(1.0f, norm));
+            uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+            jetColormap(v, rgb[i * 3 + 0], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+        }
+    }
+    return true;
+}
+
+// Decode Y8 IR frame → grayscale RGB
+// Y8红外帧解码 → 灰度RGB
+bool SDLViewer::decodeY8Slot(const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                              std::vector<uint8_t>& rgb) {
+    if (rawSz < static_cast<uint32_t>(w * h))
+        return false;
+    for (int i = 0; i < w * h; i++) {
+        rgb[i * 3 + 0] = rawCopy[i];
+        rgb[i * 3 + 1] = rawCopy[i];
+        rgb[i * 3 + 2] = rawCopy[i];
+    }
+    return true;
+}
+
+// Decode YUYV frame → RGB24 via sws_scale (lazy sws init)
+// YUYV帧解码 → sws_scale转RGB24（延迟初始化sws）
+bool SDLViewer::decodeYuyvSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                               std::vector<uint8_t>& rgb) {
+    std::lock_guard<std::mutex> lock(slot.rawMtx);
+    if (!slot.yuyvSwsInit) {
+        slot.yuyvSws = sws_getContext(w, h, AV_PIX_FMT_YUYV422, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr,
+                                      nullptr, nullptr);
+        if (!slot.yuyvSws)
+            return false;
+        slot.yuyvSrcFrame = av_frame_alloc();
+        slot.yuyvDstFrame = av_frame_alloc();
+        slot.yuyvSrcFrame->format = AV_PIX_FMT_YUYV422;
+        slot.yuyvSrcFrame->width = w;
+        slot.yuyvSrcFrame->height = h;
+        av_frame_get_buffer(slot.yuyvSrcFrame, 0);
+        slot.yuyvDstFrame->format = AV_PIX_FMT_RGB24;
+        slot.yuyvDstFrame->width = w;
+        slot.yuyvDstFrame->height = h;
+        av_frame_get_buffer(slot.yuyvDstFrame, 0);
+        slot.yuyvSwsInit = true;
+    }
+    if (rawSz < static_cast<uint32_t>(w * h * 2))
+        return false;
+    memcpy(slot.yuyvSrcFrame->data[0], rawCopy.data(), w * h * 2);
+    sws_scale(slot.yuyvSws, slot.yuyvSrcFrame->data, slot.yuyvSrcFrame->linesize, 0, h, slot.yuyvDstFrame->data,
+              slot.yuyvDstFrame->linesize);
+    int stride = w * 3;
+    for (int y = 0; y < h; y++) {
+        memcpy(rgb.data() + y * stride, slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0], stride);
+    }
+    return true;
+}
+
+// Decode MJPG frame → RGB24 via MjpgDecoderRes
+// MJPG帧解码 → 通过MjpgDecoderRes转RGB24
+bool SDLViewer::decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                               std::vector<uint8_t>& rgb) {
+    auto mjpg = slot.mjpgRes;
+    if (!mjpg)
+        return false;
+    if (!mjpg->swsInitialized) {
+        if (!mjpg->init(w, h, OB_FORMAT_MJPG))
+            return false;
+    }
+    return decodeColorToRGB(rawCopy.data(), rawSz, OB_FORMAT_MJPG, w, h, rgb.data(), mjpg);
+}
+
+// Decode raw frame data → RGB24 based on slot format, copy to renderBuf
+// 根据slot格式解码原始帧数据 → RGB24，拷贝至渲染缓冲
 void SDLViewer::decodeSlot(ViewerSlot& slot) {
     std::vector<uint8_t> rawCopy;
     uint32_t rawSz = 0;
     OBFormat fmt = slot.format;
     int w = slot.w, h = slot.h;
-    float ds, dmin, dmax;
     {
         std::lock_guard<std::mutex> lock(slot.rawMtx);
         if (!slot.rawUpdated)
             return;
         rawCopy.assign(slot.rawBuf.data(), slot.rawBuf.data() + slot.rawSize);
         rawSz = slot.rawSize;
-        ds = slot.depthScale;
-        dmin = slot.depthMinM;
-        dmax = slot.depthMaxM;
         slot.rawUpdated = false;
     }
 
@@ -551,73 +631,13 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
     bool ok = false;
 
     if (fmt == OB_FORMAT_Y16) {
-        if (rawSz >= static_cast<uint32_t>(w * h * 2)) {
-            const uint16_t* y16 = reinterpret_cast<const uint16_t*>(rawCopy.data());
-            for (int i = 0; i < w * h; i++) {
-                uint16_t raw = y16[i];
-                if (raw == 0) {
-                    rgb[i * 3 + 0] = 0;
-                    rgb[i * 3 + 1] = 0;
-                    rgb[i * 3 + 2] = 0;
-                } else {
-                    float distM = raw * ds / 1000.0f;
-                    float norm = (distM - dmin) / (dmax - dmin);
-                    norm = std::max(0.0f, std::min(1.0f, norm));
-                    uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-                    jetColormap(v, rgb[i * 3 + 0], rgb[i * 3 + 1], rgb[i * 3 + 2]);
-                }
-            }
-            ok = true;
-        }
+        ok = decodeY16Slot(slot, rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_Y8) {
-        if (rawSz >= static_cast<uint32_t>(w * h)) {
-            for (int i = 0; i < w * h; i++) {
-                rgb[i * 3 + 0] = rawCopy[i];
-                rgb[i * 3 + 1] = rawCopy[i];
-                rgb[i * 3 + 2] = rawCopy[i];
-            }
-            ok = true;
-        }
+        ok = decodeY8Slot(rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_YUYV) {
-        std::lock_guard<std::mutex> lock(slot.rawMtx);
-        if (!slot.yuyvSwsInit) {
-            slot.yuyvSws = sws_getContext(w, h, AV_PIX_FMT_YUYV422, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr,
-                                          nullptr, nullptr);
-            if (!slot.yuyvSws)
-                return;
-            slot.yuyvSrcFrame = av_frame_alloc();
-            slot.yuyvDstFrame = av_frame_alloc();
-            slot.yuyvSrcFrame->format = AV_PIX_FMT_YUYV422;
-            slot.yuyvSrcFrame->width = w;
-            slot.yuyvSrcFrame->height = h;
-            av_frame_get_buffer(slot.yuyvSrcFrame, 0);
-            slot.yuyvDstFrame->format = AV_PIX_FMT_RGB24;
-            slot.yuyvDstFrame->width = w;
-            slot.yuyvDstFrame->height = h;
-            av_frame_get_buffer(slot.yuyvDstFrame, 0);
-            slot.yuyvSwsInit = true;
-        }
-        if (rawSz >= static_cast<uint32_t>(w * h * 2)) {
-            memcpy(slot.yuyvSrcFrame->data[0], rawCopy.data(), w * h * 2);
-            sws_scale(slot.yuyvSws, slot.yuyvSrcFrame->data, slot.yuyvSrcFrame->linesize, 0, h, slot.yuyvDstFrame->data,
-                      slot.yuyvDstFrame->linesize);
-            int stride = w * 3;
-            for (int y = 0; y < h; y++) {
-                memcpy(rgb.data() + y * stride, slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0],
-                       stride);
-            }
-            ok = true;
-        }
+        ok = decodeYuyvSlot(slot, rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_MJPG) {
-        auto mjpg = slot.mjpgRes;
-        if (mjpg) {
-            if (!mjpg->swsInitialized) {
-                if (!mjpg->init(w, h, OB_FORMAT_MJPG))
-                    return;
-            }
-            if (decodeColorToRGB(rawCopy.data(), rawSz, OB_FORMAT_MJPG, w, h, rgb.data(), mjpg))
-                ok = true;
-        }
+        ok = decodeMjpgSlot(slot, rawCopy, rawSz, w, h, rgb);
     }
 
     if (ok) {
@@ -649,6 +669,70 @@ void SDLViewer::decodeThreadFunc() {
 
 // === Section 7: Render thread (textures + text overlays at 30fps) ===
 
+// Render channel label (top-left) and format label (below tile) for one slot
+// 渲染单个slot的通道标签（左上）和格式标签（瓦片下方）
+void SDLViewer::renderSlotLabel(int slotIdx, int xOff, int videoY, int dstW, int dstH, float scale) {
+    if (slotIdx < static_cast<int>(channelTexs_.size()) && channelTexs_[slotIdx].tex) {
+        auto& clt = channelTexs_[slotIdx];
+        int clH = std::min(clt.h, static_cast<int>(ROW_HEADER_H * scale * 0.7f));
+        int clW = static_cast<int>(clt.w * static_cast<float>(clH) / clt.h);
+        SDL_Rect cdst = { xOff + 2, videoY + 2, clW, clH };
+        SDL_RenderCopy(renderer_, clt.tex, nullptr, &cdst);
+    }
+
+    if (slotIdx < static_cast<int>(formatTexs_.size()) && formatTexs_[slotIdx].tex) {
+        auto& flt = formatTexs_[slotIdx];
+        int flH = std::min(flt.h, static_cast<int>(FORMAT_BAR_H * scale));
+        int flW = static_cast<int>(flt.w * static_cast<float>(flH) / flt.h);
+        int fmtX = xOff + (dstW - flW) / 2;
+        int fmtY = videoY + dstH + 1;
+        SDL_Rect fdst = { fmtX, fmtY, flW, flH };
+        SDL_RenderCopy(renderer_, flt.tex, nullptr, &fdst);
+    }
+}
+
+// Render one device row: title label + all slot tiles with channel/format labels
+// 渲染单设备行：标题标签 + 所有slot瓦片及通道/格式标签
+void SDLViewer::renderDeviceRow(int di, int rowY, float scale, int colW, int winW) {
+    auto& dev = devices_[di];
+
+    if (di < static_cast<int>(titleTexs_.size()) && titleTexs_[di].tex) {
+        auto& lt = titleTexs_[di];
+        int dstH = std::min(lt.h, static_cast<int>(ROW_HEADER_H * scale));
+        int dstW = static_cast<int>(lt.w * static_cast<float>(dstH) / lt.h);
+        if (dstW > winW)
+            dstW = winW;
+        SDL_Rect dst = { 0, rowY, dstW, dstH };
+        SDL_RenderCopy(renderer_, lt.tex, nullptr, &dst);
+    }
+
+    int videoY = rowY + static_cast<int>(ROW_HEADER_H * scale);
+
+    for (int si = 0; si < static_cast<int>(dev.slotIndices.size()); si++) {
+        int slotIdx = dev.slotIndices[si];
+        auto& slot = *slots_[slotIdx];
+        auto* tex = textures_[slotIdx];
+
+        {
+            std::lock_guard<std::mutex> lock(slot.renderMtx);
+            if (slot.renderUpdated) {
+                SDL_UpdateTexture(tex, nullptr, slot.renderBuf.data(), slot.w * 3);
+                slot.renderUpdated = false;
+            }
+        }
+
+        int dstW = static_cast<int>(slot.w * scale);
+        int dstH = static_cast<int>(slot.h * scale);
+        int xOff = si * colW + (colW - dstW) / 2;
+
+        SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
+        SDL_RenderCopy(renderer_, tex, nullptr, &dstRect);
+        renderSlotLabel(slotIdx, xOff, videoY, dstW, dstH, scale);
+    }
+}
+
+// Render loop: clear screen, draw all device rows at 30fps
+// 渲染循环：清屏、绘制所有设备行，30fps刷新
 void SDLViewer::renderLoop() {
     setThreadName("nio-sdl-render");
     while (running_) {
@@ -665,8 +749,6 @@ void SDLViewer::renderLoop() {
 
         int winW, winH;
         SDL_GetWindowSize(window_, &winW, &winH);
-
-        // Rebuild label textures if window resized
         if (winW != cachedWinW_ || winH != cachedWinH_) {
             rebuildLabelTextures(winW, winH);
         }
@@ -683,67 +765,11 @@ void SDLViewer::renderLoop() {
         float scaleX = static_cast<float>(winW) / (maxSlotsPerRow_ * tileW_);
         float scaleY = static_cast<float>(winH) / totalContentH;
         float scale = std::min(scaleX, scaleY);
+        int colW = static_cast<int>(winW / maxSlotsPerRow_);
 
         for (int di = 0; di < numRows; di++) {
-            auto& dev = devices_[di];
             int rowY = static_cast<int>(di * rowTotalH * scale);
-
-            // Device title: 型号_序列号
-            if (di < static_cast<int>(titleTexs_.size()) && titleTexs_[di].tex) {
-                auto& lt = titleTexs_[di];
-                int dstH = std::min(lt.h, static_cast<int>(ROW_HEADER_H * scale));
-                int dstW = static_cast<int>(lt.w * static_cast<float>(dstH) / lt.h);
-                if (dstW > winW)
-                    dstW = winW;
-                SDL_Rect dst = { 0, rowY, dstW, dstH };
-                SDL_RenderCopy(renderer_, lt.tex, nullptr, &dst);
-            }
-
-            int videoY = rowY + static_cast<int>(ROW_HEADER_H * scale);
-            int colW = static_cast<int>(winW / maxSlotsPerRow_);
-
-            for (int si = 0; si < static_cast<int>(dev.slotIndices.size()); si++) {
-                int slotIdx = dev.slotIndices[si];
-                auto& slot = *slots_[slotIdx];
-                auto* tex = textures_[slotIdx];
-
-                // Upload RGB texture from decode thread
-                {
-                    std::lock_guard<std::mutex> lock(slot.renderMtx);
-                    if (slot.renderUpdated) {
-                        SDL_UpdateTexture(tex, nullptr, slot.renderBuf.data(), slot.w * 3);
-                        slot.renderUpdated = false;
-                    }
-                }
-
-                // Scaled destination rect (preserve aspect ratio, center in column)
-                int dstW = static_cast<int>(slot.w * scale);
-                int dstH = static_cast<int>(slot.h * scale);
-                int xOff = si * colW + (colW - dstW) / 2;
-
-                SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
-                SDL_RenderCopy(renderer_, tex, nullptr, &dstRect);
-
-                // Channel label (top-left of tile)
-                if (slotIdx < static_cast<int>(channelTexs_.size()) && channelTexs_[slotIdx].tex) {
-                    auto& clt = channelTexs_[slotIdx];
-                    int clH = std::min(clt.h, static_cast<int>(ROW_HEADER_H * scale * 0.7f));
-                    int clW = static_cast<int>(clt.w * static_cast<float>(clH) / clt.h);
-                    SDL_Rect cdst = { xOff + 2, videoY + 2, clW, clH };
-                    SDL_RenderCopy(renderer_, clt.tex, nullptr, &cdst);
-                }
-
-                // Format label (below tile)
-                if (slotIdx < static_cast<int>(formatTexs_.size()) && formatTexs_[slotIdx].tex) {
-                    auto& flt = formatTexs_[slotIdx];
-                    int flH = std::min(flt.h, static_cast<int>(FORMAT_BAR_H * scale));
-                    int flW = static_cast<int>(flt.w * static_cast<float>(flH) / flt.h);
-                    int fmtX = xOff + (dstW - flW) / 2;
-                    int fmtY = videoY + dstH + 1;
-                    SDL_Rect fdst = { fmtX, fmtY, flW, flH };
-                    SDL_RenderCopy(renderer_, flt.tex, nullptr, &fdst);
-                }
-            }
+            renderDeviceRow(di, rowY, scale, colW, winW);
         }
 
         SDL_RenderPresent(renderer_);
