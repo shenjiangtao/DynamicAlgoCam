@@ -5,9 +5,11 @@
 
 #include "nio_stream_tasks.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_adapter.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <libobsensor/ObSensor.hpp>
 
 namespace nio {
 
@@ -39,7 +41,7 @@ void DepthRawTask::processFrame(const FrameBlob& blob) {
 
 // === FusionStreamTask ===
 
-FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, OBFormat colorFormat,
+FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, NioFormat colorFormat,
                                    int /*fusedFps*/, std::shared_ptr<H264Encoder> fusedEncoder,
                                    std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx,
                                    std::shared_ptr<ob::Align> alignFilter, bool hwD2CMode, float alpha, float depthMinM,
@@ -67,10 +69,19 @@ FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colo
     }
 }
 
-void FusionStreamTask::enqueueFrameSet(std::shared_ptr<ob::FrameSet> frameSet) {
+void FusionStreamTask::enqueueNioFrameSet(std::shared_ptr<NioFrameSet> frameSet) {
     {
         std::lock_guard<std::mutex> lock(frameSetMtx_);
         latestFrameSet_ = std::move(frameSet);
+        frameSetReady_ = true;
+    }
+    wakeup();
+}
+
+void FusionStreamTask::enqueueObFrameSet(std::shared_ptr<ob::FrameSet> obFrameSet) {
+    {
+        std::lock_guard<std::mutex> lock(frameSetMtx_);
+        latestObFrameSet_ = std::move(obFrameSet);
         frameSetReady_ = true;
     }
     wakeup();
@@ -135,36 +146,51 @@ void FusionStreamTask::onIdleSwD2C() {
     if (!frameSetReady_.load())
         return;
 
-    std::shared_ptr<ob::FrameSet> frameSet;
+    std::shared_ptr<ob::FrameSet> obFrameSet;
+    std::shared_ptr<NioFrameSet> nioFrameSet;
     {
         std::lock_guard<std::mutex> lock(frameSetMtx_);
-        frameSet = std::move(latestFrameSet_);
+        obFrameSet = std::move(latestObFrameSet_);
+        nioFrameSet = std::move(latestFrameSet_);
         frameSetReady_ = false;
     }
 
-    if (!frameSet || !alignFilter_)
+    // SW D2C: use ob::FrameSet for alignment (ob::Align operates on ob frames)
+    if (obFrameSet && alignFilter_) {
+        auto alignedFrame = alignFilter_->process(obFrameSet);
+        auto alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
+        if (!alignedFS)
+            alignedFS = obFrameSet;
+
+        auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
+        auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
+        if (!colorFrame || !depthFrame)
+            return;
+
+        float depthScaleForFusion = depthScale_;
+        try {
+            auto depthF = depthFrame->as<ob::DepthFrame>();
+            if (depthF)
+                depthScaleForFusion = depthF->getValueScale();
+        } catch (...) {
+        }
+
+        doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(), depthFrame->getData(),
+                depthFrame->getDataSize(), depthFrame->getTimeStampUs(), depthScaleForFusion);
+        return;
+    }
+
+    // Fallback: use NioFrameSet if no ob::FrameSet available
+    if (!nioFrameSet)
         return;
 
-    auto alignedFrame = alignFilter_->process(frameSet);
-    auto alignedFS = alignedFrame ? std::dynamic_pointer_cast<ob::FrameSet>(alignedFrame) : nullptr;
-    if (!alignedFS)
-        alignedFS = frameSet;
-
-    auto colorFrame = alignedFS->getFrame(OB_FRAME_COLOR);
-    auto depthFrame = alignedFS->getFrame(OB_FRAME_DEPTH);
+    auto* colorFrame = nioFrameSet->getFrame(NioFrameType::COLOR);
+    auto* depthFrame = nioFrameSet->getFrame(NioFrameType::DEPTH);
     if (!colorFrame || !depthFrame)
         return;
 
-    float depthScaleForFusion = depthScale_;
-    try {
-        auto depthF = depthFrame->as<ob::DepthFrame>();
-        if (depthF)
-            depthScaleForFusion = depthF->getValueScale();
-    } catch (...) {
-    }
-
-    doBlend(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs(), depthFrame->getData(),
-            depthFrame->getDataSize(), depthFrame->getTimeStampUs(), depthScaleForFusion);
+    doBlend(colorFrame->rawData(), colorFrame->dataSize(), colorFrame->timestampUs, depthFrame->rawData(),
+            depthFrame->dataSize(), depthFrame->timestampUs, depthFrame->depthScale);
 }
 
 // onIdle: dispatch to HW or SW D2C path
@@ -182,7 +208,8 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
     int w = colorW_;
     int h = colorH_;
 
-    bool colorOk = decodeColorToRGB(colorData, colorSize, colorFormat_, w, h, colorRGBBuf_->data(), mjpgRes_);
+    bool colorOk =
+        decodeColorToRGB(colorData, colorSize, nioFormatToOb(colorFormat_), w, h, colorRGBBuf_->data(), mjpgRes_);
     if (!colorOk) {
         std::memset(colorRGBBuf_->data(), 128, w * h * 3);
     }

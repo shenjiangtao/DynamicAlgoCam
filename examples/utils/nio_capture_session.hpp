@@ -5,8 +5,8 @@
 // encoder/file creation, fusion setup, pipeline start/stop, and teardown.
 //
 // Producer-consumer threading model:
-//   - SDK video callback (producer): enqueues ob::FrameSet to VideoFrameQueue,
-//     returns immediately — zero blocking in the callback.
+//   - SDK video callback (producer): converts ob::FrameSet → NioFrameSet,
+//     enqueues to VideoFrameQueue, returns immediately — zero blocking.
 //   - Video consumer thread: dequeues FrameSets, dispatches to encode tasks,
 //     fusion task, viewer pushFrame, frame counter updates.
 //   - SDK IMU callback (producer): formats CSV line, enqueues to ImuFrameQueue.
@@ -17,13 +17,17 @@
 #include "nio_capture_config.hpp"
 #include "nio_color_convert.hpp"
 #include "nio_common.hpp"
+#include "nio_frame.hpp"
 #include "nio_frame_consumer.hpp"
 #include "nio_frame_queue.hpp"
 #include "nio_h264_encoder.hpp"
+#include "nio_ob_adapter.hpp"
+#include "nio_ob_frame_adapter.hpp"
 #include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
 #include "nio_stream_tasks.hpp"
 #include "nio_thread.hpp"
+#include "nio_types.hpp"
 #include "utils.hpp"
 
 #include <algorithm>
@@ -55,11 +59,11 @@ struct SensorInfo {
     bool hasAccel = false;
     bool hasGyro = false;
 
-    OBFormat colorFormat = OB_FORMAT_UNKNOWN;
-    OBFormat depthFormat = OB_FORMAT_UNKNOWN;
-    OBFormat irFormat = OB_FORMAT_UNKNOWN;
-    OBFormat irLeftFormat = OB_FORMAT_UNKNOWN;
-    OBFormat irRightFormat = OB_FORMAT_UNKNOWN;
+    NioFormat colorFormat = NioFormat::UNKNOWN;
+    NioFormat depthFormat = NioFormat::UNKNOWN;
+    NioFormat irFormat = NioFormat::UNKNOWN;
+    NioFormat irLeftFormat = NioFormat::UNKNOWN;
+    NioFormat irRightFormat = NioFormat::UNKNOWN;
 
     int colorW = 0, colorH = 0, colorFps = 30;
     int depthW = 0, depthH = 0, depthFps = 30;
@@ -73,8 +77,8 @@ struct SensorInfo {
     std::shared_ptr<ob::VideoStreamProfile> irLeftProfile;
     std::shared_ptr<ob::VideoStreamProfile> irRightProfile;
 
-    OBCameraIntrinsic depthIntrinsic = {};
-    OBCameraIntrinsic colorIntrinsic = {};
+    NioIntrinsic depthIntrinsic;
+    NioIntrinsic colorIntrinsic;
 };
 
 class CaptureSession {
@@ -104,13 +108,13 @@ public:
     bool hasIMU() const { return sensorInfo_.hasAccel && sensorInfo_.hasGyro; }
     bool canFuse() const { return canFuse_; }
     bool hasVideoPipeline() const { return videoPipeline_ != nullptr; }
-    uint64_t getAndResetFrameCount(OBFrameType type);
+    uint64_t getAndResetFrameCount(NioFrameType type);
     uint64_t getAndResetFusionCount();
 
 private:
     // --- Sensor enumeration helpers (called from enumerateSensors) ---
     bool enumerateSensors();
-    void enumerateColorSensor(const std::shared_ptr<ob::StreamProfileList> &profiles, OBFormat preferredFmt);
+    void enumerateColorSensor(const std::shared_ptr<ob::StreamProfileList> &profiles, NioFormat preferredFmt);
     void enumerateDepthSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
     void enumerateIRSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
     void enumerateIRLeftSensor(const std::shared_ptr<ob::StreamProfileList> &profiles);
@@ -122,7 +126,7 @@ private:
     void createEncodersAndTasks();
     void createColorEncoder();
     void createDepthEncoder();
-    void createIREncoder(OBFrameType type, const std::string &suffix, OBFormat fmt,
+    void createIREncoder(NioFrameType type, const std::string &suffix, NioFormat fmt,
                          int w, int h, int fps, ViewerChannel ch);
     void createImuTask();
 

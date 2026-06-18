@@ -1,0 +1,122 @@
+// Copyright (c) NIO Inc. All Rights Reserved.
+// Licensed under the MIT License.
+//
+// nio_device.hpp — Abstract device and pipeline interfaces for multi-SDK support.
+//
+// NioDevice: abstract interface for a camera device (sensor enumeration,
+// clock sync, property access).  Each SDK (Orbbec, RealSense, etc.) provides
+// a concrete subclass.
+//
+// NioPipeline: abstract interface for a capture pipeline (configure streams,
+// start/stop, enable sync, check HW D2C support).  Each SDK provides a
+// concrete subclass.
+//
+// NioStreamConfig: SDK-neutral stream configuration (which streams to enable,
+// resolution, format).  Replaces ob::Config.
+
+#pragma once
+
+#include "nio_types.hpp"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace nio {
+
+// Forward declarations
+class NioFrameSet;
+
+// Device info (SDK-agnostic).
+struct NioDeviceInfo {
+    std::string name;
+    std::string serialNumber;
+    uint16_t vid = 0;
+    uint16_t pid = 0;
+    std::string connectionType;
+};
+
+// Stream configuration for one sensor.
+struct NioStreamConfig {
+    NioFrameType frameType = NioFrameType::COLOR;
+    int width = 0;
+    int height = 0;
+    int fps = 30;
+    NioFormat format = NioFormat::UNKNOWN;
+    bool enabled = true;
+};
+
+// D2C alignment mode.
+enum class NioAlignMode { NONE, HW, SW };
+
+// Callback type: called when a new FrameSet arrives from the pipeline.
+using NioVideoCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
+
+// Callback type: called when an IMU FrameSet arrives.
+using NioImuCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
+
+// NioDevice: abstract camera device.
+class NioDevice {
+public:
+    virtual ~NioDevice() = default;
+
+    virtual NioDeviceInfo getDeviceInfo() const = 0;
+    virtual void timerSyncWithHost() = 0;
+    virtual bool isGlobalTimestampSupported() const = 0;
+    virtual void enableGlobalTimestamp(bool enable) = 0;
+    virtual NioSensorInfo getSensorInfo() const = 0;
+
+    // Get integer property (e.g. depth precision level).
+    virtual int32_t getIntProperty(int propertyId) = 0;
+};
+
+// NioPipeline: abstract capture pipeline.
+class NioPipeline {
+public:
+    virtual ~NioPipeline() = default;
+
+    // Configure which streams to enable.
+    virtual void enableStream(const NioStreamConfig &cfg) = 0;
+    virtual void disableStream(NioFrameType type) = 0;
+
+    // Set frame aggregation mode.
+    virtual void setAggregateAllTypeFrameRequire(bool require) = 0;
+
+    // Set D2C alignment mode.
+    virtual void setAlignMode(NioAlignMode mode) = 0;
+
+    // Check if HW D2C alignment is supported for the given profiles.
+    virtual bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt,
+                                   int depthW, int depthH, NioFormat depthFmt, int depthFps) = 0;
+
+    // Enable frame sync.
+    virtual void enableFrameSync() = 0;
+
+    // Start pipeline with video callback (receives NioFrameSet).
+    virtual bool start(NioVideoCallback callback) = 0;
+
+    // Start IMU pipeline with callback.
+    virtual bool startImu(NioImuCallback callback) = 0;
+
+    // Stop pipeline.
+    virtual void stop() = 0;
+
+    // Stop IMU pipeline.
+    virtual void stopImu() = 0;
+
+    // Get the underlying device.
+    virtual std::shared_ptr<NioDevice> getDevice() const = 0;
+};
+
+// NioContext: abstract SDK context for device discovery.
+class NioContext {
+public:
+    virtual ~NioContext() = default;
+
+    virtual uint32_t getDeviceCount() = 0;
+    virtual std::shared_ptr<NioDevice> getDevice(uint32_t index) = 0;
+};
+
+} // namespace nio

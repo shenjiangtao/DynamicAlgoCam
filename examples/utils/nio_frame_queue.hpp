@@ -19,34 +19,25 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <libobsensor/ObSensor.hpp>
+#include <memory>
+
+#include "nio_frame.hpp"
 
 namespace nio {
 
 template <typename T>
 class FrameQueue {
 public:
-    // Construct a ring buffer with the given capacity (rounded up to next power-of-2).
     explicit FrameQueue(size_t capacity);
-
-    // Enqueue an item. If full, the oldest item is dropped (drop-oldest back-pressure).
-    // Never blocks the caller — O(1) lock + notify.
     void push(T item);
-
-    // Dequeue an item with timeout. Returns false on timeout or shutdown with empty queue.
     bool pop(T &item, uint32_t timeoutMs = 100);
-
-    // Signal consumer threads to exit. Wakes all waiters.
     void shutdown();
-
-    // Wake all consumers without setting shutdown flag (e.g. for early exit).
     void wakeAll();
 
 private:
     std::vector<T> buf_;
     size_t mask_;
     size_t capacity_;
-
     std::mutex mtx_;
     std::condition_variable cv_;
     size_t head_ = 0;
@@ -55,7 +46,9 @@ private:
     std::atomic<bool> shutdown_{false};
 };
 
-using VideoFrameQueue = FrameQueue<std::shared_ptr<ob::FrameSet>>;
+// Video queue carries NioFrameSet (SDK-agnostic).
+using VideoFrameQueue = FrameQueue<std::shared_ptr<NioFrameSet>>;
+// IMU queue carries CSV lines (already SDK-agnostic).
 using ImuFrameQueue = FrameQueue<std::string>;
 
 } // namespace nio

@@ -20,14 +20,14 @@
 
 #include "nio_h264_encoder.hpp"
 
+#include "nio_types.hpp"
+
 #include <fstream>
 #include <mutex>
 #include <map>
 #include <memory>
 #include <string>
 #include <cstdint>
-
-#include <libobsensor/ObSensor.hpp>
 
 namespace nio {
 
@@ -47,7 +47,7 @@ std::mutex mtx; // protects file writes
 bool h264KeyFrameWritten = false; // native H.264: skip until first IDR/SPS/PPS
 bool isNativeH264 = false; // true = camera outputs H.264 directly
 bool writeSEI = true; // embed copyright/timestamp SEI NALs
-    OBFormat srcFormat = OB_FORMAT_UNKNOWN;
+    NioFormat srcFormat = NioFormat::UNKNOWN;
     int width = 0;
     int height = 0;
     int fps = 30;
@@ -69,7 +69,7 @@ struct SensorFiles {
     std::mutex depthRawMtx;
     std::mutex imuMtx;
 
-    std::map<OBFrameType, uint64_t> frameCounts;   // per-type frame counter
+    NioFrameCounts frameCounts;   // per-type frame counter
     std::mutex countMtx;
 };
 
@@ -100,7 +100,7 @@ std::shared_ptr<std::ofstream> openBufferedFile(const std::string &path,
 // For native H.264/H.265: no encoder, just a file.  For MJPEG/YUYV/etc:
 // creates H264Encoder.  Falls back to raw file if encoder init fails.
 std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string &filePath,
-                                                    OBFormat format, int w, int h, int fps,
+                                                    NioFormat format, int w, int h, int fps,
                                                     const char *seiUuid = "nio@orbbec-fusio",
                                                     bool writeSEI = true);
 

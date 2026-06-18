@@ -44,6 +44,14 @@ add_library(ob_examples_utils STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_frame_queue.cpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_frame_consumer.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_frame_consumer.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_types.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_ob_adapter.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_frame.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_frame.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_ob_frame_adapter.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_device.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_ob_device.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_ob_device.cpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC

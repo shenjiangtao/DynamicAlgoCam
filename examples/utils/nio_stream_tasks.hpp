@@ -12,9 +12,11 @@
 
 #include "nio_color_convert.hpp"
 #include "nio_common.hpp"
+#include "nio_frame.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_stream_io.hpp"
 #include "nio_thread.hpp"
+#include "nio_types.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -23,8 +25,6 @@
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include <libobsensor/ObSensor.hpp>
 
 namespace nio {
 
@@ -60,7 +60,7 @@ private:
 class FusionStreamTask : public StreamTask {
 public:
     FusionStreamTask(const std::string &name,
-                     int colorW, int colorH, OBFormat colorFormat, int fusedFps,
+                     int colorW, int colorH, NioFormat colorFormat, int fusedFps,
                      std::shared_ptr<H264Encoder> fusedEncoder,
                      std::shared_ptr<std::ofstream> fusedFile,
                      std::mutex &fusedMtx,
@@ -71,7 +71,8 @@ public:
 
     std::atomic<uint64_t> frameCount{0};
 
-    void enqueueFrameSet(std::shared_ptr<ob::FrameSet> frameSet);
+    void enqueueNioFrameSet(std::shared_ptr<NioFrameSet> frameSet);
+    void enqueueObFrameSet(std::shared_ptr<ob::FrameSet> obFrameSet);
     void enqueueColor(const uint8_t *data, uint32_t size, uint64_t timestampUs);
     void enqueueDepth(const uint8_t *data, uint32_t size, uint64_t timestampUs,
                       float depthScale = 1.0f);
@@ -89,7 +90,7 @@ private:
 
     int colorW_;
     int colorH_;
-    OBFormat colorFormat_;
+    NioFormat colorFormat_;
     std::shared_ptr<H264Encoder> fusedEncoder_;
     std::shared_ptr<std::ofstream> fusedFile_;
     std::mutex &fusedMtx_;
@@ -121,7 +122,8 @@ private:
     std::atomic<bool> depthReady_{false};
 
     std::mutex frameSetMtx_;
-    std::shared_ptr<ob::FrameSet> latestFrameSet_;
+    std::shared_ptr<NioFrameSet> latestFrameSet_;
+    std::shared_ptr<ob::FrameSet> latestObFrameSet_;
     std::atomic<bool> frameSetReady_{false};
 };
 

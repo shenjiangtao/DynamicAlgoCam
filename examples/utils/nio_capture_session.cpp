@@ -10,7 +10,7 @@ namespace nio {
 
 // Construct session with device reference, safe name, output directory, and config.
 CaptureSession::CaptureSession(std::shared_ptr<ob::Device> device, const std::string& safeName,
-                                const std::string& deviceOutputDir, const CaptureConfig& cfg)
+                               const std::string& deviceOutputDir, const CaptureConfig& cfg)
 : device_(device), safeName_(safeName), deviceOutputDir_(deviceOutputDir), cfg_(cfg) {
     devId_ = safeName_;
     if (devId_.size() > 8)
@@ -66,7 +66,7 @@ bool CaptureSession::enumerateSensors() {
     auto sensorList = device_->getSensorList();
 
     bool is305 = ob_smpl::isGemini305Device(vid, pid);
-    OBFormat colorPreferredFmt = is305 ? OB_FORMAT_YUYV : OB_FORMAT_MJPG;
+    NioFormat colorPreferredFmt = is305 ? NioFormat::YUYV : NioFormat::MJPG;
 
     for (uint32_t s = 0; s < sensorList->getCount(); s++) {
         auto sensorType = sensorList->getSensorType(s);
@@ -106,25 +106,26 @@ bool CaptureSession::enumerateSensors() {
 
 // Select color stream profile, enable in pipeline config, read intrinsic.
 void CaptureSession::enumerateColorSensor(const std::shared_ptr<ob::StreamProfileList>& profiles,
-                                           OBFormat preferredFmt) {
+                                          NioFormat preferredFmt) {
     sensorInfo_.hasColor = true;
-    sensorInfo_.colorProfile = selectBestProfile(profiles, preferredFmt);
+    OBFormat obPreferred = nioFormatToOb(preferredFmt);
+    sensorInfo_.colorProfile = selectBestProfile(profiles, obPreferred);
     if (sensorInfo_.colorProfile) {
-        sensorInfo_.colorFormat = sensorInfo_.colorProfile->getFormat();
-        if (sensorInfo_.colorFormat == OB_FORMAT_UNKNOWN) {
+        sensorInfo_.colorFormat = obFormatToNio(sensorInfo_.colorProfile->getFormat());
+        if (sensorInfo_.colorFormat == NioFormat::UNKNOWN) {
             for (uint32_t k = 0; k < profiles->getCount(); k++) {
                 try {
                     auto p = profiles->getProfile(k)->as<ob::VideoStreamProfile>();
                     if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
                         sensorInfo_.colorProfile = p;
-                        sensorInfo_.colorFormat = p->getFormat();
+                        sensorInfo_.colorFormat = obFormatToNio(p->getFormat());
                         break;
                     }
                 } catch (...) {
                 }
             }
         }
-        if (sensorInfo_.colorFormat != OB_FORMAT_UNKNOWN) {
+        if (sensorInfo_.colorFormat != NioFormat::UNKNOWN) {
             videoConfig_->enableStream(sensorInfo_.colorProfile);
             sensorInfo_.colorW = sensorInfo_.colorProfile->getWidth();
             sensorInfo_.colorH = sensorInfo_.colorProfile->getHeight();
@@ -139,14 +140,14 @@ void CaptureSession::enumerateColorSensor(const std::shared_ptr<ob::StreamProfil
     if (!sensorInfo_.hasColor)
         return;
 
-    std::cout << " Color: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@"
-              << sensorInfo_.colorFps << " format=" << sensorInfo_.colorFormat << std::endl;
-    NIO_LOG_INFO_S("Color stream: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@"
-                                    << sensorInfo_.colorFps << " format=" << sensorInfo_.colorFormat);
+    std::cout << " Color: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@" << sensorInfo_.colorFps
+              << " format=" << nioFormatToStr(sensorInfo_.colorFormat) << std::endl;
+    NIO_LOG_INFO_S("Color stream: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@" << sensorInfo_.colorFps
+                                    << " format=" << nioFormatToStr(sensorInfo_.colorFormat));
     try {
         if (sensorInfo_.colorProfile)
             sensorInfo_.colorIntrinsic =
-                sensorInfo_.colorProfile->as<ob::VideoStreamProfile>()->getIntrinsic();
+                obIntrinsicToNio(sensorInfo_.colorProfile->as<ob::VideoStreamProfile>()->getIntrinsic());
     } catch (...) {
         NIO_LOG_WARN_S("Color intrinsic not available for " << safeName_);
     }
@@ -157,21 +158,21 @@ void CaptureSession::enumerateDepthSensor(const std::shared_ptr<ob::StreamProfil
     sensorInfo_.hasDepth = true;
     sensorInfo_.depthProfile = selectBestProfile(profiles, OB_FORMAT_Y16);
     if (sensorInfo_.depthProfile) {
-        sensorInfo_.depthFormat = sensorInfo_.depthProfile->getFormat();
-        if (sensorInfo_.depthFormat == OB_FORMAT_UNKNOWN) {
+        sensorInfo_.depthFormat = obFormatToNio(sensorInfo_.depthProfile->getFormat());
+        if (sensorInfo_.depthFormat == NioFormat::UNKNOWN) {
             for (uint32_t k = 0; k < profiles->getCount(); k++) {
                 try {
                     auto p = profiles->getProfile(k)->as<ob::VideoStreamProfile>();
                     if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
                         sensorInfo_.depthProfile = p;
-                        sensorInfo_.depthFormat = p->getFormat();
+                        sensorInfo_.depthFormat = obFormatToNio(p->getFormat());
                         break;
                     }
                 } catch (...) {
                 }
             }
         }
-        if (sensorInfo_.depthFormat != OB_FORMAT_UNKNOWN) {
+        if (sensorInfo_.depthFormat != NioFormat::UNKNOWN) {
             videoConfig_->enableStream(sensorInfo_.depthProfile);
             sensorInfo_.depthW = sensorInfo_.depthProfile->getWidth();
             sensorInfo_.depthH = sensorInfo_.depthProfile->getHeight();
@@ -186,15 +187,15 @@ void CaptureSession::enumerateDepthSensor(const std::shared_ptr<ob::StreamProfil
     if (!sensorInfo_.hasDepth)
         return;
 
-    std::cout << " Depth: " << sensorInfo_.depthW << "x" << sensorInfo_.depthH << "@"
-              << sensorInfo_.depthFps << " format=" << sensorInfo_.depthFormat << std::endl;
-    NIO_LOG_INFO_S("Depth stream: " << sensorInfo_.depthW << "x" << sensorInfo_.depthH << "@"
-                                    << sensorInfo_.depthFps << " format=" << sensorInfo_.depthFormat);
+    std::cout << " Depth: " << sensorInfo_.depthW << "x" << sensorInfo_.depthH << "@" << sensorInfo_.depthFps
+              << " format=" << nioFormatToStr(sensorInfo_.depthFormat) << std::endl;
+    NIO_LOG_INFO_S("Depth stream: " << sensorInfo_.depthW << "x" << sensorInfo_.depthH << "@" << sensorInfo_.depthFps
+                                    << " format=" << nioFormatToStr(sensorInfo_.depthFormat));
     detectDepthScale();
     try {
         if (sensorInfo_.depthProfile)
             sensorInfo_.depthIntrinsic =
-                sensorInfo_.depthProfile->as<ob::VideoStreamProfile>()->getIntrinsic();
+                obIntrinsicToNio(sensorInfo_.depthProfile->as<ob::VideoStreamProfile>()->getIntrinsic());
     } catch (...) {
         NIO_LOG_WARN_S("Depth intrinsic not available for " << safeName_);
     }
@@ -205,11 +206,21 @@ void CaptureSession::detectDepthScale() {
     try {
         int32_t precisionLevel = device_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
         switch (precisionLevel) {
-        case 0: depthScale_ = 0.001f;    break;
-        case 1: depthScale_ = 0.0005f;   break;
-        case 2: depthScale_ = 0.00025f;  break;
-        case 3: depthScale_ = 0.0001f;   break;
-        default: depthScale_ = 0.001f;   break;
+        case 0:
+            depthScale_ = 0.001f;
+            break;
+        case 1:
+            depthScale_ = 0.0005f;
+            break;
+        case 2:
+            depthScale_ = 0.00025f;
+            break;
+        case 3:
+            depthScale_ = 0.0001f;
+            break;
+        default:
+            depthScale_ = 0.001f;
+            break;
         }
         std::cout << " Depth scale: " << depthScale_ << " (precision level " << precisionLevel << ")" << std::endl;
         NIO_LOG_INFO_S("Depth scale: " << depthScale_ << " precision_level=" << precisionLevel);
@@ -224,9 +235,9 @@ void CaptureSession::enumerateIRSensor(const std::shared_ptr<ob::StreamProfileLi
     sensorInfo_.hasIR = true;
     sensorInfo_.irProfile = selectBestProfile(profiles, OB_FORMAT_Y8);
     if (sensorInfo_.irProfile) {
-        sensorInfo_.irFormat = sensorInfo_.irProfile->getFormat();
-        if (sensorInfo_.irFormat == OB_FORMAT_UNKNOWN)
-            sensorInfo_.irFormat = OB_FORMAT_Y8;
+        sensorInfo_.irFormat = obFormatToNio(sensorInfo_.irProfile->getFormat());
+        if (sensorInfo_.irFormat == NioFormat::UNKNOWN)
+            sensorInfo_.irFormat = NioFormat::Y8;
         videoConfig_->enableStream(sensorInfo_.irProfile);
         sensorInfo_.irW = sensorInfo_.irProfile->getWidth();
         sensorInfo_.irH = sensorInfo_.irProfile->getHeight();
@@ -236,9 +247,9 @@ void CaptureSession::enumerateIRSensor(const std::shared_ptr<ob::StreamProfileLi
     }
     if (sensorInfo_.hasIR) {
         std::cout << " IR: " << sensorInfo_.irW << "x" << sensorInfo_.irH << "@" << sensorInfo_.irFps
-                  << " format=" << sensorInfo_.irFormat << std::endl;
-        NIO_LOG_INFO_S("IR stream: " << sensorInfo_.irW << "x" << sensorInfo_.irH << "@"
-                                     << sensorInfo_.irFps << " format=" << sensorInfo_.irFormat);
+                  << " format=" << nioFormatToStr(sensorInfo_.irFormat) << std::endl;
+        NIO_LOG_INFO_S("IR stream: " << sensorInfo_.irW << "x" << sensorInfo_.irH << "@" << sensorInfo_.irFps
+                                     << " format=" << nioFormatToStr(sensorInfo_.irFormat));
     }
 }
 
@@ -247,9 +258,9 @@ void CaptureSession::enumerateIRLeftSensor(const std::shared_ptr<ob::StreamProfi
     sensorInfo_.hasIRLeft = true;
     sensorInfo_.irLeftProfile = selectBestProfile(profiles, OB_FORMAT_Y8);
     if (sensorInfo_.irLeftProfile) {
-        sensorInfo_.irLeftFormat = sensorInfo_.irLeftProfile->getFormat();
-        if (sensorInfo_.irLeftFormat == OB_FORMAT_UNKNOWN)
-            sensorInfo_.irLeftFormat = OB_FORMAT_Y8;
+        sensorInfo_.irLeftFormat = obFormatToNio(sensorInfo_.irLeftProfile->getFormat());
+        if (sensorInfo_.irLeftFormat == NioFormat::UNKNOWN)
+            sensorInfo_.irLeftFormat = NioFormat::Y8;
         videoConfig_->enableStream(sensorInfo_.irLeftProfile);
         sensorInfo_.irLW = sensorInfo_.irLeftProfile->getWidth();
         sensorInfo_.irLH = sensorInfo_.irLeftProfile->getHeight();
@@ -258,10 +269,10 @@ void CaptureSession::enumerateIRLeftSensor(const std::shared_ptr<ob::StreamProfi
         sensorInfo_.hasIRLeft = false;
     }
     if (sensorInfo_.hasIRLeft) {
-        std::cout << " IR Left: " << sensorInfo_.irLW << "x" << sensorInfo_.irLH << "@"
-                  << sensorInfo_.irLFps << " format=" << sensorInfo_.irLeftFormat << std::endl;
-        NIO_LOG_INFO_S("IR Left stream: " << sensorInfo_.irLW << "x" << sensorInfo_.irLH << "@"
-                                          << sensorInfo_.irLFps << " format=" << sensorInfo_.irLeftFormat);
+        std::cout << " IR Left: " << sensorInfo_.irLW << "x" << sensorInfo_.irLH << "@" << sensorInfo_.irLFps
+                  << " format=" << nioFormatToStr(sensorInfo_.irLeftFormat) << std::endl;
+        NIO_LOG_INFO_S("IR Left stream: " << sensorInfo_.irLW << "x" << sensorInfo_.irLH << "@" << sensorInfo_.irLFps
+                                          << " format=" << nioFormatToStr(sensorInfo_.irLeftFormat));
     }
 }
 
@@ -270,9 +281,9 @@ void CaptureSession::enumerateIRRightSensor(const std::shared_ptr<ob::StreamProf
     sensorInfo_.hasIRRight = true;
     sensorInfo_.irRightProfile = selectBestProfile(profiles, OB_FORMAT_Y8);
     if (sensorInfo_.irRightProfile) {
-        sensorInfo_.irRightFormat = sensorInfo_.irRightProfile->getFormat();
-        if (sensorInfo_.irRightFormat == OB_FORMAT_UNKNOWN)
-            sensorInfo_.irRightFormat = OB_FORMAT_Y8;
+        sensorInfo_.irRightFormat = obFormatToNio(sensorInfo_.irRightProfile->getFormat());
+        if (sensorInfo_.irRightFormat == NioFormat::UNKNOWN)
+            sensorInfo_.irRightFormat = NioFormat::Y8;
         videoConfig_->enableStream(sensorInfo_.irRightProfile);
         sensorInfo_.irRW = sensorInfo_.irRightProfile->getWidth();
         sensorInfo_.irRH = sensorInfo_.irRightProfile->getHeight();
@@ -281,11 +292,10 @@ void CaptureSession::enumerateIRRightSensor(const std::shared_ptr<ob::StreamProf
         sensorInfo_.hasIRRight = false;
     }
     if (sensorInfo_.hasIRRight) {
-        std::cout << " IR Right: " << sensorInfo_.irRW << "x" << sensorInfo_.irRH << "@"
-                  << sensorInfo_.irRFps << " format=" << sensorInfo_.irRightFormat << std::endl;
-        NIO_LOG_INFO_S("IR Right stream: " << sensorInfo_.irRW << "x" << sensorInfo_.irRH << "@"
-                                           << sensorInfo_.irRFps
-                                           << " format=" << sensorInfo_.irRightFormat);
+        std::cout << " IR Right: " << sensorInfo_.irRW << "x" << sensorInfo_.irRH << "@" << sensorInfo_.irRFps
+                  << " format=" << nioFormatToStr(sensorInfo_.irRightFormat) << std::endl;
+        NIO_LOG_INFO_S("IR Right stream: " << sensorInfo_.irRW << "x" << sensorInfo_.irRH << "@" << sensorInfo_.irRFps
+                                           << " format=" << nioFormatToStr(sensorInfo_.irRightFormat));
     }
 }
 
@@ -321,21 +331,21 @@ void CaptureSession::applyDeviceQuirks() {
 void CaptureSession::createEncodersAndTasks() {
     createColorEncoder();
     createDepthEncoder();
-    if (sensorInfo_.hasIR && sensorInfo_.irFormat != OB_FORMAT_UNKNOWN)
-        createIREncoder(OB_FRAME_IR, "_ir_", sensorInfo_.irFormat,
-                        sensorInfo_.irW, sensorInfo_.irH, sensorInfo_.irFps, ViewerChannel::IR);
-    if (sensorInfo_.hasIRLeft && sensorInfo_.irLeftFormat != OB_FORMAT_UNKNOWN)
-        createIREncoder(OB_FRAME_IR_LEFT, "_ir_left_", sensorInfo_.irLeftFormat,
-                        sensorInfo_.irLW, sensorInfo_.irLH, sensorInfo_.irLFps, ViewerChannel::IR_LEFT);
-    if (sensorInfo_.hasIRRight && sensorInfo_.irRightFormat != OB_FORMAT_UNKNOWN)
-        createIREncoder(OB_FRAME_IR_RIGHT, "_ir_right_", sensorInfo_.irRightFormat,
-                        sensorInfo_.irRW, sensorInfo_.irRH, sensorInfo_.irRFps, ViewerChannel::IR_RIGHT);
+    if (sensorInfo_.hasIR && sensorInfo_.irFormat != NioFormat::UNKNOWN)
+        createIREncoder(NioFrameType::IR, "_ir_", sensorInfo_.irFormat, sensorInfo_.irW, sensorInfo_.irH,
+                        sensorInfo_.irFps, ViewerChannel::IR);
+    if (sensorInfo_.hasIRLeft && sensorInfo_.irLeftFormat != NioFormat::UNKNOWN)
+        createIREncoder(NioFrameType::IR_LEFT, "_ir_left_", sensorInfo_.irLeftFormat, sensorInfo_.irLW,
+                        sensorInfo_.irLH, sensorInfo_.irLFps, ViewerChannel::IR_LEFT);
+    if (sensorInfo_.hasIRRight && sensorInfo_.irRightFormat != NioFormat::UNKNOWN)
+        createIREncoder(NioFrameType::IR_RIGHT, "_ir_right_", sensorInfo_.irRightFormat, sensorInfo_.irRW,
+                        sensorInfo_.irRH, sensorInfo_.irRFps, ViewerChannel::IR_RIGHT);
     createImuTask();
 }
 
 // Create color encoder + EncodeStreamTask + ColorFrameConsumer.
 void CaptureSession::createColorEncoder() {
-    if (!sensorInfo_.hasColor || sensorInfo_.colorFormat == OB_FORMAT_UNKNOWN)
+    if (!sensorInfo_.hasColor || sensorInfo_.colorFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
     sf->color = createStreamEncoder(baseName_ + "_color_" + startTs_ + ".h264", sensorInfo_.colorFormat,
@@ -345,22 +355,21 @@ void CaptureSession::createColorEncoder() {
     frameConsumers_.push_back(
         std::unique_ptr<FrameConsumer>(new ColorFrameConsumer(task, nullptr, -1, ViewerChannel::COLOR, sf)));
     NIO_LOG_INFO_S("Color output: " << baseName_ + "_color_" + startTs_ + ".h264"
-                                    << " fmt=" << sensorInfo_.colorFormat);
+                                    << " fmt=" << nioFormatToStr(sensorInfo_.colorFormat));
 }
 
 // Create depth encoder + raw writer + EncodeStreamTask + DepthRawTask + DepthFrameConsumer.
 void CaptureSession::createDepthEncoder() {
-    if (!sensorInfo_.hasDepth || sensorInfo_.depthFormat == OB_FORMAT_UNKNOWN)
+    if (!sensorInfo_.hasDepth || sensorInfo_.depthFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
     sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", sensorInfo_.depthFormat,
                                     sensorInfo_.depthW, sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
-    sf->depthRawFile =
-        std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
+    sf->depthRawFile = std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
     auto encTask = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
     encTask->start();
     auto rawTask = std::make_shared<DepthRawTask>(devId_ + "_depth_raw", sf->depthRawFile, sensorInfo_.depthW,
-                                                   sensorInfo_.depthH, depthScale_);
+                                                  sensorInfo_.depthH, depthScale_);
     rawTask->start();
     frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new DepthFrameConsumer(
         encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM, cfg_.depthMaxM)));
@@ -368,24 +377,28 @@ void CaptureSession::createDepthEncoder() {
 }
 
 // Create IR encoder + EncodeStreamTask + IRFrameConsumer (shared for IR/IR-Left/IR-Right).
-void CaptureSession::createIREncoder(OBFrameType type, const std::string& suffix, OBFormat fmt,
-                                      int w, int h, int fps, ViewerChannel ch) {
+void CaptureSession::createIREncoder(NioFrameType type, const std::string& suffix, NioFormat fmt, int w, int h, int fps,
+                                     ViewerChannel ch) {
     auto sf = sensorFiles_;
     auto se = createStreamEncoder(baseName_ + suffix + startTs_ + ".h264", fmt, w, h, fps, nullptr, false);
-    if (type == OB_FRAME_IR)
+    if (type == NioFrameType::IR)
         sf->ir = se;
-    else if (type == OB_FRAME_IR_LEFT)
+    else if (type == NioFrameType::IR_LEFT)
         sf->irLeft = se;
     else
         sf->irRight = se;
 
-    std::string taskId = devId_ + "_" + (type == OB_FRAME_IR ? "ir" :
-                                          type == OB_FRAME_IR_LEFT ? "irl" : "irr") + "_enc";
+    std::string taskId = devId_ + "_" +
+                         (type == NioFrameType::IR      ? "ir" :
+                          type == NioFrameType::IR_LEFT ? "irl" :
+                                                          "irr") +
+                         "_enc";
     auto task = std::make_shared<EncodeStreamTask>(taskId, se);
     task->start();
-    frameConsumers_.push_back(
-        std::unique_ptr<FrameConsumer>(new IRFrameConsumer(type, task, nullptr, -1, ch, sf)));
-    NIO_LOG_INFO_S("IR" << (type == OB_FRAME_IR_LEFT ? " Left" : type == OB_FRAME_IR_RIGHT ? " Right" : "")
+    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new IRFrameConsumer(type, task, nullptr, -1, ch, sf)));
+    NIO_LOG_INFO_S("IR" << (type == NioFrameType::IR_LEFT  ? " Left" :
+                            type == NioFrameType::IR_RIGHT ? " Right" :
+                                                             "")
                         << " output: " << baseName_ + suffix + startTs_ + ".h264");
 }
 
@@ -438,7 +451,7 @@ void CaptureSession::setupFusion() {
     }
 
     mjpgRes_ = std::make_shared<MjpgDecoderRes>();
-    mjpgRes_->init(sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFormat);
+    mjpgRes_->init(sensorInfo_.colorW, sensorInfo_.colorH, nioFormatToOb(sensorInfo_.colorFormat));
     fusionTask_ = std::make_shared<FusionStreamTask>(devId_ + "_fusion", sensorInfo_.colorW, sensorInfo_.colorH,
                                                      sensorInfo_.colorFormat, fusedFps_, fusedEncoder, fusedFile,
                                                      fusedMtx_, alignFilter_, hwD2CMode_, cfg_.alpha, cfg_.depthMinM,
@@ -520,11 +533,12 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
     std::string camType = device_->getDeviceInfo()->getName();
     std::replace(camType.begin(), camType.end(), ' ', '_');
     auto devInfo = device_->getDeviceInfo();
-    viewerIdx_ = viewer.addDevice(safeName_, camType, devInfo->getSerialNumber(), sensorInfo_.hasColor,
-                                  sensorInfo_.colorFormat, sensorInfo_.colorW, sensorInfo_.colorH,
-                                  sensorInfo_.hasDepth, depthSlotFmt, depthSlotW, depthSlotH, sensorInfo_.hasIR,
-                                  sensorInfo_.irW, sensorInfo_.irH, sensorInfo_.hasIRLeft, sensorInfo_.irLW,
-                                  sensorInfo_.irLH, sensorInfo_.hasIRRight, sensorInfo_.irRW, sensorInfo_.irRH);
+    OBFormat colorFmtOb = nioFormatToOb(sensorInfo_.colorFormat);
+    viewerIdx_ = viewer.addDevice(safeName_, camType, devInfo->getSerialNumber(), sensorInfo_.hasColor, colorFmtOb,
+                                  sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.hasDepth, depthSlotFmt,
+                                  depthSlotW, depthSlotH, sensorInfo_.hasIR, sensorInfo_.irW, sensorInfo_.irH,
+                                  sensorInfo_.hasIRLeft, sensorInfo_.irLW, sensorInfo_.irLH, sensorInfo_.hasIRRight,
+                                  sensorInfo_.irRW, sensorInfo_.irRH);
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +566,7 @@ void CaptureSession::onImuFrameSet(std::shared_ptr<ob::FrameSet> frameSet) {
         } catch (...) {
         }
         std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-        sensorFiles_->frameCounts[OB_FRAME_ACCEL]++;
+        sensorFiles_->frameCounts[NioFrameType::ACCEL]++;
     }
 
     if (gyroFrameRaw) {
@@ -570,7 +584,7 @@ void CaptureSession::onImuFrameSet(std::shared_ptr<ob::FrameSet> frameSet) {
         } catch (...) {
         }
         std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-        sensorFiles_->frameCounts[OB_FRAME_GYRO]++;
+        sensorFiles_->frameCounts[NioFrameType::GYRO]++;
     }
 }
 
@@ -616,43 +630,40 @@ void CaptureSession::closeFiles() {
 // Consumer thread loops
 // ---------------------------------------------------------------------------
 
-// Video consumer thread: dequeues FrameSets from videoQueue_,
+// Video consumer thread: dequeues NioFrameSets from videoQueue_,
 // dispatches to fusion (if enabled), then iterates frameConsumers_.
 void CaptureSession::videoConsumerLoop() {
     setThreadName(devId_ + "_vcons");
     NIO_LOG_DEBUG_S("Video consumer started: " << safeName_);
 
     while (consumersRunning_.load()) {
-        std::shared_ptr<ob::FrameSet> frameSet;
-        if (!videoQueue_.pop(frameSet))
+        std::shared_ptr<NioFrameSet> nioFs;
+        if (!videoQueue_.pop(nioFs))
             continue;
-        if (!frameSet)
+        if (!nioFs)
             continue;
 
         if (canFuse_ && fusionTask_) {
             if (hwD2CMode_) {
-                auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-                auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+                auto colorFrame = nioFs->getFrame(NioFrameType::COLOR);
+                auto depthFrame = nioFs->getFrame(NioFrameType::DEPTH);
                 if (colorFrame && depthFrame) {
-                    fusionTask_->enqueueColor(colorFrame->getData(), colorFrame->getDataSize(),
-                                              colorFrame->getTimeStampUs());
-                    float dsForFusion = depthScale_;
-                    try {
-                        auto depthF = depthFrame->as<ob::DepthFrame>();
-                        if (depthF)
-                            dsForFusion = depthF->getValueScale();
-                    } catch (...) {
-                    }
-                    fusionTask_->enqueueDepth(depthFrame->getData(), depthFrame->getDataSize(),
-                                              depthFrame->getTimeStampUs(), dsForFusion);
+                    fusionTask_->enqueueColor(colorFrame->rawData(), colorFrame->dataSize(), colorFrame->timestampUs);
+                    fusionTask_->enqueueDepth(depthFrame->rawData(), depthFrame->dataSize(), depthFrame->timestampUs,
+                                              depthFrame->depthScale);
                 }
             } else {
-                fusionTask_->enqueueFrameSet(frameSet);
+                // SW D2C: fusion needs the original ob::FrameSet for ob::Align
+                auto obFs = std::static_pointer_cast<ob::FrameSet>(nioFs->nativeFrameSet);
+                if (obFs)
+                    fusionTask_->enqueueObFrameSet(obFs);
+                else
+                    fusionTask_->enqueueNioFrameSet(nioFs);
             }
         }
 
         for (auto& fc : frameConsumers_)
-            fc->consume(frameSet);
+            fc->consume(nioFs);
     }
 
     NIO_LOG_DEBUG_S("Video consumer stopped: " << safeName_);
@@ -702,8 +713,10 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
 
     try {
         videoPipeline_->start(videoConfig_, [this](std::shared_ptr<ob::FrameSet> frameSet) {
-            if (frameSet)
-                videoQueue_.push(std::move(frameSet));
+            if (frameSet) {
+                auto nioFs = std::make_shared<NioFrameSet>(obFrameSetToNio(frameSet));
+                videoQueue_.push(std::move(nioFs));
+            }
         });
     } catch (ob::Error& e) {
         std::cerr << " Pipeline start failed for " << safeName_ << ": " << e.what() << std::endl;
@@ -776,7 +789,7 @@ void CaptureSession::stop() {
 // ---------------------------------------------------------------------------
 
 // Atomically read-and-reset per-type frame counts, return the count for the given type.
-uint64_t CaptureSession::getAndResetFrameCount(OBFrameType type) {
+uint64_t CaptureSession::getAndResetFrameCount(NioFrameType type) {
     std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
     auto it = sensorFiles_->frameCounts.find(type);
     if (it == sensorFiles_->frameCounts.end())
@@ -795,7 +808,7 @@ uint64_t CaptureSession::getAndResetFusionCount() {
 
 // Print per-stream FPS to stdout for the last reportDurationMs interval.
 void CaptureSession::reportFps(uint64_t reportDurationMs) {
-    std::map<OBFrameType, uint64_t> tempCounts;
+    std::map<NioFrameType, uint64_t> tempCounts;
     {
         std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
         if (!sensorFiles_->frameCounts.empty()) {
@@ -812,7 +825,7 @@ void CaptureSession::reportFps(uint64_t reportDurationMs) {
         std::cout << "Recording... FPS: ";
         std::string sep;
         for (const auto& item : tempCounts) {
-            auto name = ob::TypeHelper::convertOBFrameTypeToString(item.first);
+            auto name = nioFrameTypeToStr(item.first);
             float rate = (reportDurationMs > 0) ? (item.second / (reportDurationMs / 1000.0f)) : 0.0f;
             std::cout << std::fixed << std::setprecision(1) << sep << name << "=" << rate;
             sep = ", ";

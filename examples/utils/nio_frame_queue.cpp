@@ -57,7 +57,7 @@ void FrameQueue<T>::wakeAll() {
     cv_.notify_all();
 }
 
-template class FrameQueue<std::shared_ptr<ob::FrameSet>>;
+template class FrameQueue<std::shared_ptr<NioFrameSet>>;
 template class FrameQueue<std::string>;
 
 } // namespace nio

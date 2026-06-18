@@ -17,21 +17,18 @@ ColorFrameConsumer::ColorFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeT
 , channel_(channel)
 , sensorFiles_(std::move(sensorFiles)) {}
 
-// Extract color frame from FrameSet; enqueue to H264 encode task,
-// push raw data to SDLViewer, and increment frame counter.
-void ColorFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
-    auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+void ColorFrameConsumer::consume(std::shared_ptr<NioFrameSet> frameSet) {
+    auto* colorFrame = frameSet->getFrame(NioFrameType::COLOR);
     if (!colorFrame)
         return;
     if (encodeTask_)
-        encodeTask_->enqueue(colorFrame->getData(), colorFrame->getDataSize(), colorFrame->getTimeStampUs());
+        encodeTask_->enqueue(colorFrame->rawData(), colorFrame->dataSize(), colorFrame->timestampUs);
     if (viewerIdx_ >= 0 && viewer_)
-        viewer_->pushFrame(viewerIdx_, channel_, colorFrame->getData(), colorFrame->getDataSize());
+        viewer_->pushFrame(viewerIdx_, channel_, colorFrame->rawData(), colorFrame->dataSize());
     std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-    sensorFiles_->frameCounts[OB_FRAME_COLOR]++;
+    sensorFiles_->frameCounts[NioFrameType::COLOR]++;
 }
 
-// Stop the H264 encode worker thread.
 void ColorFrameConsumer::stopTask() {
     if (encodeTask_)
         encodeTask_->stop();
@@ -58,40 +55,30 @@ DepthFrameConsumer::DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeT
 , depthMinM_(depthMinM)
 , depthMaxM_(depthMaxM) {}
 
-// Extract depth frame from FrameSet; enqueue Y16 raw to DepthRawTask (unless
-// native H264/H265), enqueue to H264 encode task, push to SDLViewer with
-// depth scale and range for colormap, and increment frame counter.
-void DepthFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
-    auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+void DepthFrameConsumer::consume(std::shared_ptr<NioFrameSet> frameSet) {
+    auto* depthFrame = frameSet->getFrame(NioFrameType::DEPTH);
     if (!depthFrame)
         return;
 
-    auto format = depthFrame->getFormat();
-    auto data = depthFrame->getData();
-    auto size = depthFrame->getDataSize();
+    auto format = depthFrame->format;
+    auto* data = depthFrame->rawData();
+    auto size = depthFrame->dataSize();
 
-    if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+    if (format != NioFormat::H264 && format != NioFormat::H265 && format != NioFormat::HEVC) {
         if (rawTask_)
-            rawTask_->enqueue(data, size, depthFrame->getTimeStampUs());
+            rawTask_->enqueue(data, size, depthFrame->timestampUs);
     }
 
     if (encodeTask_)
-        encodeTask_->enqueue(data, size, depthFrame->getTimeStampUs());
+        encodeTask_->enqueue(data, size, depthFrame->timestampUs);
 
-    float viewerDepthScale = depthScale_;
-    try {
-        auto depthF = depthFrame->as<ob::DepthFrame>();
-        if (depthF)
-            viewerDepthScale = depthF->getValueScale();
-    } catch (...) {
-    }
+    float viewerDepthScale = depthFrame->depthScale;
     if (viewerIdx_ >= 0 && viewer_)
         viewer_->pushFrame(viewerIdx_, channel_, data, size, viewerDepthScale, depthMinM_, depthMaxM_);
     std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-    sensorFiles_->frameCounts[OB_FRAME_DEPTH]++;
+    sensorFiles_->frameCounts[NioFrameType::DEPTH]++;
 }
 
-// Stop both H264 encode and raw-write worker threads.
 void DepthFrameConsumer::stopTask() {
     if (encodeTask_)
         encodeTask_->stop();
@@ -106,8 +93,9 @@ void DepthFrameConsumer::setViewer(SDLViewer* viewer, int viewerIdx) {
 
 // === IRFrameConsumer (used for IR, IR-Left, IR-Right) ===
 
-IRFrameConsumer::IRFrameConsumer(OBFrameType frameType, std::shared_ptr<EncodeStreamTask> encodeTask, SDLViewer* viewer,
-                                 int viewerIdx, ViewerChannel channel, std::shared_ptr<SensorFiles> sensorFiles)
+IRFrameConsumer::IRFrameConsumer(NioFrameType frameType, std::shared_ptr<EncodeStreamTask> encodeTask,
+                                 SDLViewer* viewer, int viewerIdx, ViewerChannel channel,
+                                 std::shared_ptr<SensorFiles> sensorFiles)
 : frameType_(frameType)
 , encodeTask_(std::move(encodeTask))
 , viewer_(viewer)
@@ -115,16 +103,14 @@ IRFrameConsumer::IRFrameConsumer(OBFrameType frameType, std::shared_ptr<EncodeSt
 , channel_(channel)
 , sensorFiles_(std::move(sensorFiles)) {}
 
-// Extract IR frame (type determined by frameType_) from FrameSet;
-// enqueue to H264 encode task, push to SDLViewer, increment frame counter.
-void IRFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
-    auto irFrame = frameSet->getFrame(frameType_);
+void IRFrameConsumer::consume(std::shared_ptr<NioFrameSet> frameSet) {
+    auto* irFrame = frameSet->getFrame(frameType_);
     if (!irFrame)
         return;
     if (encodeTask_)
-        encodeTask_->enqueue(irFrame->getData(), irFrame->getDataSize(), irFrame->getTimeStampUs());
+        encodeTask_->enqueue(irFrame->rawData(), irFrame->dataSize(), irFrame->timestampUs);
     if (viewerIdx_ >= 0 && viewer_)
-        viewer_->pushFrame(viewerIdx_, channel_, irFrame->getData(), irFrame->getDataSize());
+        viewer_->pushFrame(viewerIdx_, channel_, irFrame->rawData(), irFrame->dataSize());
     std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
     sensorFiles_->frameCounts[frameType_]++;
 }

@@ -12,6 +12,7 @@
 #include "nio_stream_io.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_adapter.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -129,8 +130,9 @@ std::shared_ptr<std::ofstream> openBufferedFile(const std::string& path, std::io
 // For native H.264/H.265: no software encoder needed — just write NALs.
 // For other formats (MJPEG/YUYV/RGB/etc.): create H264Encoder.
 // If encoder init fails, fall back to raw binary file (no encoding).
-std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, OBFormat format, int w, int h, int fps,
+std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, NioFormat format, int w, int h, int fps,
                                                    const char* seiUuid, bool writeSEI) {
+    OBFormat obFormat = nioFormatToOb(format);
     auto se = std::make_shared<StreamEncoder>();
     se->srcFormat = format;
     se->width = w;
@@ -139,17 +141,18 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, 
     se->sensorTag = filePath;
     se->writeSEI = writeSEI;
 
-    if (format == OB_FORMAT_H264 || format == OB_FORMAT_H265 || format == OB_FORMAT_HEVC) {
+    if (format == NioFormat::H264 || format == NioFormat::H265 || format == NioFormat::HEVC) {
         se->isNativeH264 = true;
         se->file = openBufferedFile(filePath, std::ios::binary, NIO_FILE_BUF_SIZE, &se->fileBuf);
         return se;
     }
 
     se->encoder = std::make_shared<H264Encoder>();
-    if (!se->encoder->init(w, h, fps, format, 4000000, seiUuid)) {
-        std::cerr << " Failed to init H264 encoder for format=" << format << " " << w << "x" << h << std::endl;
-        NIO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << format << " " << w << "x"
-                                                                 << h << "@" << fps);
+    if (!se->encoder->init(w, h, fps, obFormat, 4000000, seiUuid)) {
+        std::cerr << " Failed to init H264 encoder for format=" << nioFormatToStr(format) << " " << w << "x" << h
+                  << std::endl;
+        NIO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << nioFormatToStr(format)
+                                                                 << " " << w << "x" << h << "@" << fps);
         se->encoder.reset();
         se->file = openBufferedFile(filePath, std::ios::binary, NIO_FILE_BUF_SIZE, &se->fileBuf);
         return se;
