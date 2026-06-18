@@ -22,15 +22,35 @@
 
 namespace nio {
 
+// FrameConsumer: abstract base for per-stream frame dispatch in the video
+// consumer thread. Each subclass handles encode, viewer push, and frame
+// counting for one sensor type (color / depth / IR variants).
+//
+// Lifecycle:
+//   1. Constructed in CaptureSession::createEncodersAndTasks() with
+//      encodeTask + sensorFiles (viewer is null at this point).
+//   2. setViewer() called in startVideoPipeline() after the SDLViewer
+//      slot index is assigned — delayed because the viewer is created later.
+//   3. consume() called repeatedly by the video consumer thread.
+//   4. stopTask() called during CaptureSession::stop() to join worker threads.
+
 class FrameConsumer {
 public:
     virtual ~FrameConsumer() = default;
 
+    // Dispatch one FrameSet: extract the relevant frame, enqueue to encode
+    // task, push to viewer, and increment frame counter.
     virtual void consume(std::shared_ptr<ob::FrameSet> frameSet) = 0;
+
+    // Late-bind the viewer pointer and device slot index. Called after
+    // addDevice() assigns a slot, before the consumer thread starts.
     virtual void setViewer(SDLViewer *viewer, int viewerIdx) = 0;
+
+    // Stop the underlying StreamTask worker thread(s). Called during teardown.
     virtual void stopTask() = 0;
 };
 
+// ColorFrameConsumer: handles COLOR frames — H264 encode + viewer display + count.
 class ColorFrameConsumer : public FrameConsumer {
 public:
     ColorFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask,
@@ -49,6 +69,8 @@ private:
     std::shared_ptr<SensorFiles> sensorFiles_;
 };
 
+// DepthFrameConsumer: handles DEPTH frames — H264 encode + Y16 raw write +
+// viewer display (with depthScale/depthRange colormap) + count.
 class DepthFrameConsumer : public FrameConsumer {
 public:
     DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask,
@@ -73,6 +95,8 @@ private:
     float depthMaxM_;
 };
 
+// IRFrameConsumer: handles IR / IR-LEFT / IR-RIGHT frames — H264 encode +
+// viewer display + count. Shared by all three IR variants via frameType_/channel_ params.
 class IRFrameConsumer : public FrameConsumer {
 public:
     IRFrameConsumer(OBFrameType frameType, std::shared_ptr<EncodeStreamTask> encodeTask,

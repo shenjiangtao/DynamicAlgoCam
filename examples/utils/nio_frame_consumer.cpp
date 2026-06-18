@@ -17,6 +17,8 @@ ColorFrameConsumer::ColorFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeT
 , channel_(channel)
 , sensorFiles_(std::move(sensorFiles)) {}
 
+// Extract color frame from FrameSet; enqueue to H264 encode task,
+// push raw data to SDLViewer, and increment frame counter.
 void ColorFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
     auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
     if (!colorFrame)
@@ -29,6 +31,7 @@ void ColorFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
     sensorFiles_->frameCounts[OB_FRAME_COLOR]++;
 }
 
+// Stop the H264 encode worker thread.
 void ColorFrameConsumer::stopTask() {
     if (encodeTask_)
         encodeTask_->stop();
@@ -55,6 +58,9 @@ DepthFrameConsumer::DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeT
 , depthMinM_(depthMinM)
 , depthMaxM_(depthMaxM) {}
 
+// Extract depth frame from FrameSet; enqueue Y16 raw to DepthRawTask (unless
+// native H264/H265), enqueue to H264 encode task, push to SDLViewer with
+// depth scale and range for colormap, and increment frame counter.
 void DepthFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
     auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
     if (!depthFrame)
@@ -85,6 +91,7 @@ void DepthFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
     sensorFiles_->frameCounts[OB_FRAME_DEPTH]++;
 }
 
+// Stop both H264 encode and raw-write worker threads.
 void DepthFrameConsumer::stopTask() {
     if (encodeTask_)
         encodeTask_->stop();
@@ -108,6 +115,8 @@ IRFrameConsumer::IRFrameConsumer(OBFrameType frameType, std::shared_ptr<EncodeSt
 , channel_(channel)
 , sensorFiles_(std::move(sensorFiles)) {}
 
+// Extract IR frame (type determined by frameType_) from FrameSet;
+// enqueue to H264 encode task, push to SDLViewer, increment frame counter.
 void IRFrameConsumer::consume(std::shared_ptr<ob::FrameSet> frameSet) {
     auto irFrame = frameSet->getFrame(frameType_);
     if (!irFrame)

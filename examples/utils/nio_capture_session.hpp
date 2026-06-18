@@ -99,11 +99,19 @@ public:
 
 private:
     bool enumerateSensors();
+    // Create H264 encoders, StreamEncoder entries, and FrameConsumer objects
+    // for each active sensor. Consumers are stored in frameConsumers_ and
+    // started immediately; viewer is bound later via setViewer().
     void createEncodersAndTasks();
     void setupFusion();
     void writeIntrinsicJson();
     bool checkHWD2CAlign();
+    // Video consumer thread entry: dequeues FrameSets from videoQueue_,
+    // dispatches to fusionTask_ (if enabled), then iterates frameConsumers_.
     void videoConsumerLoop();
+
+    // IMU consumer thread entry: dequeues CSV lines from imuQueue_,
+    // forwards to ImuStreamTask for file write.
     void imuConsumerLoop();
 
     std::shared_ptr<ob::Device> device_;
@@ -129,6 +137,8 @@ private:
     bool canFuse_ = false;
     int viewerIdx_ = -1;
 
+    // Per-stream consumers (color/depth/IR/IR-left/IR-right).
+    // Built in createEncodersAndTasks(); viewer bound in startVideoPipeline().
     std::vector<std::unique_ptr<FrameConsumer>> frameConsumers_;
     std::shared_ptr<FusionStreamTask> fusionTask_;
     std::shared_ptr<ImuStreamTask> imuTask_;
