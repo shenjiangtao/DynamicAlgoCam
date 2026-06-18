@@ -37,6 +37,9 @@ add_library(ob_examples_utils STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_thread.cpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_stream_tasks.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_stream_tasks.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_capture_config.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_capture_session.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_capture_session.cpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC
