@@ -17,6 +17,7 @@
 #include "nio_capture_config.hpp"
 #include "nio_color_convert.hpp"
 #include "nio_common.hpp"
+#include "nio_frame_consumer.hpp"
 #include "nio_frame_queue.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_sdl_viewer.hpp"
@@ -128,12 +129,7 @@ private:
     bool canFuse_ = false;
     int viewerIdx_ = -1;
 
-    std::shared_ptr<EncodeStreamTask> colorEncodeTask_;
-    std::shared_ptr<EncodeStreamTask> depthEncodeTask_;
-    std::shared_ptr<EncodeStreamTask> irEncodeTask_;
-    std::shared_ptr<EncodeStreamTask> irLeftEncodeTask_;
-    std::shared_ptr<EncodeStreamTask> irRightEncodeTask_;
-    std::shared_ptr<DepthRawTask> depthRawTask_;
+    std::vector<std::unique_ptr<FrameConsumer>> frameConsumers_;
     std::shared_ptr<FusionStreamTask> fusionTask_;
     std::shared_ptr<ImuStreamTask> imuTask_;
 

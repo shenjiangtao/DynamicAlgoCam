@@ -296,8 +296,10 @@ void CaptureSession::createEncodersAndTasks() {
     if (sensorInfo_.hasColor && sensorInfo_.colorFormat != OB_FORMAT_UNKNOWN) {
         sf->color = createStreamEncoder(baseName_ + "_color_" + startTs_ + ".h264", sensorInfo_.colorFormat,
                                         sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFps, nullptr, false);
-        colorEncodeTask_ = std::make_shared<EncodeStreamTask>(devId_ + "_color_enc", sf->color);
-        colorEncodeTask_->start();
+        auto task = std::make_shared<EncodeStreamTask>(devId_ + "_color_enc", sf->color);
+        task->start();
+        frameConsumers_.push_back(
+            std::unique_ptr<FrameConsumer>(new ColorFrameConsumer(task, nullptr, -1, ViewerChannel::COLOR, sf)));
         NIO_LOG_INFO_S("Color output: " << baseName_ + "_color_" + startTs_ + ".h264"
                                         << " fmt=" << sensorInfo_.colorFormat);
     }
@@ -306,32 +308,40 @@ void CaptureSession::createEncodersAndTasks() {
                                         sensorInfo_.depthW, sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
         sf->depthRawFile =
             std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
-        depthEncodeTask_ = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
-        depthEncodeTask_->start();
-        depthRawTask_ = std::make_shared<DepthRawTask>(devId_ + "_depth_raw", sf->depthRawFile, sensorInfo_.depthW,
-                                                       sensorInfo_.depthH, depthScale_);
-        depthRawTask_->start();
+        auto encTask = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
+        encTask->start();
+        auto rawTask = std::make_shared<DepthRawTask>(devId_ + "_depth_raw", sf->depthRawFile, sensorInfo_.depthW,
+                                                      sensorInfo_.depthH, depthScale_);
+        rawTask->start();
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new DepthFrameConsumer(
+            encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM, cfg_.depthMaxM)));
         NIO_LOG_INFO_S("Depth output: " << baseName_ + "_depth_" + startTs_ + ".h264" << " + raw");
     }
     if (sensorInfo_.hasIR && sensorInfo_.irFormat != OB_FORMAT_UNKNOWN) {
         sf->ir = createStreamEncoder(baseName_ + "_ir_" + startTs_ + ".h264", sensorInfo_.irFormat, sensorInfo_.irW,
                                      sensorInfo_.irH, sensorInfo_.irFps, nullptr, false);
-        irEncodeTask_ = std::make_shared<EncodeStreamTask>(devId_ + "_ir_enc", sf->ir);
-        irEncodeTask_->start();
+        auto task = std::make_shared<EncodeStreamTask>(devId_ + "_ir_enc", sf->ir);
+        task->start();
+        frameConsumers_.push_back(
+            std::unique_ptr<FrameConsumer>(new IRFrameConsumer(OB_FRAME_IR, task, nullptr, -1, ViewerChannel::IR, sf)));
         NIO_LOG_INFO_S("IR output: " << baseName_ + "_ir_" + startTs_ + ".h264");
     }
     if (sensorInfo_.hasIRLeft && sensorInfo_.irLeftFormat != OB_FORMAT_UNKNOWN) {
         sf->irLeft = createStreamEncoder(baseName_ + "_ir_left_" + startTs_ + ".h264", sensorInfo_.irLeftFormat,
                                          sensorInfo_.irLW, sensorInfo_.irLH, sensorInfo_.irLFps, nullptr, false);
-        irLeftEncodeTask_ = std::make_shared<EncodeStreamTask>(devId_ + "_irl_enc", sf->irLeft);
-        irLeftEncodeTask_->start();
+        auto task = std::make_shared<EncodeStreamTask>(devId_ + "_irl_enc", sf->irLeft);
+        task->start();
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
+            new IRFrameConsumer(OB_FRAME_IR_LEFT, task, nullptr, -1, ViewerChannel::IR_LEFT, sf)));
         NIO_LOG_INFO_S("IR Left output: " << baseName_ + "_ir_left_" + startTs_ + ".h264");
     }
     if (sensorInfo_.hasIRRight && sensorInfo_.irRightFormat != OB_FORMAT_UNKNOWN) {
         sf->irRight = createStreamEncoder(baseName_ + "_ir_right_" + startTs_ + ".h264", sensorInfo_.irRightFormat,
                                           sensorInfo_.irRW, sensorInfo_.irRH, sensorInfo_.irRFps, nullptr, false);
-        irRightEncodeTask_ = std::make_shared<EncodeStreamTask>(devId_ + "_irr_enc", sf->irRight);
-        irRightEncodeTask_->start();
+        auto task = std::make_shared<EncodeStreamTask>(devId_ + "_irr_enc", sf->irRight);
+        task->start();
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
+            new IRFrameConsumer(OB_FRAME_IR_RIGHT, task, nullptr, -1, ViewerChannel::IR_RIGHT, sf)));
         NIO_LOG_INFO_S("IR Right output: " << baseName_ + "_ir_right_" + startTs_ + ".h264");
     }
     if (sensorInfo_.hasAccel || sensorInfo_.hasGyro) {
@@ -468,73 +478,8 @@ void CaptureSession::videoConsumerLoop() {
             }
         }
 
-        if (auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR)) {
-            if (colorEncodeTask_)
-                colorEncodeTask_->enqueue(colorFrame->getData(), colorFrame->getDataSize(),
-                                          colorFrame->getTimeStampUs());
-            if (viewerIdx_ >= 0 && viewer_)
-                viewer_->pushFrame(viewerIdx_, ViewerChannel::COLOR, colorFrame->getData(), colorFrame->getDataSize());
-            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-            sensorFiles_->frameCounts[OB_FRAME_COLOR]++;
-        }
-
-        if (auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH)) {
-            auto format = depthFrame->getFormat();
-            auto data = depthFrame->getData();
-            auto size = depthFrame->getDataSize();
-
-            if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                if (depthRawTask_)
-                    depthRawTask_->enqueue(data, size, depthFrame->getTimeStampUs());
-            }
-
-            if (depthEncodeTask_)
-                depthEncodeTask_->enqueue(data, size, depthFrame->getTimeStampUs());
-
-            float viewerDepthScale = depthScale_;
-            try {
-                auto depthF = depthFrame->as<ob::DepthFrame>();
-                if (depthF)
-                    viewerDepthScale = depthF->getValueScale();
-            } catch (...) {
-            }
-            if (viewerIdx_ >= 0 && viewer_)
-                viewer_->pushFrame(viewerIdx_, ViewerChannel::DEPTH, data, size, viewerDepthScale, cfg_.depthMinM,
-                                   cfg_.depthMaxM);
-            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-            sensorFiles_->frameCounts[OB_FRAME_DEPTH]++;
-        }
-
-        if (auto irFrame = frameSet->getFrame(OB_FRAME_IR)) {
-            if (irEncodeTask_)
-                irEncodeTask_->enqueue(irFrame->getData(), irFrame->getDataSize(), irFrame->getTimeStampUs());
-            if (viewerIdx_ >= 0 && viewer_)
-                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR, irFrame->getData(), irFrame->getDataSize());
-            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-            sensorFiles_->frameCounts[OB_FRAME_IR]++;
-        }
-
-        if (auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT)) {
-            if (irLeftEncodeTask_)
-                irLeftEncodeTask_->enqueue(irLeftFrame->getData(), irLeftFrame->getDataSize(),
-                                           irLeftFrame->getTimeStampUs());
-            if (viewerIdx_ >= 0 && viewer_)
-                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
-                                   irLeftFrame->getDataSize());
-            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-            sensorFiles_->frameCounts[OB_FRAME_IR_LEFT]++;
-        }
-
-        if (auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT)) {
-            if (irRightEncodeTask_)
-                irRightEncodeTask_->enqueue(irRightFrame->getData(), irRightFrame->getDataSize(),
-                                            irRightFrame->getTimeStampUs());
-            if (viewerIdx_ >= 0 && viewer_)
-                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
-                                   irRightFrame->getDataSize());
-            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-            sensorFiles_->frameCounts[OB_FRAME_IR_RIGHT]++;
-        }
+        for (auto& fc : frameConsumers_)
+            fc->consume(frameSet);
     }
 
     NIO_LOG_DEBUG_S("Video consumer stopped: " << safeName_);
@@ -587,6 +532,11 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
     try {
         videoPipeline_->enableFrameSync();
     } catch (...) {
+    }
+
+    if (viewerIdx_ >= 0) {
+        for (auto& fc : frameConsumers_)
+            fc->setViewer(viewer_, viewerIdx_);
     }
 
     consumersRunning_ = true;
@@ -685,18 +635,8 @@ void CaptureSession::stop() {
     if (imuConsumerThread_.joinable())
         imuConsumerThread_.join();
 
-    if (colorEncodeTask_)
-        colorEncodeTask_->stop();
-    if (depthEncodeTask_)
-        depthEncodeTask_->stop();
-    if (depthRawTask_)
-        depthRawTask_->stop();
-    if (irEncodeTask_)
-        irEncodeTask_->stop();
-    if (irLeftEncodeTask_)
-        irLeftEncodeTask_->stop();
-    if (irRightEncodeTask_)
-        irRightEncodeTask_->stop();
+    for (auto& fc : frameConsumers_)
+        fc->stopTask();
     if (fusionTask_)
         fusionTask_->stop();
     if (imuTask_)
