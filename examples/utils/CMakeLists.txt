@@ -40,6 +40,8 @@ add_library(ob_examples_utils STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_capture_config.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_capture_session.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_capture_session.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_frame_queue.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_frame_queue.cpp
 )
 
 target_link_libraries(ob_examples_utils PUBLIC

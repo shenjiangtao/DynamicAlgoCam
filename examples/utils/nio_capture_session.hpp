@@ -4,14 +4,20 @@
 // nio_capture_session.hpp — Per-device capture session: sensor enumeration,
 // encoder/file creation, fusion setup, pipeline start/stop, and teardown.
 //
-// CaptureSession owns all per-device state (pipelines, encoders, tasks,
-// files) and manages their lifecycle from setup() through stop().
+// Producer-consumer threading model:
+//   - SDK video callback (producer): enqueues ob::FrameSet to VideoFrameQueue,
+//     returns immediately — zero blocking in the callback.
+//   - Video consumer thread: dequeues FrameSets, dispatches to encode tasks,
+//     fusion task, viewer pushFrame, frame counter updates.
+//   - SDK IMU callback (producer): formats CSV line, enqueues to ImuFrameQueue.
+//   - IMU consumer thread: dequeues CSV lines, writes to ImuStreamTask.
 
 #pragma once
 
 #include "nio_capture_config.hpp"
 #include "nio_color_convert.hpp"
 #include "nio_common.hpp"
+#include "nio_frame_queue.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
@@ -32,6 +38,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <libobsensor/ObSensor.hpp>
@@ -95,6 +102,8 @@ private:
     void setupFusion();
     void writeIntrinsicJson();
     bool checkHWD2CAlign();
+    void videoConsumerLoop();
+    void imuConsumerLoop();
 
     std::shared_ptr<ob::Device> device_;
     std::string safeName_;
@@ -129,6 +138,14 @@ private:
     std::shared_ptr<ImuStreamTask> imuTask_;
 
     std::string devId_;
+
+    VideoFrameQueue videoQueue_{8};
+    ImuFrameQueue imuQueue_{32};
+    std::thread videoConsumerThread_;
+    std::thread imuConsumerThread_;
+    std::atomic<bool> consumersRunning_{false};
+
+    SDLViewer *viewer_ = nullptr;
 };
 
 } // namespace nio

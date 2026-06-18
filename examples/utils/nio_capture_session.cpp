@@ -431,7 +431,141 @@ bool CaptureSession::checkHWD2CAlign() {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Video consumer thread: dequeues FrameSets and dispatches to workers
+// ---------------------------------------------------------------------------
+
+void CaptureSession::videoConsumerLoop() {
+    setThreadName(devId_ + "_vcons");
+    NIO_LOG_DEBUG_S("Video consumer started: " << safeName_);
+
+    while (consumersRunning_.load()) {
+        std::shared_ptr<ob::FrameSet> frameSet;
+        if (!videoQueue_.pop(frameSet))
+            continue;
+        if (!frameSet)
+            continue;
+
+        if (canFuse_ && fusionTask_) {
+            if (hwD2CMode_) {
+                auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
+                auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
+                if (colorFrame && depthFrame) {
+                    fusionTask_->enqueueColor(colorFrame->getData(), colorFrame->getDataSize(),
+                                              colorFrame->getTimeStampUs());
+                    float dsForFusion = depthScale_;
+                    try {
+                        auto depthF = depthFrame->as<ob::DepthFrame>();
+                        if (depthF)
+                            dsForFusion = depthF->getValueScale();
+                    } catch (...) {
+                    }
+                    fusionTask_->enqueueDepth(depthFrame->getData(), depthFrame->getDataSize(),
+                                              depthFrame->getTimeStampUs(), dsForFusion);
+                }
+            } else {
+                fusionTask_->enqueueFrameSet(frameSet);
+            }
+        }
+
+        if (auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR)) {
+            if (colorEncodeTask_)
+                colorEncodeTask_->enqueue(colorFrame->getData(), colorFrame->getDataSize(),
+                                          colorFrame->getTimeStampUs());
+            if (viewerIdx_ >= 0 && viewer_)
+                viewer_->pushFrame(viewerIdx_, ViewerChannel::COLOR, colorFrame->getData(), colorFrame->getDataSize());
+            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+            sensorFiles_->frameCounts[OB_FRAME_COLOR]++;
+        }
+
+        if (auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH)) {
+            auto format = depthFrame->getFormat();
+            auto data = depthFrame->getData();
+            auto size = depthFrame->getDataSize();
+
+            if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
+                if (depthRawTask_)
+                    depthRawTask_->enqueue(data, size, depthFrame->getTimeStampUs());
+            }
+
+            if (depthEncodeTask_)
+                depthEncodeTask_->enqueue(data, size, depthFrame->getTimeStampUs());
+
+            float viewerDepthScale = depthScale_;
+            try {
+                auto depthF = depthFrame->as<ob::DepthFrame>();
+                if (depthF)
+                    viewerDepthScale = depthF->getValueScale();
+            } catch (...) {
+            }
+            if (viewerIdx_ >= 0 && viewer_)
+                viewer_->pushFrame(viewerIdx_, ViewerChannel::DEPTH, data, size, viewerDepthScale, cfg_.depthMinM,
+                                   cfg_.depthMaxM);
+            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+            sensorFiles_->frameCounts[OB_FRAME_DEPTH]++;
+        }
+
+        if (auto irFrame = frameSet->getFrame(OB_FRAME_IR)) {
+            if (irEncodeTask_)
+                irEncodeTask_->enqueue(irFrame->getData(), irFrame->getDataSize(), irFrame->getTimeStampUs());
+            if (viewerIdx_ >= 0 && viewer_)
+                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR, irFrame->getData(), irFrame->getDataSize());
+            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+            sensorFiles_->frameCounts[OB_FRAME_IR]++;
+        }
+
+        if (auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT)) {
+            if (irLeftEncodeTask_)
+                irLeftEncodeTask_->enqueue(irLeftFrame->getData(), irLeftFrame->getDataSize(),
+                                           irLeftFrame->getTimeStampUs());
+            if (viewerIdx_ >= 0 && viewer_)
+                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
+                                   irLeftFrame->getDataSize());
+            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+            sensorFiles_->frameCounts[OB_FRAME_IR_LEFT]++;
+        }
+
+        if (auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT)) {
+            if (irRightEncodeTask_)
+                irRightEncodeTask_->enqueue(irRightFrame->getData(), irRightFrame->getDataSize(),
+                                            irRightFrame->getTimeStampUs());
+            if (viewerIdx_ >= 0 && viewer_)
+                viewer_->pushFrame(viewerIdx_, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
+                                   irRightFrame->getDataSize());
+            std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+            sensorFiles_->frameCounts[OB_FRAME_IR_RIGHT]++;
+        }
+    }
+
+    NIO_LOG_DEBUG_S("Video consumer stopped: " << safeName_);
+}
+
+// ---------------------------------------------------------------------------
+// IMU consumer thread: dequeues CSV lines and writes to ImuStreamTask
+// ---------------------------------------------------------------------------
+
+void CaptureSession::imuConsumerLoop() {
+    setThreadName(devId_ + "_icons");
+    NIO_LOG_DEBUG_S("IMU consumer started: " << safeName_);
+
+    while (consumersRunning_.load()) {
+        std::string line;
+        if (!imuQueue_.pop(line))
+            continue;
+        if (imuTask_)
+            imuTask_->enqueueLine(std::move(line));
+    }
+
+    NIO_LOG_DEBUG_S("IMU consumer stopped: " << safeName_);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline start / stop
+// ---------------------------------------------------------------------------
+
 void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
+    viewer_ = &viewer;
+
     if (!noShow) {
         OBFormat depthSlotFmt = OB_FORMAT_Y16;
         int depthSlotW = sensorInfo_.depthW;
@@ -455,105 +589,21 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
     } catch (...) {
     }
 
+    consumersRunning_ = true;
+    videoConsumerThread_ = std::thread(&CaptureSession::videoConsumerLoop, this);
+
     try {
-        videoPipeline_->start(videoConfig_, [this, &viewer](std::shared_ptr<ob::FrameSet> frameSet) {
-            if (!frameSet)
-                return;
-
-            if (canFuse_ && fusionTask_) {
-                if (hwD2CMode_) {
-                    auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR);
-                    auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH);
-                    if (colorFrame && depthFrame) {
-                        fusionTask_->enqueueColor(colorFrame->getData(), colorFrame->getDataSize(),
-                                                  colorFrame->getTimeStampUs());
-                        float dsForFusion = depthScale_;
-                        try {
-                            auto depthF = depthFrame->as<ob::DepthFrame>();
-                            if (depthF)
-                                dsForFusion = depthF->getValueScale();
-                        } catch (...) {
-                        }
-                        fusionTask_->enqueueDepth(depthFrame->getData(), depthFrame->getDataSize(),
-                                                  depthFrame->getTimeStampUs(), dsForFusion);
-                    }
-                } else {
-                    fusionTask_->enqueueFrameSet(frameSet);
-                }
-            }
-
-            if (auto colorFrame = frameSet->getFrame(OB_FRAME_COLOR)) {
-                if (colorEncodeTask_)
-                    colorEncodeTask_->enqueue(colorFrame->getData(), colorFrame->getDataSize(),
-                                              colorFrame->getTimeStampUs());
-                if (viewerIdx_ >= 0)
-                    viewer.pushFrame(viewerIdx_, ViewerChannel::COLOR, colorFrame->getData(),
-                                     colorFrame->getDataSize());
-                std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-                sensorFiles_->frameCounts[OB_FRAME_COLOR]++;
-            }
-
-            if (auto depthFrame = frameSet->getFrame(OB_FRAME_DEPTH)) {
-                auto format = depthFrame->getFormat();
-                auto data = depthFrame->getData();
-                auto size = depthFrame->getDataSize();
-
-                if (format != OB_FORMAT_H264 && format != OB_FORMAT_H265 && format != OB_FORMAT_HEVC) {
-                    if (depthRawTask_)
-                        depthRawTask_->enqueue(data, size, depthFrame->getTimeStampUs());
-                }
-
-                if (depthEncodeTask_)
-                    depthEncodeTask_->enqueue(data, size, depthFrame->getTimeStampUs());
-
-                float viewerDepthScale = depthScale_;
-                try {
-                    auto depthF = depthFrame->as<ob::DepthFrame>();
-                    if (depthF)
-                        viewerDepthScale = depthF->getValueScale();
-                } catch (...) {
-                }
-                if (viewerIdx_ >= 0)
-                    viewer.pushFrame(viewerIdx_, ViewerChannel::DEPTH, data, size, viewerDepthScale, cfg_.depthMinM,
-                                     cfg_.depthMaxM);
-                std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-                sensorFiles_->frameCounts[OB_FRAME_DEPTH]++;
-            }
-
-            if (auto irFrame = frameSet->getFrame(OB_FRAME_IR)) {
-                if (irEncodeTask_)
-                    irEncodeTask_->enqueue(irFrame->getData(), irFrame->getDataSize(), irFrame->getTimeStampUs());
-                if (viewerIdx_ >= 0)
-                    viewer.pushFrame(viewerIdx_, ViewerChannel::IR, irFrame->getData(), irFrame->getDataSize());
-                std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-                sensorFiles_->frameCounts[OB_FRAME_IR]++;
-            }
-
-            if (auto irLeftFrame = frameSet->getFrame(OB_FRAME_IR_LEFT)) {
-                if (irLeftEncodeTask_)
-                    irLeftEncodeTask_->enqueue(irLeftFrame->getData(), irLeftFrame->getDataSize(),
-                                               irLeftFrame->getTimeStampUs());
-                if (viewerIdx_ >= 0)
-                    viewer.pushFrame(viewerIdx_, ViewerChannel::IR_LEFT, irLeftFrame->getData(),
-                                     irLeftFrame->getDataSize());
-                std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-                sensorFiles_->frameCounts[OB_FRAME_IR_LEFT]++;
-            }
-
-            if (auto irRightFrame = frameSet->getFrame(OB_FRAME_IR_RIGHT)) {
-                if (irRightEncodeTask_)
-                    irRightEncodeTask_->enqueue(irRightFrame->getData(), irRightFrame->getDataSize(),
-                                                irRightFrame->getTimeStampUs());
-                if (viewerIdx_ >= 0)
-                    viewer.pushFrame(viewerIdx_, ViewerChannel::IR_RIGHT, irRightFrame->getData(),
-                                     irRightFrame->getDataSize());
-                std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
-                sensorFiles_->frameCounts[OB_FRAME_IR_RIGHT]++;
-            }
+        videoPipeline_->start(videoConfig_, [this](std::shared_ptr<ob::FrameSet> frameSet) {
+            if (frameSet)
+                videoQueue_.push(std::move(frameSet));
         });
     } catch (ob::Error& e) {
         std::cerr << " Pipeline start failed for " << safeName_ << ": " << e.what() << std::endl;
         NIO_LOG_ERROR_S("Pipeline start failed for " << safeName_ << ": " << e.what());
+        consumersRunning_ = false;
+        videoQueue_.shutdown();
+        if (videoConsumerThread_.joinable())
+            videoConsumerThread_.join();
         videoPipeline_.reset();
         return;
     }
@@ -573,6 +623,8 @@ void CaptureSession::startImuPipeline() {
     imuConfig->enableGyroStream();
     imuConfig->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
 
+    imuConsumerThread_ = std::thread(&CaptureSession::imuConsumerLoop, this);
+
     imuPipeline_->start(imuConfig, [this](std::shared_ptr<ob::FrameSet> frameSet) {
         if (!frameSet)
             return;
@@ -591,8 +643,7 @@ void CaptureSession::startImuPipeline() {
                                  .count();
                 std::ostringstream oss;
                 oss << nowMs << ",ACCEL," << ts << "," << val.x << "," << val.y << "," << val.z << "," << temp << "\n";
-                if (imuTask_)
-                    imuTask_->enqueueLine(oss.str());
+                imuQueue_.push(oss.str());
             } catch (...) {
             }
             std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
@@ -610,8 +661,7 @@ void CaptureSession::startImuPipeline() {
                                  .count();
                 std::ostringstream oss;
                 oss << nowMs << ",GYRO," << ts << "," << val.x << "," << val.y << "," << val.z << "," << temp << "\n";
-                if (imuTask_)
-                    imuTask_->enqueueLine(oss.str());
+                imuQueue_.push(oss.str());
             } catch (...) {
             }
             std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
@@ -621,10 +671,19 @@ void CaptureSession::startImuPipeline() {
 }
 
 void CaptureSession::stop() {
+    consumersRunning_ = false;
+    videoQueue_.shutdown();
+    imuQueue_.shutdown();
+
     if (videoPipeline_)
         videoPipeline_->stop();
     if (hasIMU() && imuPipeline_)
         imuPipeline_->stop();
+
+    if (videoConsumerThread_.joinable())
+        videoConsumerThread_.join();
+    if (imuConsumerThread_.joinable())
+        imuConsumerThread_.join();
 
     if (colorEncodeTask_)
         colorEncodeTask_->stop();
