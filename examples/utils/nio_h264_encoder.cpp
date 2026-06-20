@@ -21,6 +21,7 @@
 #include "nio_h264_encoder.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_adapter.hpp"
 
 #include <cstring>
 #include <iostream>
@@ -36,7 +37,7 @@ H264Encoder::H264Encoder()
 , pts_(0)
 , width_(0)
 , height_(0)
-, srcFormat_(OB_FORMAT_UNKNOWN)
+, srcFormat_(NioFormat::UNKNOWN)
 , initialized_(false)
 , seiWritten_(false)
 , seiUuid_("nio@orbbec-fusio")
@@ -149,10 +150,11 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
     return true;
 }
 
-// Map OBFormat to AVPixelFormat for sws_getContext
-// 将OBFormat映射为FFmpeg AVPixelFormat
-AVPixelFormat H264Encoder::mapOBFormatToAV(OBFormat srcFormat) {
-    switch (srcFormat) {
+// Map NioFormat to AVPixelFormat for sws_getContext
+// 将NioFormat映射为FFmpeg AVPixelFormat
+AVPixelFormat H264Encoder::mapNioFormatToAV(NioFormat srcFormat) {
+    OBFormat obFmt = nioFormatToOb(srcFormat);
+    switch (obFmt) {
     case OB_FORMAT_YUYV:  return AV_PIX_FMT_YUYV422;
     case OB_FORMAT_UYVY:  return AV_PIX_FMT_UYVY422;
     case OB_FORMAT_RGB:   return AV_PIX_FMT_RGB24;
@@ -189,26 +191,27 @@ void H264Encoder::initMjpgDecoder(int width, int height) {
     mjpgDecFrame_ = av_frame_alloc();
 }
 
-// init: main entry point — create encoder + sws for the given OBFormat
-// init：主入口 — 根据OBFormat创建编码器 + sws转换上下文
-bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int bitRate, const char* seiUuid) {
+// init: main entry point — create encoder + sws for the given NioFormat
+// init：主入口 — 根据NioFormat创建编码器 + sws转换上下文
+bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int bitRate, const char* seiUuid) {
     srcFormat_ = srcFormat;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
 
     if (!initEncoder(width, height, fps, bitRate))
         return false;
 
-    AVPixelFormat srcFmt = mapOBFormatToAV(srcFormat);
+    AVPixelFormat srcFmt = mapNioFormatToAV(srcFormat);
     if (srcFmt == AV_PIX_FMT_NONE) {
-        std::cerr << "Unsupported format for H264 encoding: " << srcFormat << std::endl;
-        NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << srcFormat << " " << width << "x" << height);
+        std::cerr << "Unsupported format for H264 encoding" << std::endl;
+        NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << nioFormatToStr(srcFormat) << " " << width << "x" << height);
         close();
         return false;
     }
 
     // Defer sws creation for MJPEG: actual decoder output format unknown until first frame
     AVPixelFormat swsSrcFmt = srcFmt;
-    if (srcFormat == OB_FORMAT_MJPG || srcFormat == OB_FORMAT_MJPEG)
+    OBFormat obFmt = nioFormatToOb(srcFormat);
+    if (obFmt == OB_FORMAT_MJPG || obFmt == OB_FORMAT_MJPEG)
         swsSrcFmt = AV_PIX_FMT_NONE;
 
     AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
@@ -217,7 +220,7 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
             sws_getContext(width, height, swsSrcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!swsCtx_) {
             std::cerr << "Failed to create sws context" << std::endl;
-            NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << srcFormat);
+            NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << nioFormatToStr(srcFormat));
             close();
             return false;
         }
@@ -233,7 +236,7 @@ bool H264Encoder::init(int width, int height, int fps, OBFormat srcFormat, int b
 
 // --- initRGB / initBGR: convenience wrappers for RGB/BGR-only encoding ---
 bool H264Encoder::initRGB(int width, int height, int fps, int bitRate, const char* seiUuid) {
-    srcFormat_ = OB_FORMAT_RGB;
+    srcFormat_ = NioFormat::RGB;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
 
     if (!initEncoder(width, height, fps, bitRate))
@@ -246,7 +249,7 @@ bool H264Encoder::initRGB(int width, int height, int fps, int bitRate, const cha
 }
 
 bool H264Encoder::initBGR(int width, int height, int fps, int bitRate, const char* seiUuid) {
-    srcFormat_ = OB_FORMAT_BGR;
+    srcFormat_ = NioFormat::BGR;
     seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
 
     if (!initEncoder(width, height, fps, bitRate))
@@ -410,7 +413,8 @@ bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t d
 // Compute source strides based on srcFormat_ for sws_scale
 // 根据srcFormat_计算sws_scale所需的源步幅
 void H264Encoder::computeSrcStrides(int srcStride[4]) {
-    switch (srcFormat_) {
+    OBFormat obFmt = nioFormatToOb(srcFormat_);
+    switch (obFmt) {
     case OB_FORMAT_YUYV:
     case OB_FORMAT_UYVY:
         srcStride[0] = width_ * 2;
@@ -451,11 +455,12 @@ void H264Encoder::computeSrcSlices(const uint8_t* data, const uint8_t* srcSlice[
     srcSlice[1] = nullptr;
     srcSlice[2] = nullptr;
     srcSlice[3] = nullptr;
-    if (srcFormat_ == OB_FORMAT_I420) {
+    OBFormat obFmtS = nioFormatToOb(srcFormat_);
+    if (obFmtS == OB_FORMAT_I420) {
         srcSlice[0] = data;
         srcSlice[1] = data + width_ * height_;
         srcSlice[2] = data + width_ * height_ * 5 / 4;
-    } else if (srcFormat_ == OB_FORMAT_NV12 || srcFormat_ == OB_FORMAT_NV21) {
+    } else if (obFmtS == OB_FORMAT_NV12 || obFmtS == OB_FORMAT_NV21) {
         srcSlice[0] = data;
         srcSlice[1] = data + width_ * height_;
     }
@@ -497,7 +502,8 @@ bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outF
 
     AVFrame* srcFrame = nullptr;
 
-    if (srcFormat_ == OB_FORMAT_MJPG || srcFormat_ == OB_FORMAT_MJPEG) {
+    OBFormat obFmtE = nioFormatToOb(srcFormat_);
+    if (obFmtE == OB_FORMAT_MJPG || obFmtE == OB_FORMAT_MJPEG) {
         srcFrame = decodeMjpg(data, size);
         if (!srcFrame)
             return false;

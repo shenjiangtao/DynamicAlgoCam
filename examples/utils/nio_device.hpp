@@ -17,6 +17,7 @@
 #pragma once
 
 #include "nio_types.hpp"
+#include "nio_frame.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -25,6 +26,8 @@
 #include <vector>
 
 namespace nio {
+
+class NioPipeline;
 
 // Forward declarations
 class NioFrameSet;
@@ -54,8 +57,8 @@ enum class NioAlignMode { NONE, HW, SW };
 // Callback type: called when a new FrameSet arrives from the pipeline.
 using NioVideoCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
 
-// Callback type: called when an IMU FrameSet arrives.
-using NioImuCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
+// Callback type: called when IMU samples arrive from the pipeline.
+using NioImuCallback = std::function<void(const std::vector<NioImuSample>&)>;
 
 // NioDevice: abstract camera device.
 class NioDevice {
@@ -70,6 +73,15 @@ public:
 
     // Get integer property (e.g. depth precision level).
     virtual int32_t getIntProperty(int propertyId) = 0;
+
+    // Whether the device has any IR sensor (IR / IR-Left / IR-Right).
+    // RS-AC1 has no IR sensors → returns false.
+    virtual bool hasIRSensor() const = 0;
+
+    // Enumerate sensors, select profiles, enable streams on the pipeline,
+    // apply device quirks, and return the resolved sensor info.
+    // This replaces CaptureSession's enumerateSensors/applyDeviceQuirks/detectDepthScale.
+    virtual NioSensorInfo setupPipeline(NioPipeline& pipeline) = 0;
 };
 
 // NioPipeline: abstract capture pipeline.
@@ -108,6 +120,14 @@ public:
 
     // Get the underlying device.
     virtual std::shared_ptr<NioDevice> getDevice() const = 0;
+
+    // Whether this pipeline's depth sensor outputs 3D point cloud
+    // (RS-AC1) instead of a 2D depth map (Orbbec).
+    virtual bool isPointCloudDepth() const { return false; }
+
+    // Current D2C alignment mode (HW / SW / NONE).
+    // RS-AC1 always returns HW; OB returns the mode set via setAlignMode().
+    virtual NioAlignMode getAlignMode() const = 0;
 };
 
 // NioContext: abstract SDK context for device discovery.

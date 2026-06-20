@@ -9,7 +9,7 @@
 //     the YUVJ422P vs YUV420P format mismatch fix).
 //   - decFmt / swsInitialized track the lazy init state.
 //
-// decodeColorToRGB(): converts any supported OBFormat frame to RGB24.
+// decodeColorToRGB(): converts any supported NioFormat frame to RGB24.
 //   Used by the D2C fusion preview to compose color + depth + IR into
 //   a single RGB canvas.
 //
@@ -21,10 +21,10 @@
 
 #pragma once
 
+#include "nio_types.hpp"
+
 #include <cstdint>
 #include <memory>
-
-#include <libobsensor/ObSensor.hpp>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -48,12 +48,12 @@ struct MjpgDecoderRes {
   MjpgDecoderRes();
   ~MjpgDecoderRes();
 
-  bool init(int w, int h, OBFormat fmt);
+  bool init(int w, int h, NioFormat fmt);
 };
 
 void jetColormap(uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b);
 
-bool decodeColorToRGB(const uint8_t *data, uint32_t size, OBFormat format,
+bool decodeColorToRGB(const uint8_t *data, uint32_t size, NioFormat format,
                       int w, int h, uint8_t *rgbBuf,
                       std::shared_ptr<MjpgDecoderRes> mjpg);
 

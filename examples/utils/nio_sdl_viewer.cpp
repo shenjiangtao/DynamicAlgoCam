@@ -12,6 +12,7 @@
 
 #include "nio_sdl_viewer.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_adapter.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -190,23 +191,23 @@ static SDL_Surface* renderBitmapText(const std::string& text, int scale, uint8_t
 
 // === Helpers ===
 
-std::string SDLViewer::obFormatToString(OBFormat fmt) {
+std::string SDLViewer::nioFormatToString(NioFormat fmt) {
     switch (fmt) {
-    case OB_FORMAT_MJPG:
+    case NioFormat::MJPG:
         return "MJPG";
-    case OB_FORMAT_YUYV:
+    case NioFormat::YUYV:
         return "YUYV";
-    case OB_FORMAT_Y16:
+    case NioFormat::Y16:
         return "Y16";
-    case OB_FORMAT_Y8:
+    case NioFormat::Y8:
         return "Y8";
-    case OB_FORMAT_RGB:
+    case NioFormat::RGB:
         return "RGB";
-    case OB_FORMAT_BGR:
+    case NioFormat::BGR:
         return "BGR";
-    case OB_FORMAT_H264:
+    case NioFormat::H264:
         return "H264";
-    case OB_FORMAT_H265:
+    case NioFormat::H265:
         return "H265";
     default:
         return "???";
@@ -233,27 +234,28 @@ bool SDLViewer::init() {
 
 // Add a single viewer slot (one video panel) and return its index
 // 添加单个viewer slot（一个视频面板）并返回其索引
-int SDLViewer::addViewerSlot(const std::string& label, OBFormat fmt, int w, int h) {
+int SDLViewer::addViewerSlot(const std::string& label, NioFormat fmt, int w, int h) {
     int idx = static_cast<int>(slots_.size());
     slots_.push_back(std::unique_ptr<ViewerSlot>(new ViewerSlot()));
     auto& s = *slots_.back();
     s.label = label;
     s.format = fmt;
-    s.formatStr = obFormatToString(fmt);
+    s.formatStr = nioFormatToString(fmt);
     s.w = w;
     s.h = h;
+    OBFormat obFmt = nioFormatToOb(fmt);
     size_t rawMax = 0;
-    if (fmt == OB_FORMAT_Y16)
+    if (obFmt == OB_FORMAT_Y16)
         rawMax = w * h * 2;
-    else if (fmt == OB_FORMAT_Y8)
+    else if (obFmt == OB_FORMAT_Y8)
         rawMax = w * h;
-    else if (fmt == OB_FORMAT_YUYV)
+    else if (obFmt == OB_FORMAT_YUYV)
         rawMax = w * h * 2;
     else
         rawMax = w * h * 4;
     s.rawBuf.resize(rawMax, 0);
     s.renderBuf.resize(w * h * 3, 0);
-    if (fmt == OB_FORMAT_MJPG)
+    if (obFmt == OB_FORMAT_MJPG)
         s.mjpgRes = std::make_shared<MjpgDecoderRes>();
     return idx;
 }
@@ -261,7 +263,7 @@ int SDLViewer::addViewerSlot(const std::string& label, OBFormat fmt, int w, int 
 // Add a device row with selected video slots (color/depth/IR/IR-L/IR-R)
 // 添加一个设备行，包含选定的视频slot（彩色/深度/红外/左红外/右红外）
 int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
-                          bool hasColor, OBFormat colorFmt, int cw, int ch, bool hasDepth, OBFormat depthFmt, int dw,
+                          bool hasColor, NioFormat colorFmt, int cw, int ch, bool hasDepth, NioFormat depthFmt, int dw,
                           int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight,
                           int irw2, int irh2) {
     DeviceRow row;
@@ -280,17 +282,17 @@ int SDLViewer::addDevice(const std::string& name, const std::string& cameraType,
         row.depthSlot = idx;
     }
     if (hasIR) {
-        int idx = addViewerSlot("IR", OB_FORMAT_Y8, irw, irh);
+        int idx = addViewerSlot("IR", NioFormat::Y8, irw, irh);
         row.slotIndices.push_back(idx);
         row.irSlot = idx;
     }
     if (hasIRLeft) {
-        int idx = addViewerSlot("IR-L", OB_FORMAT_Y8, ilw, ilh);
+        int idx = addViewerSlot("IR-L", NioFormat::Y8, ilw, ilh);
         row.slotIndices.push_back(idx);
         row.irLeftSlot = idx;
     }
     if (hasIRRight) {
-        int idx = addViewerSlot("IR-R", OB_FORMAT_Y8, irw2, irh2);
+        int idx = addViewerSlot("IR-R", NioFormat::Y8, irw2, irh2);
         row.slotIndices.push_back(idx);
         row.irRightSlot = idx;
     }
@@ -600,15 +602,15 @@ bool SDLViewer::decodeYuyvSlot(ViewerSlot& slot, const std::vector<uint8_t>& raw
 // Decode MJPG frame → RGB24 via MjpgDecoderRes
 // MJPG帧解码 → 通过MjpgDecoderRes转RGB24
 bool SDLViewer::decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
-                               std::vector<uint8_t>& rgb) {
+                                std::vector<uint8_t>& rgb) {
     auto mjpg = slot.mjpgRes;
     if (!mjpg)
         return false;
     if (!mjpg->swsInitialized) {
-        if (!mjpg->init(w, h, OB_FORMAT_MJPG))
+        if (!mjpg->init(w, h, NioFormat::MJPG))
             return false;
     }
-    return decodeColorToRGB(rawCopy.data(), rawSz, OB_FORMAT_MJPG, w, h, rgb.data(), mjpg);
+    return decodeColorToRGB(rawCopy.data(), rawSz, NioFormat::MJPG, w, h, rgb.data(), mjpg);
 }
 
 // Decode raw frame data → RGB24 based on slot format, copy to renderBuf
@@ -616,7 +618,7 @@ bool SDLViewer::decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& raw
 void SDLViewer::decodeSlot(ViewerSlot& slot) {
     std::vector<uint8_t> rawCopy;
     uint32_t rawSz = 0;
-    OBFormat fmt = slot.format;
+    OBFormat fmt = nioFormatToOb(slot.format);
     int w = slot.w, h = slot.h;
     {
         std::lock_guard<std::mutex> lock(slot.rawMtx);

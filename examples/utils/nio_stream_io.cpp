@@ -132,7 +132,6 @@ std::shared_ptr<std::ofstream> openBufferedFile(const std::string& path, std::io
 // If encoder init fails, fall back to raw binary file (no encoding).
 std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, NioFormat format, int w, int h, int fps,
                                                    const char* seiUuid, bool writeSEI) {
-    OBFormat obFormat = nioFormatToOb(format);
     auto se = std::make_shared<StreamEncoder>();
     se->srcFormat = format;
     se->width = w;
@@ -148,7 +147,7 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, 
     }
 
     se->encoder = std::make_shared<H264Encoder>();
-    if (!se->encoder->init(w, h, fps, obFormat, 4000000, seiUuid)) {
+    if (!se->encoder->init(w, h, fps, format, 4000000, seiUuid)) {
         std::cerr << " Failed to init H264 encoder for format=" << nioFormatToStr(format) << " " << w << "x" << h
                   << std::endl;
         NIO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << nioFormatToStr(format)

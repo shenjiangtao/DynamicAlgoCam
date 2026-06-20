@@ -6,10 +6,9 @@
 #include "nio_ob_device.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
+#include "utils.hpp"
 
 namespace nio {
-
-// === ObDevice ===
 
 ObDevice::ObDevice(std::shared_ptr<ob::Device> device)
 : obDevice_(std::move(device)) {}
@@ -67,6 +66,180 @@ int32_t ObDevice::getIntProperty(int propertyId) {
     return obDevice_->getIntProperty(static_cast<OBPropertyID>(propertyId));
 }
 
+bool ObDevice::hasIRSensor() const {
+    auto si = getSensorInfo();
+    return si.hasIR || si.hasIRLeft || si.hasIRRight;
+}
+
+NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
+    auto* obPipe = dynamic_cast<ObPipeline*>(&pipeline);
+    if (!obPipe) {
+        NIO_LOG_ERROR("setupPipeline: pipeline is not ObPipeline");
+        return NioSensorInfo{};
+    }
+
+    auto devInfo = obDevice_->getDeviceInfo();
+    auto pid = devInfo->getPid();
+    auto vid = devInfo->getVid();
+    bool is305 = ob_smpl::isGemini305Device(vid, pid);
+    NioFormat colorPreferredFmt = is305 ? NioFormat::YUYV : NioFormat::MJPG;
+
+    NioSensorInfo si;
+    auto sensorList = obDevice_->getSensorList();
+    auto obCfg = obPipe->obConfig();
+
+    for (uint32_t s = 0; s < sensorList->getCount(); s++) {
+        auto sensorType = sensorList->getSensorType(s);
+        auto sensor = sensorList->getSensor(s);
+        auto profileList = sensor->getStreamProfileList();
+
+        switch (sensorType) {
+        case OB_SENSOR_COLOR: {
+            si.hasColor = true;
+            OBFormat obPreferred = nioFormatToOb(colorPreferredFmt);
+            auto profile = selectBestProfile(profileList, obPreferred);
+            NioFormat resolvedFmt = NioFormat::UNKNOWN;
+            if (profile) {
+                resolvedFmt = obFormatToNio(profile->getFormat());
+                if (resolvedFmt == NioFormat::UNKNOWN) {
+                    for (uint32_t k = 0; k < profileList->getCount(); k++) {
+                        try {
+                            auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
+                            if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
+                                profile = p;
+                                resolvedFmt = obFormatToNio(p->getFormat());
+                                break;
+                            }
+                        } catch (...) {}
+                    }
+                }
+            }
+            if (profile && resolvedFmt != NioFormat::UNKNOWN) {
+                obCfg->enableStream(profile);
+                obPipe->setColorProfile(profile);
+                si.colorFormat = resolvedFmt;
+                si.colorW = profile->getWidth();
+                si.colorH = profile->getHeight();
+                si.colorFps = profile->getFps();
+                try { si.colorIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic()); }
+                catch (...) { NIO_LOG_WARN_S("Color intrinsic not available"); }
+            } else {
+                si.hasColor = false;
+            }
+            break;
+        }
+        case OB_SENSOR_DEPTH: {
+            si.hasDepth = true;
+            auto profile = selectBestProfile(profileList, OB_FORMAT_Y16);
+            NioFormat resolvedFmt = NioFormat::UNKNOWN;
+            if (profile) {
+                resolvedFmt = obFormatToNio(profile->getFormat());
+                if (resolvedFmt == NioFormat::UNKNOWN) {
+                    for (uint32_t k = 0; k < profileList->getCount(); k++) {
+                        try {
+                            auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
+                            if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
+                                profile = p;
+                                resolvedFmt = obFormatToNio(p->getFormat());
+                                break;
+                            }
+                        } catch (...) {}
+                    }
+                }
+            }
+            if (profile && resolvedFmt != NioFormat::UNKNOWN) {
+                obCfg->enableStream(profile);
+                obPipe->setDepthProfile(profile);
+                si.depthFormat = resolvedFmt;
+                si.depthW = profile->getWidth();
+                si.depthH = profile->getHeight();
+                si.depthFps = profile->getFps();
+                try { si.depthIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic()); }
+                catch (...) { NIO_LOG_WARN_S("Depth intrinsic not available"); }
+            } else {
+                si.hasDepth = false;
+            }
+            // Depth scale
+            try {
+                int32_t level = obDevice_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
+                switch (level) {
+                case 0: si.depthScale = 0.001f; break;
+                case 1: si.depthScale = 0.0005f; break;
+                case 2: si.depthScale = 0.00025f; break;
+                case 3: si.depthScale = 0.0001f; break;
+                default: si.depthScale = 0.001f; break;
+                }
+                std::cout << " Depth scale: " << si.depthScale << " (precision level " << level << ")" << std::endl;
+            } catch (...) {
+                si.depthScale = 0.001f;
+            }
+            break;
+        }
+        case OB_SENSOR_IR: {
+            si.hasIR = true;
+            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+            if (profile) {
+                si.irFormat = obFormatToNio(profile->getFormat());
+                if (si.irFormat == NioFormat::UNKNOWN) si.irFormat = NioFormat::Y8;
+                obCfg->enableStream(profile);
+                si.irW = profile->getWidth();
+                si.irH = profile->getHeight();
+                si.irFps = profile->getFps();
+            } else { si.hasIR = false; }
+            break;
+        }
+        case OB_SENSOR_IR_LEFT: {
+            si.hasIRLeft = true;
+            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+            if (profile) {
+                si.irLeftFormat = obFormatToNio(profile->getFormat());
+                if (si.irLeftFormat == NioFormat::UNKNOWN) si.irLeftFormat = NioFormat::Y8;
+                obCfg->enableStream(profile);
+                si.irLW = profile->getWidth();
+                si.irLH = profile->getHeight();
+                si.irLFps = profile->getFps();
+            } else { si.hasIRLeft = false; }
+            break;
+        }
+        case OB_SENSOR_IR_RIGHT: {
+            si.hasIRRight = true;
+            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+            if (profile) {
+                si.irRightFormat = obFormatToNio(profile->getFormat());
+                if (si.irRightFormat == NioFormat::UNKNOWN) si.irRightFormat = NioFormat::Y8;
+                obCfg->enableStream(profile);
+                si.irRW = profile->getWidth();
+                si.irRH = profile->getHeight();
+                si.irRFps = profile->getFps();
+            } else { si.hasIRRight = false; }
+            break;
+        }
+        case OB_SENSOR_ACCEL: si.hasAccel = true; break;
+        case OB_SENSOR_GYRO:  si.hasGyro = true; break;
+        default: break;
+        }
+    }
+
+    // Device quirks
+    if (ob_smpl::isGemini305gDevice(devInfo->getVid(), devInfo->getPid(), devInfo->getConnectionType())) {
+        obPipe->disableStream(NioFrameType::IR_LEFT);
+        si.hasIRLeft = false;
+        std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
+    }
+
+    // HW D2C check
+    if (si.hasColor && si.hasDepth) {
+        bool hwD2CSupported = obPipe->checkHWD2CSupport(
+            si.colorW, si.colorH, si.colorFormat, si.depthW, si.depthH, si.depthFormat, si.depthFps);
+        pipeline.setAlignMode(hwD2CSupported ? NioAlignMode::HW : NioAlignMode::SW);
+        std::cout << "  HW D2C: " << (hwD2CSupported ? "supported" : "not supported") << std::endl;
+    }
+
+    cachedSensorInfo_ = si;
+    sensorInfoCached_ = true;
+    return si;
+}
+
 // === ObPipeline ===
 
 ObPipeline::ObPipeline(std::shared_ptr<ob::Device> device)
@@ -103,7 +276,21 @@ void ObPipeline::setAlignMode(NioAlignMode mode) {
 
 bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, NioFormat /*colorFmt*/,
                                     int /*depthW*/, int /*depthH*/, NioFormat /*depthFmt*/, int /*depthFps*/) {
-    // 需要ob::VideoStreamProfile，Phase 4完整实现时从device获取
+    if (!colorProfile_ || !depthProfile_)
+        return false;
+    auto hwD2CDepthProfiles = obPipeline_->getD2CDepthProfileList(colorProfile_, ALIGN_D2C_HW_MODE);
+    if (!hwD2CDepthProfiles || hwD2CDepthProfiles->getCount() == 0)
+        return false;
+
+    auto depthVsp = depthProfile_;
+    auto count = hwD2CDepthProfiles->getCount();
+    for (uint32_t i = 0; i < count; i++) {
+        auto sp = hwD2CDepthProfiles->getProfile(i);
+        auto vsp = sp->as<ob::VideoStreamProfile>();
+        if (vsp->getWidth() == depthVsp->getWidth() && vsp->getHeight() == depthVsp->getHeight() &&
+            vsp->getFormat() == depthVsp->getFormat() && vsp->getFps() == depthVsp->getFps())
+            return true;
+    }
     return false;
 }
 
@@ -144,8 +331,9 @@ bool ObPipeline::startImu(NioImuCallback callback) {
         imuCallback_ = callback;
         imuPipeline_->start(imuConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
             if (obFs) {
-                auto nioFs = std::make_shared<NioFrameSet>(obFrameSetToNio(obFs));
-                imuCallback_(nioFs);
+                auto samples = obImuToNioSamples(obFs);
+                if (!samples.empty())
+                    imuCallback_(samples);
             }
         });
         imuStarted_ = true;
@@ -177,6 +365,14 @@ void ObPipeline::stopImu() {
 
 std::shared_ptr<NioDevice> ObPipeline::getDevice() const {
     return std::make_shared<ObDevice>(obDevice_);
+}
+
+NioAlignMode ObPipeline::getAlignMode() const {
+    if (hwD2CMode_)
+        return NioAlignMode::HW;
+    if (alignFilter_)
+        return NioAlignMode::SW;
+    return NioAlignMode::NONE;
 }
 
 // === ObContext ===

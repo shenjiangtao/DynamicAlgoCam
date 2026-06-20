@@ -17,12 +17,12 @@
 
 #pragma once
 
+#include "nio_types.hpp"
+
 #include <fstream>
 #include <mutex>
 #include <cstdint>
 #include <string>
-
-#include <libobsensor/ObSensor.hpp>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -39,9 +39,9 @@ public:
     H264Encoder();
     ~H264Encoder();
 
-    // init: create encoder + sws context for the given OBFormat.
+    // init: create encoder + sws context for the given NioFormat.
     // For MJPEG, sws is deferred to first decodeMjpg() call.
-    bool init(int width, int height, int fps, OBFormat srcFormat,
+    bool init(int width, int height, int fps, NioFormat srcFormat,
               int bitRate = 4000000, const char *seiUuid = "nio@orbbec-fusio");
 
     // initRGB / initBGR: convenience wrappers (no MJPEG decoder created)
@@ -78,7 +78,7 @@ private:
     bool initEncoderFrame(int width, int height);
     void setupEncoderVui();
     bool initSws(AVPixelFormat srcFmt, int width, int height);
-    AVPixelFormat mapOBFormatToAV(OBFormat srcFormat);
+    AVPixelFormat mapNioFormatToAV(NioFormat srcFormat);
     void initMjpgDecoder(int width, int height);
     bool writeFrame(std::ofstream &outFile, std::mutex &mtx,
                     uint64_t deviceTimestampUs, bool writeSEI);
@@ -93,7 +93,7 @@ private:
     SwsContext *swsCtx_;            // pixel format converter (src → YUV420P)
     int64_t pts_;                   // monotonic presentation timestamp counter
     int width_, height_;
-    OBFormat srcFormat_;
+    NioFormat srcFormat_;
     bool initialized_;
     bool seiWritten_;               // true after first copyright SEI is written
     std::string seiUuid_;

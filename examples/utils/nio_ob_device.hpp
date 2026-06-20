@@ -24,6 +24,8 @@ public:
     void enableGlobalTimestamp(bool enable) override;
     NioSensorInfo getSensorInfo() const override;
     int32_t getIntProperty(int propertyId) override;
+    bool hasIRSensor() const override;
+    NioSensorInfo setupPipeline(NioPipeline& pipeline) override;
 
     std::shared_ptr<ob::Device> obDevice() const { return obDevice_; }
 
@@ -50,6 +52,8 @@ public:
     void stop() override;
     void stopImu() override;
     std::shared_ptr<NioDevice> getDevice() const override;
+    bool isPointCloudDepth() const override { return false; }
+    NioAlignMode getAlignMode() const override;
 
     // Expose for SW D2C alignment (transitional).
     std::shared_ptr<ob::Align> getAlignFilter() const { return alignFilter_; }
@@ -57,6 +61,15 @@ public:
 
     // Expose raw ob pipeline for legacy code paths.
     std::shared_ptr<ob::Pipeline> obPipeline() const { return obPipeline_; }
+
+    // Expose ob::Config for sensor enumeration in ObDevice::setupPipeline.
+    std::shared_ptr<ob::Config> obConfig() const { return obConfig_; }
+
+    // Set selected profiles (called from ObDevice::setupPipeline).
+    void setColorProfile(std::shared_ptr<ob::VideoStreamProfile> p) { colorProfile_ = std::move(p); }
+    void setDepthProfile(std::shared_ptr<ob::VideoStreamProfile> p) { depthProfile_ = std::move(p); }
+    std::shared_ptr<ob::VideoStreamProfile> colorProfile() const { return colorProfile_; }
+    std::shared_ptr<ob::VideoStreamProfile> depthProfile() const { return depthProfile_; }
 
 private:
     std::shared_ptr<ob::Pipeline> obPipeline_;
@@ -69,6 +82,8 @@ private:
     bool imuStarted_ = false;
     NioVideoCallback videoCallback_;
     NioImuCallback imuCallback_;
+    std::shared_ptr<ob::VideoStreamProfile> colorProfile_;
+    std::shared_ptr<ob::VideoStreamProfile> depthProfile_;
 };
 
 // ObContext: wraps ob::Context as NioContext.

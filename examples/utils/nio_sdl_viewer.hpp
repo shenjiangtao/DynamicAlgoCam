@@ -19,6 +19,8 @@
 #pragma once
 
 #include <SDL2/SDL.h>
+#include "nio_types.hpp"
+
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -27,8 +29,6 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
-
-#include <libobsensor/ObSensor.hpp>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -45,7 +45,7 @@ enum class ViewerChannel { COLOR, DEPTH, IR, IR_LEFT, IR_RIGHT };
 struct ViewerSlot {
     std::string label;
     std::string formatStr;
-    OBFormat format = OB_FORMAT_UNKNOWN;
+    NioFormat format = NioFormat::UNKNOWN;
     int w = 0;
     int h = 0;
 
@@ -84,13 +84,13 @@ public:
     int addDevice(const std::string& name,
                   const std::string& cameraType,
                   const std::string& serialNumber,
-                  bool hasColor, OBFormat colorFmt, int cw, int ch,
-                  bool hasDepth, OBFormat depthFmt, int dw, int dh,
+                  bool hasColor, NioFormat colorFmt, int cw, int ch,
+                  bool hasDepth, NioFormat depthFmt, int dw, int dh,
                   bool hasIR, int irw, int irh,
                   bool hasIRLeft, int ilw, int ilh,
                   bool hasIRRight, int irw2, int irh2);
 
-    int addViewerSlot(const std::string& label, OBFormat fmt, int w, int h);
+    int addViewerSlot(const std::string& label, NioFormat fmt, int w, int h);
 
     bool createWindow();
 
@@ -119,7 +119,7 @@ private:
     bool decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
                         std::vector<uint8_t>& rgb);
     void cleanupSlot(ViewerSlot& slot);
-    static std::string obFormatToString(OBFormat fmt);
+    static std::string nioFormatToString(NioFormat fmt);
 
     void rebuildLabelTextures(int winW, int winH);
     void destroyLabelTextures();

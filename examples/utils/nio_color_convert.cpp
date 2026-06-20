@@ -12,6 +12,7 @@
 
 #include "nio_color_convert.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_adapter.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -43,10 +44,11 @@ MjpgDecoderRes::~MjpgDecoderRes() {
 // init: allocate MJPEG decoder.  sws is NOT created here — it is
 // deferred to the first decodeColorToRGB() call because the decoder
 // output format (YUVJ422P vs YUV420P) is unknown until first decode.
-bool MjpgDecoderRes::init(int w, int h, OBFormat fmt) {
+bool MjpgDecoderRes::init(int w, int h, NioFormat fmt) {
     pkt = av_packet_alloc();
     decFrame = av_frame_alloc();
-    if (fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
+    OBFormat obFmt = nioFormatToOb(fmt);
+    if (obFmt == OB_FORMAT_MJPG || obFmt == OB_FORMAT_MJPEG) {
         auto codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
         if (codec) {
             ctx = avcodec_alloc_context3(codec);
@@ -103,13 +105,14 @@ void jetColormap(uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
 // the actual decoder output format (typically YUVJ422P) to avoid the
 // chroma misalignment bug described in nio_h264_encoder.cpp.
 
-bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w, int h, uint8_t* rgbBuf,
+bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int w, int h, uint8_t* rgbBuf,
                       std::shared_ptr<MjpgDecoderRes> mjpg) {
-    if (format == OB_FORMAT_RGB) {
+    OBFormat fmt = nioFormatToOb(format);
+    if (fmt == OB_FORMAT_RGB) {
         memcpy(rgbBuf, data, w * h * 3);
         return true;
     }
-    if (format == OB_FORMAT_BGR) {
+    if (fmt == OB_FORMAT_BGR) {
         for (int i = 0; i < w * h; i++) {
             rgbBuf[i * 3 + 0] = data[i * 3 + 2];
             rgbBuf[i * 3 + 1] = data[i * 3 + 1];
@@ -117,7 +120,7 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         }
         return true;
     }
-    if (format == OB_FORMAT_RGBA) {
+    if (fmt == OB_FORMAT_RGBA) {
         for (int i = 0; i < w * h; i++) {
             rgbBuf[i * 3 + 0] = data[i * 4 + 0];
             rgbBuf[i * 3 + 1] = data[i * 4 + 1];
@@ -125,7 +128,7 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         }
         return true;
     }
-    if (format == OB_FORMAT_BGRA) {
+    if (fmt == OB_FORMAT_BGRA) {
         for (int i = 0; i < w * h; i++) {
             rgbBuf[i * 3 + 0] = data[i * 4 + 2];
             rgbBuf[i * 3 + 1] = data[i * 4 + 1];
@@ -134,7 +137,7 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         return true;
     }
     // --- MJPEG path: decode JPEG → YUV, then sws_scale → RGB24 ---
-    if (format == OB_FORMAT_MJPG || format == OB_FORMAT_MJPEG) {
+    if (fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
         if (!mjpg->ctx)
             return false;
         mjpg->pkt->data = const_cast<uint8_t*>(data);
@@ -227,18 +230,18 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
     }
     // --- YUV variants: YUYV, UYVY, NV12, NV21, I420 → RGB24 ---
     // These create a temporary sws per call (acceptable for preview-only use).
-    if (format == OB_FORMAT_YUYV || format == OB_FORMAT_UYVY || format == OB_FORMAT_NV12 || format == OB_FORMAT_NV21 ||
-        format == OB_FORMAT_I420) {
+    if (fmt == OB_FORMAT_YUYV || fmt == OB_FORMAT_UYVY || fmt == OB_FORMAT_NV12 || fmt == OB_FORMAT_NV21 ||
+        fmt == OB_FORMAT_I420) {
         AVPixelFormat srcPixFmt = AV_PIX_FMT_NONE;
-        if (format == OB_FORMAT_YUYV)
+        if (fmt == OB_FORMAT_YUYV)
             srcPixFmt = AV_PIX_FMT_YUYV422;
-        else if (format == OB_FORMAT_UYVY)
+        else if (fmt == OB_FORMAT_UYVY)
             srcPixFmt = AV_PIX_FMT_UYVY422;
-        else if (format == OB_FORMAT_NV12)
+        else if (fmt == OB_FORMAT_NV12)
             srcPixFmt = AV_PIX_FMT_NV12;
-        else if (format == OB_FORMAT_NV21)
+        else if (fmt == OB_FORMAT_NV21)
             srcPixFmt = AV_PIX_FMT_NV21;
-        else if (format == OB_FORMAT_I420)
+        else if (fmt == OB_FORMAT_I420)
             srcPixFmt = AV_PIX_FMT_YUV420P;
 
         SwsContext* tmpSws =
@@ -266,13 +269,13 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, OBFormat format, int w
         int srcStride[4] = { 0, 0, 0, 0 };
         const uint8_t* srcSlice[4] = { data, nullptr, nullptr, nullptr };
 
-        if (format == OB_FORMAT_YUYV || format == OB_FORMAT_UYVY) {
+        if (fmt == OB_FORMAT_YUYV || fmt == OB_FORMAT_UYVY) {
             srcStride[0] = w * 2;
-        } else if (format == OB_FORMAT_NV12 || format == OB_FORMAT_NV21) {
+        } else if (fmt == OB_FORMAT_NV12 || fmt == OB_FORMAT_NV21) {
             srcStride[0] = w;
             srcStride[1] = w;
             srcSlice[1] = data + w * h;
-        } else if (format == OB_FORMAT_I420) {
+        } else if (fmt == OB_FORMAT_I420) {
             srcStride[0] = w;
             srcStride[1] = w / 2;
             srcStride[2] = w / 2;

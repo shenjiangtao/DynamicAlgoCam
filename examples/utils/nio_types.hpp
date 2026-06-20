@@ -99,6 +99,8 @@ struct NioSensorInfo {
 
     NioIntrinsic depthIntrinsic;
     NioIntrinsic colorIntrinsic;
+
+    float depthScale = 0.001f;
 };
 
 // Frame count map — replaces std::map<OBFrameType, uint64_t>.

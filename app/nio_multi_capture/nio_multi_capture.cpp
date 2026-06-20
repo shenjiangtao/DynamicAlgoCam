@@ -6,12 +6,6 @@
 // Records color, depth, and IR streams to H.264 / raw files with IMU CSV
 // logging. Performs D2C alignment + alpha-blend fusion as H.264.
 //
-// Threading model:
-//   - SDK video callback: lightweight — enqueues to per-stream worker threads.
-//   - SDK IMU callback: formats CSV lines, enqueues to ImuStreamTask.
-//   - Each stream has its own named worker thread (encoding/raw/fusion/IMU).
-//   - SDLViewer runs its own decode + render threads.
-//
 // Usage:
 //   ./nio_multi_capture                                          # all devices
 //   ./nio_multi_capture -c "305" "336L"                          # filter by camera type
@@ -21,10 +15,15 @@
 #include "nio_capture_config.hpp"
 #include "nio_capture_session.hpp"
 #include "nio_common.hpp"
+#include "nio_device.hpp"
 #include "nio_log.hpp"
 #include "nio_sdl_viewer.hpp"
+#include "nio_ob_device.hpp"
 #include "utils.hpp"
-#include <libobsensor/ObSensor.hpp>
+
+#ifdef ENABLE_RS_AC1
+#include "nio_rs_device.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -36,6 +35,8 @@
 #include <memory>
 #include <thread>
 #include <vector>
+
+#include <libobsensor/ObSensor.hpp>
 
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "unknown"
@@ -61,12 +62,21 @@ int main(int argc, char** argv) try {
         NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
 
-    ob::Context context;
+    // Discover OB devices
+    ObContext obContext;
+    auto obCount = obContext.getDeviceCount();
 
-    auto deviceList = context.queryDeviceList();
-    if (deviceList->getCount() < 1) {
-        std::cerr << "No Orbbec device found!" << std::endl;
-        NIO_LOG_FATAL("No Orbbec device found!");
+#ifdef ENABLE_RS_AC1
+    // Discover RS-AC1 devices
+    RsContext rsContext;
+    auto rsCount = rsContext.getDeviceCount();
+#else
+    uint32_t rsCount = 0;
+#endif
+
+    if (obCount + rsCount < 1) {
+        std::cerr << "No device found!" << std::endl;
+        NIO_LOG_FATAL("No device found!");
         return -1;
     }
 
@@ -76,18 +86,17 @@ int main(int argc, char** argv) try {
     mkdirp(outputRootDir);
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
+    // Check USB memory for multi-device
+    uint32_t totalDevices = obCount + rsCount;
     {
         std::ifstream usbfsFile("/sys/module/usbcore/parameters/usbfs_memory_mb");
         if (usbfsFile.is_open()) {
             int usbfsMb = 0;
             usbfsFile >> usbfsMb;
-            if (usbfsMb < 128 && deviceList->getCount() > 1) {
-                std::cerr << "WARNING: usbfs_memory_mb=" << usbfsMb << "MB is too low for " << deviceList->getCount()
+            if (usbfsMb < 128 && totalDevices > 1) {
+                std::cerr << "WARNING: usbfs_memory_mb=" << usbfsMb << "MB is too low for " << totalDevices
                           << " devices. Recommend >= 128MB." << std::endl;
                 std::cerr << "Fix: echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb" << std::endl;
-                std::cerr << "Or: sudo modprobe usbcore usbfs_memory_mb=256" << std::endl;
-                NIO_LOG_WARN_S("usbfs_memory_mb=" << usbfsMb << "MB is too low for " << deviceList->getCount()
-                                                  << " devices, recommend >= 128MB");
             }
         }
     }
@@ -96,72 +105,92 @@ int main(int argc, char** argv) try {
     if (!cfg.noShow) {
         if (!viewer.init()) {
             std::cerr << "SDL viewer init failed, continuing without preview" << std::endl;
-            NIO_LOG_WARN_S("SDL viewer init failed, continuing without preview");
         }
     }
 
     std::vector<std::shared_ptr<CaptureSession>> sessions;
 
-    for (uint32_t i = 0; i < deviceList->getCount(); i++) {
-        auto device = deviceList->getDevice(i);
-        auto devInfo = device->getDeviceInfo();
-        std::string name = devInfo->getName();
-
-        if (!deviceMatches(name, cfg.cameraFilter)) {
-            std::cout << "Skipping device: " << name << std::endl;
-            NIO_LOG_DEBUG_S("Skipping device: " << name << " (does not match filter)");
-            continue;
-        }
-
-        std::cout << "Found device: " << name << " (SN: " << devInfo->getSerialNumber() << ", PID: 0x" << std::hex
-                  << std::setw(4) << std::setfill('0') << devInfo->getPid() << std::dec << ", "
-                  << devInfo->getConnectionType() << ")" << std::endl;
-        NIO_LOG_INFO_S("Found device: " << name << " SN=" << devInfo->getSerialNumber() << " PID=0x" << std::hex
-                                        << devInfo->getPid() << std::dec << " conn=" << devInfo->getConnectionType());
-
-        auto safeName = name;
-        std::replace(safeName.begin(), safeName.end(), ' ', '_');
-        std::string serialNumber = devInfo->getSerialNumber();
-        safeName = safeName + "_" + serialNumber;
-
-        std::string deviceOutputDir = outputRootDir + "/" + safeName;
-        mkdirp(deviceOutputDir);
-        NIO_LOG_DEBUG_S("Created output dir: " << deviceOutputDir);
-
-        auto session = std::make_shared<CaptureSession>(device, safeName, deviceOutputDir, cfg);
+    // Helper: create session from NioDevice + NioPipeline
+    auto addSession = [&](std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
+                         const std::string& safeName, const std::string& deviceOutputDir) {
+        auto session = std::make_shared<CaptureSession>(device, pipeline, safeName, deviceOutputDir, cfg);
         if (!session->setup()) {
             NIO_LOG_ERROR_S("Setup failed for device: " << safeName);
-            continue;
+            return;
         }
 
         session->startVideoPipeline(viewer, cfg.noShow);
         if (!session->hasVideoPipeline()) {
             NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping IMU");
             sessions.push_back(session);
-            continue;
+            return;
         }
 
         session->startImuPipeline();
         sessions.push_back(std::move(session));
+    };
+
+    // Enumerate OB devices
+    for (uint32_t i = 0; i < obCount; i++) {
+        auto nioDev = obContext.getDevice(i);
+        auto devInfo = nioDev->getDeviceInfo();
+
+        if (!deviceMatches(devInfo.name, cfg.cameraFilter)) {
+            std::cout << "Skipping device: " << devInfo.name << std::endl;
+            continue;
+        }
+
+        std::cout << "Found OB device: " << devInfo.name << " (SN: " << devInfo.serialNumber
+                  << ", PID: 0x" << std::hex << std::setw(4) << std::setfill('0') << devInfo.pid << std::dec
+                  << ", " << devInfo.connectionType << ")" << std::endl;
+
+        auto safeName = devInfo.name;
+        std::replace(safeName.begin(), safeName.end(), ' ', '_');
+        safeName = safeName + "_" + devInfo.serialNumber;
+
+        std::string deviceOutputDir = outputRootDir + "/" + safeName;
+        mkdirp(deviceOutputDir);
+
+        auto obDev = std::dynamic_pointer_cast<ObDevice>(nioDev);
+        auto pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
+        addSession(nioDev, pipeline, safeName, deviceOutputDir);
     }
+
+#ifdef ENABLE_RS_AC1
+    // Enumerate RS-AC1 devices
+    for (uint32_t i = 0; i < rsCount; i++) {
+        auto nioDev = rsContext.getDevice(i);
+        auto devInfo = nioDev->getDeviceInfo();
+
+        if (!deviceMatches(devInfo.name, cfg.cameraFilter)) {
+            std::cout << "Skipping RS-AC1 device: " << devInfo.name << std::endl;
+            continue;
+        }
+
+        std::cout << "Found RS-AC1 device: " << devInfo.name << std::endl;
+
+        auto safeName = devInfo.name;
+        std::replace(safeName.begin(), safeName.end(), ' ', '_');
+        safeName = safeName + "_" + devInfo.serialNumber;
+
+        std::string deviceOutputDir = outputRootDir + "/" + safeName;
+        mkdirp(deviceOutputDir);
+
+        auto rsDev = std::dynamic_pointer_cast<RsDevice>(nioDev);
+        auto pipeline = std::make_shared<RsPipeline>(rsDev);
+        addSession(nioDev, pipeline, safeName, deviceOutputDir);
+    }
+#endif
 
     if (!cfg.noShow) {
         if (!viewer.createWindow()) {
             std::cerr << "SDL viewer window creation failed, continuing without preview" << std::endl;
-            NIO_LOG_WARN("SDL viewer window creation failed, continuing without preview");
         }
     }
 
     if (sessions.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
         NIO_LOG_FATAL("No matching devices found!");
-        if (!cfg.cameraFilter.empty()) {
-            std::cerr << "Available devices:" << std::endl;
-            for (uint32_t i = 0; i < deviceList->getCount(); i++) {
-                auto dev = deviceList->getDevice(i);
-                std::cerr << " - " << dev->getDeviceInfo()->getName() << std::endl;
-            }
-        }
         return -1;
     }
 
@@ -175,9 +204,6 @@ int main(int argc, char** argv) try {
         std::cout << "D2C Fusion: disabled" << std::endl;
     }
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
-    NIO_LOG_INFO_S("=== Recording started === devices=" << sessions.size() << " outputDir=" << outputRootDir
-                                                        << " fusion=" << (cfg.enableFusion ? "on" : "off"));
-    NIO_LOG_INFO_S("Log file: " << NIO_LOG_PATH());
 
     auto lastReportTime = ob_smpl::getNowTimesMs();
     uint32_t waitTime = 1000;
@@ -202,7 +228,6 @@ int main(int argc, char** argv) try {
     }
 
     std::cout << "\n=== Stopping recording ===" << std::endl;
-    NIO_LOG_INFO("=== Stopping recording ===");
 
     for (auto& session : sessions)
         session->stop();
@@ -210,7 +235,6 @@ int main(int argc, char** argv) try {
     viewer.close();
 
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
-    NIO_LOG_INFO_S("All recordings saved to: " << outputRootDir << "/");
     NIO_LOG_SHUTDOWN();
     return 0;
 } catch (ob::Error& e) {

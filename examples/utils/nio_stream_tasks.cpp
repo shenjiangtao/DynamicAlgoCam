@@ -6,10 +6,10 @@
 #include "nio_stream_tasks.hpp"
 #include "nio_log.hpp"
 #include "nio_ob_adapter.hpp"
+#include "nio_color_convert.hpp"
 
 #include <algorithm>
 #include <cstring>
-#include <libobsensor/ObSensor.hpp>
 
 namespace nio {
 
@@ -209,7 +209,7 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
     int h = colorH_;
 
     bool colorOk =
-        decodeColorToRGB(colorData, colorSize, nioFormatToOb(colorFormat_), w, h, colorRGBBuf_->data(), mjpgRes_);
+        decodeColorToRGB(colorData, colorSize, colorFormat_, w, h, colorRGBBuf_->data(), mjpgRes_);
     if (!colorOk) {
         std::memset(colorRGBBuf_->data(), 128, w * h * 3);
     }
