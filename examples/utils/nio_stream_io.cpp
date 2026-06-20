@@ -6,6 +6,7 @@
 // Sections:
 //   1. isH264KeyFrame / writeH264StartCode / writeH264Frame — native H.264 NAL handling
 //   2. writeDepthRawWithHeader — ORBBEC_DEPTH_RAW format writer
+//   2b. writePointRawWithHeader — NIO_POINT_CLOUD_RAW format writer
 //   3. openBufferedFile — large-buffer ofstream factory
 //   4. createStreamEncoder / writeStreamFrame — encoder+file management
 
@@ -105,6 +106,103 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
     }
 
     file.write(reinterpret_cast<const char*>(data), size);
+    file.flush();
+}
+
+// === Section 2b: NIO_POINT_CLOUD_RAW format writer ===
+
+// Binary container format for multi-frame point cloud data.
+//
+// File header (frame 0 only, 64 bytes):
+//   [16B] magic = "NIO_POINT_CLOUD_RAW"
+//   [4B]  version = 1 (uint32)
+//   [4B]  pointFieldCount = 6 (uint32)
+//   [48B] pointFieldNames = "x\0y\0z\0intensity\0ring\0timestamp\0" (padded)
+//
+// Per-frame header (32 bytes, every frame including frame 0):
+//   [8B]  frameIndex (uint64)
+//   [8B]  timestampUs (uint64)
+//   [4B]  pointCount (uint32)
+//   [4B]  pointDataBytes (uint32) = pointCount * 26
+//   [8B]  reserved (uint64, zero)
+//
+// Per-frame point data:
+//   pointCount * 26 bytes each:
+//     float x(4) + float y(4) + float z(4) + float intensity(4) +
+//     uint16 ring(2) + double timestamp(8) = 26 bytes
+
+void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size,
+                              uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs) {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (!file.is_open())
+        return;
+
+    if (size < sizeof(uint32_t))
+        return;
+
+    uint32_t pointCount = 0;
+    std::memcpy(&pointCount, data, sizeof(uint32_t));
+    const uint8_t* pointData = data + sizeof(uint32_t);
+
+    constexpr size_t srcPointSize = 4 + 4 + 4 + 1 + 2 + 8; // 23 bytes (wire format)
+    size_t expectedSrcBytes = static_cast<size_t>(pointCount) * srcPointSize;
+    if (size - sizeof(uint32_t) < expectedSrcBytes)
+        return;
+
+    if (frameIndex == 0) {
+        const char magic[] = "NIO_POINT_CLOUD_RAW";
+        file.write(magic, 16);
+
+        uint32_t version = 1;
+        file.write(reinterpret_cast<const char*>(&version), 4);
+
+        uint32_t fieldCount = 6;
+        file.write(reinterpret_cast<const char*>(&fieldCount), 4);
+
+        const char fieldNames[48] = "x\0y\0z\0intensity\0ring\0timestamp";
+        file.write(fieldNames, 48);
+    }
+
+    constexpr uint32_t dstPointSize = 4 + 4 + 4 + 4 + 2 + 8; // 26 bytes per point
+    uint32_t pointDataBytes = pointCount * dstPointSize;
+
+    uint64_t fidx = frameIndex;
+    file.write(reinterpret_cast<const char*>(&fidx), 8);
+
+    uint64_t ts = deviceTsUs ? deviceTsUs
+                              : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                          std::chrono::system_clock::now().time_since_epoch())
+                                                          .count());
+    file.write(reinterpret_cast<const char*>(&ts), 8);
+
+    file.write(reinterpret_cast<const char*>(&pointCount), 4);
+    file.write(reinterpret_cast<const char*>(&pointDataBytes), 4);
+
+    uint64_t reserved = 0;
+    file.write(reinterpret_cast<const char*>(&reserved), 8);
+
+    const uint8_t* ptr = pointData;
+    for (uint32_t i = 0; i < pointCount; ++i) {
+        float x, y, z;
+        uint8_t rawIntensity;
+        uint16_t ring;
+        double ptTs;
+        std::memcpy(&x, ptr, 4); ptr += 4;
+        std::memcpy(&y, ptr, 4); ptr += 4;
+        std::memcpy(&z, ptr, 4); ptr += 4;
+        std::memcpy(&rawIntensity, ptr, 1); ptr += 1;
+        std::memcpy(&ring, ptr, 2); ptr += 2;
+        std::memcpy(&ptTs, ptr, 8); ptr += 8;
+
+        float intensity = static_cast<float>(rawIntensity);
+        file.write(reinterpret_cast<const char*>(&x), 4);
+        file.write(reinterpret_cast<const char*>(&y), 4);
+        file.write(reinterpret_cast<const char*>(&z), 4);
+        file.write(reinterpret_cast<const char*>(&intensity), 4);
+        file.write(reinterpret_cast<const char*>(&ring), 2);
+        file.write(reinterpret_cast<const char*>(&ptTs), 8);
+    }
+
     file.flush();
 }
 

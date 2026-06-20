@@ -141,4 +141,18 @@ private:
     std::mutex fileMtx_;
 };
 
+class PcdStreamTask : public StreamTask {
+public:
+    PcdStreamTask(const std::string &name, std::shared_ptr<std::ofstream> pcdFile);
+    std::atomic<uint64_t> frameCount{0};
+
+protected:
+    void processFrame(const FrameBlob &blob) override;
+
+private:
+    std::shared_ptr<std::ofstream> pcdFile_;
+    std::mutex fileMtx_;
+    uint64_t frameIdx_ = 0;
+};
+
 } // namespace nio

@@ -106,4 +106,18 @@ private:
     std::shared_ptr<SensorFiles> sensorFiles_;
 };
 
+class PointcloudFrameConsumer : public FrameConsumer {
+public:
+    PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask,
+                            std::shared_ptr<SensorFiles> sensorFiles);
+
+    void consume(std::shared_ptr<NioFrameSet> frameSet) override;
+    void setViewer(SDLViewer *viewer, int viewerIdx) override;
+    void stopTask() override;
+
+private:
+    std::shared_ptr<PcdStreamTask> pcdTask_;
+    std::shared_ptr<SensorFiles> sensorFiles_;
+};
+
 } // namespace nio

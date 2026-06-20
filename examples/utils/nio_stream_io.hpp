@@ -68,6 +68,8 @@ struct SensorFiles {
     std::shared_ptr<std::ofstream> imuFile;        // IMU CSV/binary output
     std::mutex depthRawMtx;
     std::mutex imuMtx;
+    std::shared_ptr<std::ofstream> pcdFile;        // .pcd binary point cloud output
+    std::mutex pcdMtx;
 
     NioFrameCounts frameCounts;   // per-type frame counter
     std::mutex countMtx;
@@ -89,6 +91,15 @@ void writeDepthRawWithHeader(std::ofstream &file, const uint8_t *data, uint32_t 
                              int width, int height, float scale,
                              uint64_t frameIndex, std::mutex &mtx,
                              uint64_t deviceTsUs = 0);
+
+// writePointRawWithHeader: write point-cloud frame with NIO_POINT_CLOUD_RAW
+// container. Frame 0 writes file header (magic + version + point fields metadata
+// + start timestamp). Each frame writes a per-frame header (frameIndex +
+// timestampUs + pointCount + dataBytes) followed by binary point data.
+// Each point is 26 bytes: float x,y,z,intensity + uint16_t ring + double timestamp.
+void writePointRawWithHeader(std::ofstream &file, const uint8_t *data, uint32_t size,
+                              uint64_t frameIndex, std::mutex &mtx,
+                              uint64_t deviceTsUs = 0);
 
 // openBufferedFile: open ofstream with large user-space buffer for fast writes
 std::shared_ptr<std::ofstream> openBufferedFile(const std::string &path,

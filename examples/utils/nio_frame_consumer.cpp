@@ -125,4 +125,27 @@ void IRFrameConsumer::setViewer(SDLViewer* viewer, int viewerIdx) {
     viewerIdx_ = viewerIdx;
 }
 
+// === PointcloudFrameConsumer ===
+
+PointcloudFrameConsumer::PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask,
+                                                   std::shared_ptr<SensorFiles> sensorFiles)
+: pcdTask_(std::move(pcdTask)), sensorFiles_(std::move(sensorFiles)) {}
+
+void PointcloudFrameConsumer::consume(std::shared_ptr<NioFrameSet> frameSet) {
+    auto* pointFrame = frameSet->getFrame(NioFrameType::POINT);
+    if (!pointFrame)
+        return;
+    if (pcdTask_)
+        pcdTask_->enqueue(pointFrame->rawData(), pointFrame->dataSize(), pointFrame->timestampUs);
+    std::lock_guard<std::mutex> lock(sensorFiles_->countMtx);
+    sensorFiles_->frameCounts[NioFrameType::POINT]++;
+}
+
+void PointcloudFrameConsumer::stopTask() {
+    if (pcdTask_)
+        pcdTask_->stop();
+}
+
+void PointcloudFrameConsumer::setViewer(SDLViewer*, int) {}
+
 } // namespace nio

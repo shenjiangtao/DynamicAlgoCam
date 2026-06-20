@@ -73,6 +73,7 @@ void CaptureSession::createEncodersAndTasks() {
         createIREncoder(NioFrameType::IR_RIGHT, "_ir_right_", sensorInfo_.irRightFormat, sensorInfo_.irRW,
                         sensorInfo_.irRH, sensorInfo_.irRFps, ViewerChannel::IR_RIGHT);
     createImuTask();
+    createPcdTask();
 }
 
 void CaptureSession::createColorEncoder() {
@@ -143,6 +144,24 @@ void CaptureSession::createImuTask() {
     NIO_LOG_INFO_S("IMU output: " << baseName_ + "_imu_" + startTs_ + ".txt");
 }
 
+void CaptureSession::createPcdTask() {
+    if (!pipeline_ || !pipeline_->isPointCloudDepth())
+        return;
+
+    std::string pcdPath = baseName_ + "_point_raw_" + startTs_ + ".raw";
+    auto sf = sensorFiles_;
+    sf->pcdFile = openBufferedFile(pcdPath, std::ios::binary);
+
+    pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", sf->pcdFile);
+    pcdTask_->start();
+
+    frameConsumers_.push_back(
+        std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sf)));
+
+    NIO_LOG_INFO_S("PCD point cloud output: " << pcdPath);
+    std::cout << "  PCD point cloud: " << pcdPath << std::endl;
+}
+
 // ---------------------------------------------------------------------------
 // Fusion
 // ---------------------------------------------------------------------------
@@ -208,6 +227,8 @@ void CaptureSession::writeIntrinsicJson() {
     std::string intrinsicPath = baseName_ + "_depth_intrinsic_" + startTs_ + ".json";
     std::ofstream jf(intrinsicPath);
     if (jf.is_open()) {
+        bool isPointDepth = pipeline_ && pipeline_->isPointCloudDepth();
+
         jf << "{\n";
         jf << "  \"depth\": {\"fx\":" << sensorInfo_.depthIntrinsic.fx << ",\"fy\":" << sensorInfo_.depthIntrinsic.fy
            << ",\"cx\":" << sensorInfo_.depthIntrinsic.cx << ",\"cy\":" << sensorInfo_.depthIntrinsic.cy
@@ -218,6 +239,21 @@ void CaptureSession::writeIntrinsicJson() {
            << ",\"width\":" << sensorInfo_.colorIntrinsic.width << ",\"height\":" << sensorInfo_.colorIntrinsic.height
            << "},\n";
         jf << "  \"depth_scale\":" << depthScale_ << ",\n";
+
+        if (isPointDepth) {
+            jf << "  \"lidar\": {\n"
+               << "    \"type\": \"RS-AC1\",\n"
+               << "    \"point_grid_width\": 96,\n"
+               << "    \"point_grid_height\": 288,\n"
+               << "    \"distance_min_m\": 0.2,\n"
+               << "    \"distance_max_m\": 200.0,\n"
+               << "    \"distance_resolution_m\": 0.005,\n"
+               << "    \"vector_base\": 32768,\n"
+               << "    \"point_fields\": \"x y z intensity ring timestamp\",\n"
+               << "    \"point_type\": \"PointXYZIRT\"\n"
+               << "  },\n";
+        }
+
         jf << "  \"device\":\"" << safeName_ << "\"\n";
         jf << "}\n";
         std::cout << " Intrinsic: " << intrinsicPath << std::endl;
@@ -397,6 +433,8 @@ void CaptureSession::stop() {
         fusionTask_->stop();
     if (imuTask_)
         imuTask_->stop();
+    if (pcdTask_)
+        pcdTask_->stop();
 
     // closeEncoders / closeFiles
     auto& sf = sensorFiles_;
@@ -413,6 +451,7 @@ void CaptureSession::stop() {
     if (sf->irRight && sf->irRight->file) sf->irRight->file->close();
     if (sf->depthRawFile) sf->depthRawFile->close();
     if (sf->imuFile) sf->imuFile->close();
+    if (sf->pcdFile) sf->pcdFile->close();
 
     mjpgRes_.reset();
 

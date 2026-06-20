@@ -79,6 +79,7 @@ private:
     void createIREncoder(NioFrameType type, const std::string &suffix, NioFormat fmt,
                          int w, int h, int fps, ViewerChannel ch);
     void createImuTask();
+    void createPcdTask();
 
     void setupFusion();
     void writeIntrinsicJson();
@@ -110,6 +111,7 @@ private:
     std::vector<std::unique_ptr<FrameConsumer>> frameConsumers_;
     std::shared_ptr<FusionStreamTask> fusionTask_;
     std::shared_ptr<ImuStreamTask> imuTask_;
+    std::shared_ptr<PcdStreamTask> pcdTask_;
 
     std::string devId_;
 

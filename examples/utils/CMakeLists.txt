@@ -163,7 +163,7 @@ if(ENABLE_RS_AC1)
     _rs_remove_werror(rsac_usb)
 
     # Link the rs_driver USB library and its transitive deps.
-    target_link_libraries(ob_examples_utils PUBLIC rsac_usb usb-1.0 uvc pthread)
+    target_link_libraries(ob_examples_utils PUBLIC rsac_usb usb-ac-static uvc-ac-static pthread)
 
     message(STATUS "RS-AC1 support enabled (rs_driver root: ${RS_DRIVER_ROOT})")
 endif()

@@ -223,9 +223,11 @@ void RsPipeline::processCloud() {
         auto msg = stuffedCloudQueue_.popWait(100000);
         if (!msg) continue;
         auto depthFrame = std::make_shared<NioFrame>(rsDepthToNioFrame(msg));
+        auto pointFrame = std::make_shared<NioFrame>(rsPointToNioFrame(msg));
         {
             std::lock_guard<std::mutex> lk(syncMtx_);
             depthFrame_ = depthFrame;
+            pointFrame_ = pointFrame;
             depthReady_ = true;
             tryEmitFrameSet();
         }
@@ -272,6 +274,8 @@ void RsPipeline::tryEmitFrameSet() {
         auto nioFs = std::make_shared<NioFrameSet>();
         nioFs->setFrame(NioFrameType::COLOR, *colorFrame_);
         nioFs->setFrame(NioFrameType::DEPTH, *depthFrame_);
+        if (pointFrame_)
+            nioFs->setFrame(NioFrameType::POINT, *pointFrame_);
         if (videoCallback_)
             videoCallback_(nioFs);
         colorReady_ = false;

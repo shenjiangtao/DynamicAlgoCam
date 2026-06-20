@@ -3,8 +3,9 @@
 //
 // nio_rs_frame_adapter.hpp — RS-AC1 PointCloudMsg + ImageData → NioFrame conversion.
 //
-// Provides rsDepthToNioFrame() (synthetic 2D depth map from point cloud)
-// and rsImageToNioFrame() (image data → NioFrame).
+// Provides rsDepthToNioFrame() (synthetic 2D depth map from point cloud),
+// rsImageToNioFrame() (image data → NioFrame),
+// and rsPointToNioFrame() (raw point cloud → NioFrame for PCD recording).
 
 #pragma once
 
@@ -63,6 +64,37 @@ NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& 
         } else {
             dst[i] = 0;
         }
+    }
+
+    return f;
+}
+
+// Convert RS-AC1 PointCloudMsg → NioFrame (raw POINT data for PCD recording).
+// Binary layout: [4 bytes: pointCount (uint32)] [pointCount * elementSize bytes: packed XYZIRT]
+// Each element: float x(4) + float y(4) + float z(4) + uint8 intensity(1) + uint16 ring(2) + double timestamp(8) = 23 bytes
+NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
+    NioFrame f;
+    f.type = NioFrameType::POINT;
+    f.format = NioFormat::POINT;
+    f.timestampUs = static_cast<uint64_t>(cloud->timestamp * 1e6);
+
+    uint32_t nPts = static_cast<uint32_t>(cloud->points.size());
+    constexpr size_t elemSize = 4 + 4 + 4 + 1 + 2 + 8; // 23 bytes per point
+    size_t dataSize = sizeof(uint32_t) + static_cast<size_t>(nPts) * elemSize;
+    f.data.resize(dataSize);
+
+    uint8_t* dst = f.data.data();
+    std::memcpy(dst, &nPts, sizeof(uint32_t));
+    dst += sizeof(uint32_t);
+
+    for (uint32_t i = 0; i < nPts; ++i) {
+        const auto& pt = cloud->points[i];
+        std::memcpy(dst, &pt.x, 4);         dst += 4;
+        std::memcpy(dst, &pt.y, 4);         dst += 4;
+        std::memcpy(dst, &pt.z, 4);         dst += 4;
+        std::memcpy(dst, &pt.intensity, 1); dst += 1;
+        std::memcpy(dst, &pt.ring, 2);      dst += 2;
+        std::memcpy(dst, &pt.timestamp, 8); dst += 8;
     }
 
     return f;

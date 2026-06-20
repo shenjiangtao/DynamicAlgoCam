@@ -122,6 +122,7 @@ private:
     std::mutex syncMtx_;
     std::shared_ptr<NioFrame> colorFrame_;
     std::shared_ptr<NioFrame> depthFrame_;
+    std::shared_ptr<NioFrame> pointFrame_;
     bool colorReady_ = false;
     bool depthReady_ = false;
 

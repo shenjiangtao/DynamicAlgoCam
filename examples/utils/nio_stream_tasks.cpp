@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
+#include <sstream>
 
 namespace nio {
 
@@ -270,6 +272,17 @@ void ImuStreamTask::processFrame(const FrameBlob& blob) {
 
 void ImuStreamTask::enqueueLine(std::string line) {
     enqueue(reinterpret_cast<const uint8_t*>(line.data()), static_cast<uint32_t>(line.size()), 0);
+}
+
+// === PcdStreamTask ===
+
+PcdStreamTask::PcdStreamTask(const std::string& name, std::shared_ptr<std::ofstream> pcdFile)
+: StreamTask(name, 4), pcdFile_(std::move(pcdFile)) {}
+
+void PcdStreamTask::processFrame(const FrameBlob& blob) {
+    if (!pcdFile_ || !pcdFile_->is_open()) return;
+    writePointRawWithHeader(*pcdFile_, blob.data.data(), blob.size, frameIdx_++, fileMtx_, blob.timestampUs);
+    frameCount++;
 }
 
 } // namespace nio
