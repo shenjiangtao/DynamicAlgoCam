@@ -33,7 +33,7 @@ static constexpr float RS_AC1_DEPTH_SCALE = 5.0f;
 // Convert RS-AC1 PointCloudMsg → NioFrame (synthetic Y16 depth map).
 // Each point[i] maps to pixel(col=i%96, row=i/96).
 // Invalid points (NaN or <0.2m) get depth=0.
-NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
+inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     NioFrame f;
     f.type = NioFrameType::DEPTH;
     f.format = NioFormat::Y16;
@@ -72,7 +72,7 @@ NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& 
 // Convert RS-AC1 PointCloudMsg → NioFrame (raw POINT data for PCD recording).
 // Binary layout: [4 bytes: pointCount (uint32)] [pointCount * elementSize bytes: packed XYZIRT]
 // Each element: float x(4) + float y(4) + float z(4) + uint8 intensity(1) + uint16 ring(2) + double timestamp(8) = 23 bytes
-NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
+inline NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     NioFrame f;
     f.type = NioFrameType::POINT;
     f.format = NioFormat::POINT;
@@ -101,7 +101,7 @@ NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& 
 }
 
 // Convert RS-AC1 ImageData → NioFrame (color frame).
-NioFrame rsImageToNioFrame(const std::shared_ptr<robosense::lidar::ImageData>& img) {
+inline NioFrame rsImageToNioFrame(const std::shared_ptr<robosense::lidar::ImageData>& img) {
     NioFrame f;
     f.type = NioFrameType::COLOR;
     f.format = rsFrameFormatToNio(img->frame_format);

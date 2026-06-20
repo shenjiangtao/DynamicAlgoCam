@@ -10,8 +10,12 @@ project(nio_multi_capture)
 
 add_executable(${PROJECT_NAME} nio_multi_capture.cpp)
 
-set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 14)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+
+# rs_driver vendored libusb headers trigger pedantic warnings (zero-size arrays)
+# that become errors under -Werror. Suppress for this target.
+target_compile_options(${PROJECT_NAME} PRIVATE -Wno-error=pedantic -Wno-pedantic -Wno-error=unused-parameter -Wno-unused-parameter)
 
 execute_process(
     COMMAND git rev-parse --short HEAD

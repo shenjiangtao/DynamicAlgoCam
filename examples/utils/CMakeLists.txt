@@ -105,7 +105,7 @@ add_library(ob::examples::utils ALIAS ob_examples_utils)
 set_target_properties(ob_examples_utils PROPERTIES FOLDER "examples")
 
 # RS-AC1 support (optional)
-option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" OFF)
+option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
 
 if(ENABLE_RS_AC1)
     set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../RoboSense/rs_driver-dev_opt_AC1")
@@ -116,7 +116,7 @@ if(ENABLE_RS_AC1)
     set(COMPILE_TOOLS OFF CACHE BOOL "Build rs_driver tools" FORCE)
     set(ENABLE_USB ON CACHE BOOL "Enable USB interface in rs_driver" FORCE)
 
-    target_compile_definitions(ob_examples_utils PRIVATE
+    target_compile_definitions(ob_examples_utils PUBLIC
         ENABLE_RS_AC1
         DISABLE_PCAP_PARSE
         ENABLE_IMU_PARSE
