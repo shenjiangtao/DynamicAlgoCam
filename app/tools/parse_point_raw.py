@@ -3,11 +3,11 @@
 NIO Point Cloud Raw Data (.raw) Parser & PCD Converter
 
 Data structure of .point_raw file:
-  File header (64 bytes, frame 0 only):
-    [0:16]   Magic string: "NIO_POINT_CLOUD_R"  (NIO_POINT_CLOUD_RAW, 16 bytes)
-    [16:20]  Version      (uint32) = 1
-    [20:24]  Field count  (uint32) = 6
-    [24:72]  Field names  (48 bytes, null-separated: "x\\0y\\0z\\0intensity\\0ring\\0timestamp")
+  File header (68 bytes, frame 0 only):
+    [0:20]   Magic string: "NIO_POINT_CLOUD_RAW\0"  (20 bytes)
+    [20:24]  Version      (uint32) = 1
+    [24:28]  Field count  (uint32) = 6
+    [28:68]  Field names  (40 bytes, null-separated: "x\\0y\\0z\\0intensity\\0ring\\0timestamp")
   Per-frame header (32 bytes, every frame):
     [0:8]    Frame index  (uint64)
     [8:16]   TimestampUs  (uint64)
@@ -33,8 +33,8 @@ import os
 import struct
 import sys
 
-MAGIC = b"NIO_POINT_CLOUD_R"
-FILE_HEADER_SIZE = 64
+MAGIC = b"NIO_POINT_CLOUD_RAW\x00"
+FILE_HEADER_SIZE = 68
 FRAME_HEADER_SIZE = 32
 POINT_SIZE = 26
 
@@ -47,10 +47,10 @@ def read_file_header(f):
     data = f.read(FILE_HEADER_SIZE)
     if len(data) < FILE_HEADER_SIZE:
         return None
-    magic = data[0:16]
+    magic = data[0:20]
     if magic != MAGIC:
         return None
-    version, field_count = struct.unpack_from("<II", data, 16)
+    version, field_count = struct.unpack_from("<II", data, 20)
     return {"version": version, "field_count": field_count}
 
 

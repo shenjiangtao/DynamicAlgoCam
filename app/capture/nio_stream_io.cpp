@@ -113,11 +113,11 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 
 // Binary container format for multi-frame point cloud data.
 //
-// File header (frame 0 only, 64 bytes):
-//   [16B] magic = "NIO_POINT_CLOUD_RAW"
+// File header (frame 0 only, 68 bytes):
+//   [20B] magic = "NIO_POINT_CLOUD_RAW\0"
 //   [4B]  version = 1 (uint32)
 //   [4B]  pointFieldCount = 6 (uint32)
-//   [48B] pointFieldNames = "x\0y\0z\0intensity\0ring\0timestamp\0" (padded)
+//   [40B] pointFieldNames = "x\0y\0z\0intensity\0ring\0timestamp\0" (padded)
 //
 // Per-frame header (32 bytes, every frame including frame 0):
 //   [8B]  frameIndex (uint64)
@@ -151,7 +151,7 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 
     if (frameIndex == 0) {
         const char magic[] = "NIO_POINT_CLOUD_RAW";
-        file.write(magic, 16);
+        file.write(magic, 20);
 
         uint32_t version = 1;
         file.write(reinterpret_cast<const char*>(&version), 4);
@@ -159,8 +159,8 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
         uint32_t fieldCount = 6;
         file.write(reinterpret_cast<const char*>(&fieldCount), 4);
 
-        const char fieldNames[48] = "x\0y\0z\0intensity\0ring\0timestamp";
-        file.write(fieldNames, 48);
+        const char fieldNames[40] = "x\0y\0z\0intensity\0ring\0timestamp";
+        file.write(fieldNames, 40);
     }
 
     constexpr uint32_t dstPointSize = 4 + 4 + 4 + 4 + 2 + 8; // 26 bytes per point

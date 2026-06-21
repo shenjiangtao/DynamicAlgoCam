@@ -199,7 +199,7 @@ void RsPipeline::stop() {
         driver_.stop();
         started_ = false;
     }
-    // Join threads after stop to allow clean drain.
+    running_ = false;
     if (cloudThread_.joinable()) cloudThread_.join();
     if (imageThread_.joinable()) imageThread_.join();
     if (imuThread_.joinable()) imuThread_.join();
@@ -320,11 +320,23 @@ void RsContext::scanDevices() {
         int rc = libusb_get_device_descriptor(list[i], &desc);
         if (rc != 0) continue;
         if (desc.idVendor == RS_AC1_VID && desc.idProduct == RS_AC1_PID) {
-            uint8_t busNum = libusb_get_bus_number(list[i]);
-            uint8_t devNum = libusb_get_device_address(list[i]);
-            std::ostringstream oss;
-            oss << static_cast<int>(busNum) << "-" << static_cast<int>(devNum);
-            deviceUuids_.push_back(oss.str());
+            std::string uuid;
+            libusb_device_handle* handle = nullptr;
+            if (libusb_open(list[i], &handle) == 0 && desc.iSerialNumber > 0) {
+                unsigned char buf[256] = {};
+                int len = libusb_get_string_descriptor_ascii(handle, desc.iSerialNumber, buf, sizeof(buf));
+                if (len > 0)
+                    uuid = std::string(reinterpret_cast<char*>(buf), static_cast<size_t>(len));
+                libusb_close(handle);
+            }
+            if (uuid.empty()) {
+                uint8_t busNum = libusb_get_bus_number(list[i]);
+                uint8_t devNum = libusb_get_device_address(list[i]);
+                std::ostringstream oss;
+                oss << static_cast<int>(busNum) << "-" << static_cast<int>(devNum);
+                uuid = oss.str();
+            }
+            deviceUuids_.push_back(uuid);
         }
     }
 

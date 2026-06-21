@@ -2,8 +2,8 @@
 # Licensed under the MIT License.
 #
 # nio_multi_capture — Multi-device capture application.
-# Standalone application (not an SDK example).
-# FFmpeg deps are inherited via PUBLIC link from ob_examples_utils.
+# Standalone application entry point (main).
+# Links against the layered libraries: nio_core, nio_drivers, nio_capture.
 
 cmake_minimum_required(VERSION 3.10)
 project(nio_multi_capture)
@@ -12,10 +12,6 @@ add_executable(${PROJECT_NAME} nio_multi_capture.cpp)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 14)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
-
-# rs_driver vendored libusb headers trigger pedantic warnings (zero-size arrays)
-# that become errors under -Werror. Suppress for this target.
-target_compile_options(${PROJECT_NAME} PRIVATE -Wno-error=pedantic -Wno-pedantic -Wno-error=unused-parameter -Wno-unused-parameter)
 
 execute_process(
     COMMAND git rev-parse --short HEAD
@@ -31,9 +27,16 @@ else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE GIT_COMMIT_HASH="unknown")
 endif()
 
+# rs_driver vendored headers trigger pedantic warnings that become errors.
+target_compile_options(${PROJECT_NAME} PRIVATE
+    -Wno-error=pedantic -Wno-pedantic
+    -Wno-error=unused-parameter -Wno-unused-parameter
+)
+
 target_link_libraries(${PROJECT_NAME}
-    ob::${OB_SDK_LIB_NAME}
-    ob::examples::utils
+    nio::core
+    nio::drivers
+    nio::capture
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
