@@ -133,7 +133,7 @@ void CaptureSession::createIREncoder(NioFrameType type, const std::string& suffi
 }
 
 void CaptureSession::createImuTask() {
-    if (!sensorInfo_.hasAccel && !sensorInfo_.hasGyro)
+    if (!hasIMU())
         return;
     auto sf = sensorFiles_;
     sf->imuFile = std::make_shared<std::ofstream>(baseName_ + "_imu_" + startTs_ + ".txt");

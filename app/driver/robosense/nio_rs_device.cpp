@@ -48,8 +48,8 @@ NioSensorInfo RsDevice::getSensorInfo() const {
     si.hasIR = false;
     si.hasIRLeft = false;
     si.hasIRRight = false;
-    si.hasAccel = true;
-    si.hasGyro = true;
+    si.hasAccel = false;
+    si.hasGyro = false;
 
     si.colorFormat = NioFormat::NV12;
     si.colorW = 1920;
