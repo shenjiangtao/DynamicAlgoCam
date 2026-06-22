@@ -119,14 +119,14 @@ int main(int argc, char** argv) try {
             return;
         }
 
+        session->startImuPipeline();
         session->startVideoPipeline(viewer, cfg.noShow);
         if (!session->hasVideoPipeline()) {
-            NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping IMU");
+            NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping");
             sessions.push_back(session);
             return;
         }
 
-        session->startImuPipeline();
         sessions.push_back(std::move(session));
     };
 

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "nio_frame.hpp"
+#include "nio_color_convert.hpp"
 #include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
 #include "nio_stream_tasks.hpp"
@@ -67,7 +68,8 @@ public:
                        std::shared_ptr<DepthRawTask> rawTask,
                        SDLViewer *viewer, int viewerIdx, ViewerChannel channel,
                        std::shared_ptr<SensorFiles> sensorFiles,
-                       float depthScale, float depthMinM, float depthMaxM);
+                       float depthScale, float depthMinM, float depthMaxM,
+                       int depthW, int depthH);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
     void setViewer(SDLViewer *viewer, int viewerIdx) override;
@@ -83,6 +85,9 @@ private:
     float depthScale_;
     float depthMinM_;
     float depthMaxM_;
+    int depthW_;
+    int depthH_;
+    std::vector<uint8_t> jetRgbBuf_;
 };
 
 // IRFrameConsumer: handles IR / IR-LEFT / IR-RIGHT frames — H264 encode +
@@ -117,6 +122,8 @@ public:
 
 private:
     std::shared_ptr<PcdStreamTask> pcdTask_;
+    SDLViewer *viewer_ = nullptr;
+    int viewerIdx_ = -1;
     std::shared_ptr<SensorFiles> sensorFiles_;
 };
 

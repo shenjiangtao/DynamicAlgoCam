@@ -20,7 +20,7 @@ namespace nio {
 // === RsDevice ===
 
 RsDevice::RsDevice(uint32_t deviceIndex, const std::string& deviceUuid)
-    : deviceIndex_(deviceIndex), deviceUuid_(deviceUuid) {}
+: deviceIndex_(deviceIndex), deviceUuid_(deviceUuid) {}
 
 NioDeviceInfo RsDevice::getDeviceInfo() const {
     if (!deviceInfoQueried_) {
@@ -37,7 +37,9 @@ NioDeviceInfo RsDevice::getDeviceInfo() const {
 
 void RsDevice::timerSyncWithHost() {}
 
-bool RsDevice::isGlobalTimestampSupported() const { return true; }
+bool RsDevice::isGlobalTimestampSupported() const {
+    return true;
+}
 
 void RsDevice::enableGlobalTimestamp(bool) {}
 
@@ -48,8 +50,8 @@ NioSensorInfo RsDevice::getSensorInfo() const {
     si.hasIR = false;
     si.hasIRLeft = false;
     si.hasIRRight = false;
-    si.hasAccel = false;
-    si.hasGyro = false;
+    si.hasAccel = true;
+    si.hasGyro = true;
 
     si.colorFormat = NioFormat::NV12;
     si.colorW = 1920;
@@ -64,7 +66,9 @@ NioSensorInfo RsDevice::getSensorInfo() const {
     return si;
 }
 
-int32_t RsDevice::getIntProperty(int) { return 0; }
+int32_t RsDevice::getIntProperty(int) {
+    return 0;
+}
 
 NioSensorInfo RsDevice::setupPipeline(NioPipeline& /*pipeline*/) {
     NioSensorInfo si = getSensorInfo();
@@ -74,18 +78,21 @@ NioSensorInfo RsDevice::setupPipeline(NioPipeline& /*pipeline*/) {
 
 // === RsPipeline ===
 
-RsPipeline::RsPipeline(std::shared_ptr<RsDevice> device)
-    : rsDevice_(std::move(device)) {}
+RsPipeline::RsPipeline(std::shared_ptr<RsDevice> device) : rsDevice_(std::move(device)) {}
 
 void RsPipeline::enableStream(const NioStreamConfig& cfg) {
     if (cfg.frameType == NioFrameType::COLOR) {
         enableImage_ = true;
         imageFormat_ = cfg.format != NioFormat::UNKNOWN ? cfg.format : NioFormat::NV12;
-        if (cfg.width > 0)  imageWidth_ = cfg.width;
-        if (cfg.height > 0) imageHeight_ = cfg.height;
-        if (cfg.fps > 0)    imageFps_ = cfg.fps;
+        if (cfg.width > 0)
+            imageWidth_ = cfg.width;
+        if (cfg.height > 0)
+            imageHeight_ = cfg.height;
+        if (cfg.fps > 0)
+            imageFps_ = cfg.fps;
     } else if (cfg.frameType == NioFrameType::ACCEL || cfg.frameType == NioFrameType::GYRO) {
-        if (cfg.fps > 0) imuFps_ = cfg.fps;
+        if (cfg.fps > 0)
+            imuFps_ = cfg.fps;
     }
 }
 
@@ -126,9 +133,7 @@ bool RsPipeline::start(NioVideoCallback callback) {
             auto msg = freeCloudQueue_.pop();
             return msg ? msg : std::make_shared<RsPointCloudMsg>();
         },
-        [this](std::shared_ptr<RsPointCloudMsg> msg) {
-            stuffedCloudQueue_.push(msg);
-        });
+        [this](std::shared_ptr<RsPointCloudMsg> msg) { stuffedCloudQueue_.push(msg); });
 
     if (enableImage_) {
         driver_.regImageDataCallback(
@@ -136,9 +141,7 @@ bool RsPipeline::start(NioVideoCallback callback) {
                 auto msg = freeImageQueue_.pop();
                 return msg ? msg : std::make_shared<robosense::lidar::ImageData>();
             },
-            [this](const std::shared_ptr<robosense::lidar::ImageData>& msg) {
-                stuffedImageQueue_.push(msg);
-            });
+            [this](const std::shared_ptr<robosense::lidar::ImageData>& msg) { stuffedImageQueue_.push(msg); });
     }
 
     driver_.regImuDataCallback(
@@ -146,14 +149,10 @@ bool RsPipeline::start(NioVideoCallback callback) {
             auto msg = freeImuQueue_.pop();
             return msg ? msg : std::make_shared<robosense::lidar::ImuData>();
         },
-        [this](const std::shared_ptr<robosense::lidar::ImuData>& msg) {
-            stuffedImuQueue_.push(msg);
-        });
+        [this](const std::shared_ptr<robosense::lidar::ImuData>& msg) { stuffedImuQueue_.push(msg); });
 
     driver_.regExceptionCallback(
-        [](const robosense::lidar::Error& err) {
-            NIO_LOG_WARN_S("RS-AC1 driver error: " << err.toString());
-        });
+        [](const robosense::lidar::Error& err) { NIO_LOG_WARN_S("RS-AC1 driver error: " << err.toString()); });
 
     if (!driver_.init(param)) {
         NIO_LOG_ERROR("RS-AC1 driver init failed");
@@ -173,9 +172,12 @@ bool RsPipeline::start(NioVideoCallback callback) {
     if (!driver_.start()) {
         NIO_LOG_ERROR("RS-AC1 driver start failed");
         running_ = false;
-        if (cloudThread_.joinable()) cloudThread_.join();
-        if (imageThread_.joinable()) imageThread_.join();
-        if (imuThread_.joinable()) imuThread_.join();
+        if (cloudThread_.joinable())
+            cloudThread_.join();
+        if (imageThread_.joinable())
+            imageThread_.join();
+        if (imuThread_.joinable())
+            imuThread_.join();
         return false;
     }
 
@@ -185,11 +187,12 @@ bool RsPipeline::start(NioVideoCallback callback) {
 }
 
 bool RsPipeline::startImu(NioImuCallback callback) {
-    // For RS-AC1, IMU is handled within the main driver lifecycle.
-    // The IMU processing thread starts in start() if imuCallback_ is set.
-    // This method allows late-binding the callback.
     imuCallback_ = callback;
     imuStarted_ = true;
+    if (started_ && !imuThread_.joinable() && running_.load()) {
+        imuThread_ = std::thread(&RsPipeline::processImu, this);
+        NIO_LOG_INFO_S("RS-AC1 IMU thread started (late-bind)");
+    }
     return true;
 }
 
@@ -200,9 +203,12 @@ void RsPipeline::stop() {
         started_ = false;
     }
     running_ = false;
-    if (cloudThread_.joinable()) cloudThread_.join();
-    if (imageThread_.joinable()) imageThread_.join();
-    if (imuThread_.joinable()) imuThread_.join();
+    if (cloudThread_.joinable())
+        cloudThread_.join();
+    if (imageThread_.joinable())
+        imageThread_.join();
+    if (imuThread_.joinable())
+        imuThread_.join();
 }
 
 void RsPipeline::stopImu() {
@@ -221,7 +227,8 @@ void RsPipeline::processCloud() {
     NIO_LOG_DEBUG("RS-AC1 cloud processing thread started");
     while (running_.load()) {
         auto msg = stuffedCloudQueue_.popWait(100000);
-        if (!msg) continue;
+        if (!msg)
+            continue;
         auto depthFrame = std::make_shared<NioFrame>(rsDepthToNioFrame(msg));
         auto pointFrame = std::make_shared<NioFrame>(rsPointToNioFrame(msg));
         {
@@ -241,7 +248,8 @@ void RsPipeline::processImageData() {
     NIO_LOG_DEBUG("RS-AC1 image processing thread started");
     while (running_.load()) {
         auto msg = stuffedImageQueue_.popWait(100000);
-        if (!msg) continue;
+        if (!msg)
+            continue;
         auto colorFrame = std::make_shared<NioFrame>(rsImageToNioFrame(msg));
         {
             std::lock_guard<std::mutex> lk(syncMtx_);
@@ -259,7 +267,8 @@ void RsPipeline::processImu() {
     NIO_LOG_DEBUG("RS-AC1 IMU processing thread started");
     while (running_.load()) {
         auto msg = stuffedImuQueue_.popWait(100000);
-        if (!msg) continue;
+        if (!msg)
+            continue;
         emitImuData(msg);
         freeImuQueue_.push(msg);
     }
@@ -284,7 +293,8 @@ void RsPipeline::tryEmitFrameSet() {
 }
 
 void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& imu) {
-    if (!imu || !imuCallback_) return;
+    if (!imu || !imuCallback_)
+        return;
 
     auto samples = rsImuToNioSamples(imu);
     if (!samples.empty())
@@ -306,7 +316,8 @@ RsContext::~RsContext() {
 }
 
 void RsContext::scanDevices() {
-    if (scanned_) return;
+    if (scanned_)
+        return;
 
     libusb_device** list = nullptr;
     ssize_t cnt = libusb_get_device_list(usbCtx_, &list);
@@ -318,7 +329,8 @@ void RsContext::scanDevices() {
     for (ssize_t i = 0; i < cnt; i++) {
         struct libusb_device_descriptor desc;
         int rc = libusb_get_device_descriptor(list[i], &desc);
-        if (rc != 0) continue;
+        if (rc != 0)
+            continue;
         if (desc.idVendor == RS_AC1_VID && desc.idProduct == RS_AC1_PID) {
             std::string uuid;
             libusb_device_handle* handle = nullptr;
@@ -351,7 +363,8 @@ uint32_t RsContext::getDeviceCount() {
 
 std::shared_ptr<NioDevice> RsContext::getDevice(uint32_t index) {
     scanDevices();
-    if (index >= deviceUuids_.size()) return nullptr;
+    if (index >= deviceUuids_.size())
+        return nullptr;
     return std::make_shared<RsDevice>(index, deviceUuids_[index]);
 }
 

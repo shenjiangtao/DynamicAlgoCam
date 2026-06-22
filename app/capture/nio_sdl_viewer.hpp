@@ -40,7 +40,7 @@ extern "C" {
 
 namespace nio {
 
-enum class ViewerChannel { COLOR, DEPTH, IR, IR_LEFT, IR_RIGHT };
+enum class ViewerChannel { COLOR, DEPTH, IR, IR_LEFT, IR_RIGHT, POINT };
 
 struct ViewerSlot {
     std::string label;
@@ -88,9 +88,11 @@ public:
                   bool hasDepth, NioFormat depthFmt, int dw, int dh,
                   bool hasIR, int irw, int irh,
                   bool hasIRLeft, int ilw, int ilh,
-                  bool hasIRRight, int irw2, int irh2);
+                  bool hasIRRight, int irw2, int irh2,
+                  bool hasPoint = false, int pw = 640, int ph = 480);
 
     int addViewerSlot(const std::string& label, NioFormat fmt, int w, int h);
+    int addPointSlot(const std::string& label, int w, int h);
 
     bool createWindow();
 
@@ -111,6 +113,8 @@ private:
     void renderDeviceRow(int di, int rowY, float scale, int colW, int winW);
     void renderSlotLabel(int slotIdx, int xOff, int videoY, int dstW, int dstH, float scale);
     void decodeSlot(ViewerSlot& slot);
+    bool decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                         std::vector<uint8_t>& rgb);
     bool decodeY16Slot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
                        std::vector<uint8_t>& rgb);
     bool decodeY8Slot(const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h, std::vector<uint8_t>& rgb);
@@ -136,6 +140,7 @@ private:
         int irSlot = -1;
         int irLeftSlot = -1;
         int irRightSlot = -1;
+        int pointSlot = -1;
     };
 
     std::vector<DeviceRow> devices_;
@@ -169,6 +174,8 @@ private:
     static const int ROW_HEADER_H = 36;
     static const int FORMAT_BAR_H = 26;
     static const int FONT_SCALE = 3;
+    static const int MAX_TILE_W = 640;
+    static const int MAX_TILE_H = 480;
 };
 
 } // namespace nio

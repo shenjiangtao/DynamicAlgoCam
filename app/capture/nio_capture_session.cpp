@@ -94,7 +94,7 @@ void CaptureSession::createDepthEncoder() {
     if (!sensorInfo_.hasDepth || sensorInfo_.depthFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
-    sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", sensorInfo_.depthFormat,
+    sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", NioFormat::RGB,
                                     sensorInfo_.depthW, sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
     sf->depthRawFile = std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
     auto encTask = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
@@ -103,8 +103,9 @@ void CaptureSession::createDepthEncoder() {
                                                   sensorInfo_.depthH, depthScale_);
     rawTask->start();
     frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new DepthFrameConsumer(
-        encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM, cfg_.depthMaxM)));
-    NIO_LOG_INFO_S("Depth output: " << baseName_ + "_depth_" + startTs_ + ".h264" << " + raw");
+        encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM, cfg_.depthMaxM,
+        sensorInfo_.depthW, sensorInfo_.depthH)));
+    NIO_LOG_INFO_S("Depth output: " << baseName_ + "_depth_" + startTs_ + ".h264" << " + raw (jet RGB encoded)");
 }
 
 void CaptureSession::createIREncoder(NioFrameType type, const std::string& suffix, NioFormat fmt, int w, int h, int fps,
@@ -268,10 +269,11 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
     NioFormat depthSlotFmt = NioFormat::Y16;
     int depthSlotW = sensorInfo_.depthW;
     int depthSlotH = sensorInfo_.depthH;
-    if (sensorInfo_.hasDepth && hwD2CMode_ && sensorInfo_.hasColor) {
+    if (sensorInfo_.hasDepth && hwD2CMode_ && sensorInfo_.hasColor && !pipeline_->isPointCloudDepth()) {
         depthSlotW = sensorInfo_.colorW;
         depthSlotH = sensorInfo_.colorH;
     }
+    bool hasPoint = pipeline_ && pipeline_->isPointCloudDepth();
     auto devInfo = device_->getDeviceInfo();
     std::string camType = devInfo.name;
     std::replace(camType.begin(), camType.end(), ' ', '_');
@@ -279,7 +281,7 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
                                   sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.hasDepth, depthSlotFmt,
                                   depthSlotW, depthSlotH, sensorInfo_.hasIR, sensorInfo_.irW, sensorInfo_.irH,
                                   sensorInfo_.hasIRLeft, sensorInfo_.irLW, sensorInfo_.irLH, sensorInfo_.hasIRRight,
-                                  sensorInfo_.irRW, sensorInfo_.irRH);
+                                  sensorInfo_.irRW, sensorInfo_.irRH, hasPoint);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +409,7 @@ void CaptureSession::startImuPipeline() {
         return;
 
     NIO_LOG_INFO_S("Starting IMU pipeline for " << safeName_);
+    consumersRunning_ = true;
     imuConsumerThread_ = std::thread(&CaptureSession::imuConsumerLoop, this);
 
     pipeline_->startImu([this](const std::vector<NioImuSample>& samples) {

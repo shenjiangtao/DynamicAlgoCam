@@ -248,6 +248,57 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
                 }
             }
         }
+    } else if (depthSize >= 2) {
+        int dw = static_cast<int>(depthSize / 2);
+        int dh = 1;
+        while (dw > 1 && dw * dh * 2 < static_cast<int>(depthSize)) {
+            dh++;
+        }
+        if (depthSize >= static_cast<uint32_t>(96 * 288 * 2)) {
+            dw = 96;
+            dh = 288;
+        } else {
+            dh = 1;
+            for (int cand = 1; cand <= dw; cand++) {
+                if (depthSize >= static_cast<uint32_t>(cand * (dw / cand) * 2) && dw % cand == 0) {
+                    dh = dw / cand;
+                    dw = cand;
+                    break;
+                }
+            }
+        }
+
+        if (dw > 0 && dh > 0) {
+            const uint16_t* depthPtr = reinterpret_cast<const uint16_t*>(depthData);
+            for (int y = 0; y < h; y++) {
+                int sy = y * dh / h;
+                if (sy >= dh) sy = dh - 1;
+                for (int x = 0; x < w; x++) {
+                    int sx = x * dw / w;
+                    if (sx >= dw) sx = dw - 1;
+                    uint16_t rawVal = depthPtr[sy * dw + sx];
+                    int idx = (y * w + x) * 3;
+                    if (rawVal == 0) {
+                        (*fusedRGBBuf_)[idx + 0] = (*colorRGBBuf_)[idx + 0];
+                        (*fusedRGBBuf_)[idx + 1] = (*colorRGBBuf_)[idx + 1];
+                        (*fusedRGBBuf_)[idx + 2] = (*colorRGBBuf_)[idx + 2];
+                    } else {
+                        float distM = rawVal * scale / 1000.0f;
+                        float norm = (distM - minDist) / (maxDist - minDist);
+                        norm = std::max(0.0f, std::min(1.0f, norm));
+                        uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+                        uint8_t cr, cg, cb;
+                        jetColormap(v, cr, cg, cb);
+                        float inv = 1.0f - al;
+                        (*fusedRGBBuf_)[idx + 0] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 0] + al * cr);
+                        (*fusedRGBBuf_)[idx + 1] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 1] + al * cg);
+                        (*fusedRGBBuf_)[idx + 2] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 2] + al * cb);
+                    }
+                }
+            }
+        } else {
+            std::memcpy(fusedRGBBuf_->data(), colorRGBBuf_->data(), w * h * 3);
+        }
     } else {
         std::memcpy(fusedRGBBuf_->data(), colorRGBBuf_->data(), w * h * 3);
     }

@@ -14,6 +14,7 @@
 #include "nio_log.hpp"
 #include "nio_ob_adapter.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace nio {
@@ -205,6 +206,8 @@ std::string SDLViewer::nioFormatToString(NioFormat fmt) {
         return "RGB";
     case NioFormat::BGR:
         return "BGR";
+    case NioFormat::NV12:
+        return "NV12";
     case NioFormat::H264:
         return "H264";
     case NioFormat::H265:
@@ -249,8 +252,12 @@ int SDLViewer::addViewerSlot(const std::string& label, NioFormat fmt, int w, int
         rawMax = w * h * 2;
     else if (obFmt == OB_FORMAT_Y8)
         rawMax = w * h;
-    else if (obFmt == OB_FORMAT_YUYV)
+    else if (obFmt == OB_FORMAT_YUYV || obFmt == OB_FORMAT_UYVY)
         rawMax = w * h * 2;
+    else if (obFmt == OB_FORMAT_NV12 || obFmt == OB_FORMAT_NV21)
+        rawMax = w * h * 3 / 2;
+    else if (obFmt == OB_FORMAT_I420)
+        rawMax = w * h * 3 / 2;
     else
         rawMax = w * h * 4;
     s.rawBuf.resize(rawMax, 0);
@@ -260,12 +267,26 @@ int SDLViewer::addViewerSlot(const std::string& label, NioFormat fmt, int w, int
     return idx;
 }
 
+int SDLViewer::addPointSlot(const std::string& label, int w, int h) {
+    int idx = static_cast<int>(slots_.size());
+    slots_.push_back(std::unique_ptr<ViewerSlot>(new ViewerSlot()));
+    auto& s = *slots_.back();
+    s.label = label;
+    s.format = NioFormat::POINT;
+    s.formatStr = "PCD";
+    s.w = w;
+    s.h = h;
+    s.rawBuf.resize(27648 * 23 + 4, 0);
+    s.renderBuf.resize(w * h * 3, 0);
+    return idx;
+}
+
 // Add a device row with selected video slots (color/depth/IR/IR-L/IR-R)
 // 添加一个设备行，包含选定的视频slot（彩色/深度/红外/左红外/右红外）
 int SDLViewer::addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
                           bool hasColor, NioFormat colorFmt, int cw, int ch, bool hasDepth, NioFormat depthFmt, int dw,
                           int dh, bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight,
-                          int irw2, int irh2) {
+                          int irw2, int irh2, bool hasPoint, int pw, int ph) {
     DeviceRow row;
     row.name = name;
     row.cameraType = cameraType;
@@ -296,6 +317,11 @@ int SDLViewer::addDevice(const std::string& name, const std::string& cameraType,
         row.slotIndices.push_back(idx);
         row.irRightSlot = idx;
     }
+    if (hasPoint) {
+        int idx = addPointSlot("Point", pw, ph);
+        row.slotIndices.push_back(idx);
+        row.pointSlot = idx;
+    }
 
     devices_.push_back(row);
     int devIdx = static_cast<int>(devices_.size()) - 1;
@@ -317,14 +343,14 @@ bool SDLViewer::createWindow() {
     maxSlotsPerRow_ = 0;
     for (auto& d : devices_)
         maxSlotsPerRow_ = std::max(maxSlotsPerRow_, static_cast<int>(d.slotIndices.size()));
-    tileW_ = maxW;
-    tileH_ = maxH;
+    tileW_ = std::min(maxW, MAX_TILE_W);
+    tileH_ = std::min(maxH, MAX_TILE_H);
 
     int winW = maxSlotsPerRow_ * tileW_;
     int rows = static_cast<int>(devices_.size());
     int winH = rows * (tileH_ + ROW_HEADER_H + FORMAT_BAR_H);
     window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
-                               SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                               SDL_WINDOW_SHOWN);
     if (!window_) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
         return false;
@@ -502,6 +528,9 @@ void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uin
     case ViewerChannel::IR_RIGHT:
         slotIdx = dev.irRightSlot;
         break;
+    case ViewerChannel::POINT:
+        slotIdx = dev.pointSlot;
+        break;
     }
     if (slotIdx < 0 || slotIdx >= static_cast<int>(slots_.size()))
         return;
@@ -613,6 +642,76 @@ bool SDLViewer::decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& raw
     return decodeColorToRGB(rawCopy.data(), rawSz, NioFormat::MJPG, w, h, rgb.data(), mjpg);
 }
 
+bool SDLViewer::decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
+                                 std::vector<uint8_t>& rgb) {
+    if (rawSz < 4)
+        return false;
+    const uint8_t* src = rawCopy.data();
+    uint32_t nPts = 0;
+    memcpy(&nPts, src, 4);
+    src += 4;
+    constexpr size_t elemSize = 23;
+    if (rawSz < 4 + static_cast<size_t>(nPts) * elemSize)
+        return false;
+
+    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
+    float minDist = 0.3f, maxDist = 50.0f;
+
+    struct P { float x, y, z; uint8_t intensity; };
+    std::vector<P> valid;
+    valid.reserve(nPts);
+    for (uint32_t i = 0; i < nPts; i++) {
+        const uint8_t* p = src + i * elemSize;
+        float px, py, pz;
+        memcpy(&px, p, 4);
+        memcpy(&py, p + 4, 4);
+        memcpy(&pz, p + 8, 4);
+        if (std::isnan(px) || std::isnan(py) || std::isnan(pz))
+            continue;
+        valid.push_back({px, py, pz, p[12]});
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+    }
+
+    memset(rgb.data(), 0, w * h * 3);
+
+    if (valid.empty())
+        return true;
+
+    float rangeX = maxX - minX;
+    float rangeY = maxY - minY;
+    if (rangeX < 0.01f) rangeX = 0.01f;
+    if (rangeY < 0.01f) rangeY = 0.01f;
+
+    float scaleX = (w - 1) / rangeX;
+    float scaleY = (h - 1) / rangeY;
+    float sc = std::min(scaleX, scaleY) * 0.9f;
+    float offX = (w - rangeX * sc) * 0.5f;
+    float offY = (h - rangeY * sc) * 0.5f;
+
+    for (const auto& pt : valid) {
+        float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
+        float norm = (dist - minDist) / (maxDist - minDist);
+        norm = std::max(0.0f, std::min(1.0f, norm));
+        uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+        uint8_t cr, cg, cb;
+        jetColormap(v, cr, cg, cb);
+
+        int px = static_cast<int>((pt.x - minX) * sc + offX);
+        int py = static_cast<int>((pt.y - minY) * sc + offY);
+        py = h - 1 - py;
+        if (px >= 0 && px < w && py >= 0 && py < h) {
+            int idx = (py * w + px) * 3;
+            rgb[idx + 0] = cr;
+            rgb[idx + 1] = cg;
+            rgb[idx + 2] = cb;
+        }
+    }
+    return true;
+}
+
 // Decode raw frame data → RGB24 based on slot format, copy to renderBuf
 // 根据slot格式解码原始帧数据 → RGB24，拷贝至渲染缓冲
 void SDLViewer::decodeSlot(ViewerSlot& slot) {
@@ -634,12 +733,22 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
 
     if (fmt == OB_FORMAT_Y16) {
         ok = decodeY16Slot(slot, rawCopy, rawSz, w, h, rgb);
+    } else if (slot.format == NioFormat::POINT) {
+        ok = decodePointSlot(slot, rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_Y8) {
         ok = decodeY8Slot(rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_YUYV) {
         ok = decodeYuyvSlot(slot, rawCopy, rawSz, w, h, rgb);
     } else if (fmt == OB_FORMAT_MJPG) {
         ok = decodeMjpgSlot(slot, rawCopy, rawSz, w, h, rgb);
+    } else if (fmt == OB_FORMAT_NV12 || fmt == OB_FORMAT_NV21 || fmt == OB_FORMAT_I420 ||
+               fmt == OB_FORMAT_UYVY || fmt == OB_FORMAT_RGB || fmt == OB_FORMAT_BGR ||
+               fmt == OB_FORMAT_RGBA || fmt == OB_FORMAT_BGRA) {
+        if (!slot.mjpgRes) {
+            slot.mjpgRes = std::make_shared<MjpgDecoderRes>();
+            slot.mjpgRes->init(w, h, slot.format);
+        }
+        ok = decodeColorToRGB(rawCopy.data(), rawSz, slot.format, w, h, rgb.data(), slot.mjpgRes);
     }
 
     if (ok) {
@@ -723,8 +832,12 @@ void SDLViewer::renderDeviceRow(int di, int rowY, float scale, int colW, int win
             }
         }
 
-        int dstW = static_cast<int>(slot.w * scale);
-        int dstH = static_cast<int>(slot.h * scale);
+        int dstW = 0, dstH = 0;
+        if (slot.w > 0 && slot.h > 0) {
+            float aspScale = std::min(static_cast<float>(tileW_) / slot.w, static_cast<float>(tileH_) / slot.h);
+            dstW = static_cast<int>(slot.w * aspScale * scale);
+            dstH = static_cast<int>(slot.h * aspScale * scale);
+        }
         int xOff = si * colW + (colW - dstW) / 2;
 
         SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
