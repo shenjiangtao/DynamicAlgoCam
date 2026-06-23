@@ -5,8 +5,8 @@
 
 #include "nio_capture_session.hpp"
 #include "nio_log.hpp"
+#include "nio_ob_d2c_align.hpp"
 #include "nio_ob_device.hpp"
-#include "nio_ob_adapter.hpp"
 #include "nio_sdl_viewer.hpp"
 
 #ifdef ENABLE_RS_AC1
@@ -15,13 +15,14 @@
 
 namespace nio {
 
-CaptureSession::CaptureSession(std::shared_ptr<NioDevice> device,
-                               std::shared_ptr<NioPipeline> pipeline,
-                               const std::string& safeName,
-                               const std::string& deviceOutputDir,
+CaptureSession::CaptureSession(std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
+                               const std::string& safeName, const std::string& deviceOutputDir,
                                const CaptureConfig& cfg)
-: device_(std::move(device)), pipeline_(std::move(pipeline)),
-  safeName_(safeName), deviceOutputDir_(deviceOutputDir), cfg_(cfg) {
+: device_(std::move(device))
+, pipeline_(std::move(pipeline))
+, safeName_(safeName)
+, deviceOutputDir_(deviceOutputDir)
+, cfg_(cfg) {
     devId_ = safeName_;
     if (devId_.size() > 8)
         devId_ = devId_.substr(0, 8);
@@ -38,7 +39,8 @@ bool CaptureSession::setup() {
     if (device_->isGlobalTimestampSupported()) {
         try {
             device_->enableGlobalTimestamp(true);
-        } catch (...) {}
+        } catch (...) {
+        }
     }
 
     sensorInfo_ = device_->setupPipeline(*pipeline_);
@@ -94,17 +96,17 @@ void CaptureSession::createDepthEncoder() {
     if (!sensorInfo_.hasDepth || sensorInfo_.depthFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
-    sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", NioFormat::RGB,
-                                    sensorInfo_.depthW, sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
+    sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", NioFormat::RGB, sensorInfo_.depthW,
+                                    sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
     sf->depthRawFile = std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
     auto encTask = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
     encTask->start();
     auto rawTask = std::make_shared<DepthRawTask>(devId_ + "_depth_raw", sf->depthRawFile, sensorInfo_.depthW,
                                                   sensorInfo_.depthH, depthScale_);
     rawTask->start();
-    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new DepthFrameConsumer(
-        encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM, cfg_.depthMaxM,
-        sensorInfo_.depthW, sensorInfo_.depthH)));
+    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
+        new DepthFrameConsumer(encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM,
+                               cfg_.depthMaxM, sensorInfo_.depthW, sensorInfo_.depthH)));
     NIO_LOG_INFO_S("Depth output: " << baseName_ + "_depth_" + startTs_ + ".h264" << " + raw (jet RGB encoded)");
 }
 
@@ -156,8 +158,7 @@ void CaptureSession::createPcdTask() {
     pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", sf->pcdFile);
     pcdTask_->start();
 
-    frameConsumers_.push_back(
-        std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sf)));
+    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sf)));
 
     NIO_LOG_INFO_S("PCD point cloud output: " << pcdPath);
     std::cout << "  PCD point cloud: " << pcdPath << std::endl;
@@ -180,12 +181,12 @@ void CaptureSession::setupFusion() {
 
     hwD2CMode_ = (pipeline_->getAlignMode() == NioAlignMode::HW);
 
-    // Get ob::Align for SW D2C path (OB-specific, transitional)
-    std::shared_ptr<ob::Align> alignFilter;
+    std::shared_ptr<NioD2CAlign> alignFilter;
     if (!hwD2CMode_) {
         auto* obPipe = dynamic_cast<ObPipeline*>(pipeline_.get());
-        if (obPipe)
-            alignFilter = obPipe->getAlignFilter();
+        if (obPipe && obPipe->getAlignFilter())
+            alignFilter = std::make_shared<ObD2CAlign>(obPipe->getAlignFilter());
+        pipeline_->d2cAlignFilter = alignFilter;
     }
 
     fusedFps_ = std::min(sensorInfo_.colorFps, sensorInfo_.depthFps);
@@ -200,7 +201,6 @@ void CaptureSession::setupFusion() {
         return;
     }
 
-    // MJPG decoder init needs NioFormat (internally converts to OBFormat if needed)
     mjpgRes_ = std::make_shared<MjpgDecoderRes>();
     mjpgRes_->init(sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFormat);
     fusionTask_ = std::make_shared<FusionStreamTask>(devId_ + "_fusion", sensorInfo_.colorW, sensorInfo_.colorH,
@@ -277,11 +277,11 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
     auto devInfo = device_->getDeviceInfo();
     std::string camType = devInfo.name;
     std::replace(camType.begin(), camType.end(), ' ', '_');
-    viewerIdx_ = viewer.addDevice(safeName_, camType, devInfo.serialNumber, sensorInfo_.hasColor, sensorInfo_.colorFormat,
-                                  sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.hasDepth, depthSlotFmt,
-                                  depthSlotW, depthSlotH, sensorInfo_.hasIR, sensorInfo_.irW, sensorInfo_.irH,
-                                  sensorInfo_.hasIRLeft, sensorInfo_.irLW, sensorInfo_.irLH, sensorInfo_.hasIRRight,
-                                  sensorInfo_.irRW, sensorInfo_.irRH, hasPoint);
+    viewerIdx_ = viewer.addDevice(safeName_, camType, devInfo.serialNumber, sensorInfo_.hasColor,
+                                  sensorInfo_.colorFormat, sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.hasDepth,
+                                  depthSlotFmt, depthSlotW, depthSlotH, sensorInfo_.hasIR, sensorInfo_.irW,
+                                  sensorInfo_.irH, sensorInfo_.hasIRLeft, sensorInfo_.irLW, sensorInfo_.irLH,
+                                  sensorInfo_.hasIRRight, sensorInfo_.irRW, sensorInfo_.irRH, hasPoint);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,17 +309,7 @@ void CaptureSession::videoConsumerLoop() {
                                               depthFrame->depthScale);
                 }
             } else {
-                // SW D2C: fusion needs the original ob::FrameSet for ob::Align
-                auto* obPipe = dynamic_cast<ObPipeline*>(pipeline_.get());
-                if (obPipe && nioFs->nativeFrameSet) {
-                    auto obFs = std::static_pointer_cast<ob::FrameSet>(nioFs->nativeFrameSet);
-                    if (obFs)
-                        fusionTask_->enqueueObFrameSet(obFs);
-                    else
-                        fusionTask_->enqueueNioFrameSet(nioFs);
-                } else {
-                    fusionTask_->enqueueNioFrameSet(nioFs);
-                }
+                fusionTask_->enqueueNioFrameSet(nioFs);
             }
         }
 
@@ -333,17 +323,14 @@ void CaptureSession::videoConsumerLoop() {
 // IMU callback: format NioImuSample → CSV lines and push to imuQueue_.
 static void onImuSamples(const std::vector<NioImuSample>& samples, ImuFrameQueue& imuQueue,
                          const std::shared_ptr<SensorFiles>& sensorFiles) {
-    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::system_clock::now().time_since_epoch())
-                     .count();
+    auto nowMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
 
     for (const auto& s : samples) {
         std::ostringstream oss;
-        oss << nowMs << "," << nioFrameTypeToStr(s.type) << ","
-            << s.timestampUs << ","
-            << std::fixed << std::setprecision(6)
-            << s.x << "," << s.y << "," << s.z << ","
-            << s.temperature << "\n";
+        oss << nowMs << "," << nioFrameTypeToStr(s.type) << "," << s.timestampUs << "," << std::fixed
+            << std::setprecision(6) << s.x << "," << s.y << "," << s.z << "," << s.temperature << "\n";
         imuQueue.push(oss.str());
         std::lock_guard<std::mutex> lock(sensorFiles->countMtx);
         sensorFiles->frameCounts[s.type]++;
@@ -412,9 +399,8 @@ void CaptureSession::startImuPipeline() {
     consumersRunning_ = true;
     imuConsumerThread_ = std::thread(&CaptureSession::imuConsumerLoop, this);
 
-    pipeline_->startImu([this](const std::vector<NioImuSample>& samples) {
-        onImuSamples(samples, imuQueue_, sensorFiles_);
-    });
+    pipeline_->startImu(
+        [this](const std::vector<NioImuSample>& samples) { onImuSamples(samples, imuQueue_, sensorFiles_); });
 }
 
 void CaptureSession::stop() {
@@ -441,20 +427,33 @@ void CaptureSession::stop() {
 
     // closeEncoders / closeFiles
     auto& sf = sensorFiles_;
-    if (sf->color && sf->color->encoder) sf->color->encoder->close();
-    if (sf->depth && sf->depth->encoder) sf->depth->encoder->close();
-    if (sf->ir && sf->ir->encoder) sf->ir->encoder->close();
-    if (sf->irLeft && sf->irLeft->encoder) sf->irLeft->encoder->close();
-    if (sf->irRight && sf->irRight->encoder) sf->irRight->encoder->close();
+    if (sf->color && sf->color->encoder)
+        sf->color->encoder->close();
+    if (sf->depth && sf->depth->encoder)
+        sf->depth->encoder->close();
+    if (sf->ir && sf->ir->encoder)
+        sf->ir->encoder->close();
+    if (sf->irLeft && sf->irLeft->encoder)
+        sf->irLeft->encoder->close();
+    if (sf->irRight && sf->irRight->encoder)
+        sf->irRight->encoder->close();
 
-    if (sf->color && sf->color->file) sf->color->file->close();
-    if (sf->depth && sf->depth->file) sf->depth->file->close();
-    if (sf->ir && sf->ir->file) sf->ir->file->close();
-    if (sf->irLeft && sf->irLeft->file) sf->irLeft->file->close();
-    if (sf->irRight && sf->irRight->file) sf->irRight->file->close();
-    if (sf->depthRawFile) sf->depthRawFile->close();
-    if (sf->imuFile) sf->imuFile->close();
-    if (sf->pcdFile) sf->pcdFile->close();
+    if (sf->color && sf->color->file)
+        sf->color->file->close();
+    if (sf->depth && sf->depth->file)
+        sf->depth->file->close();
+    if (sf->ir && sf->ir->file)
+        sf->ir->file->close();
+    if (sf->irLeft && sf->irLeft->file)
+        sf->irLeft->file->close();
+    if (sf->irRight && sf->irRight->file)
+        sf->irRight->file->close();
+    if (sf->depthRawFile)
+        sf->depthRawFile->close();
+    if (sf->imuFile)
+        sf->imuFile->close();
+    if (sf->pcdFile)
+        sf->pcdFile->close();
 
     mjpgRes_.reset();
 

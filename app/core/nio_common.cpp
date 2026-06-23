@@ -9,7 +9,6 @@
 //   3. mkdirp — recursive directory creation
 //   4. SEI NAL unit writer (H.264 unregistered SEI with UUID prefix)
 //   5. deviceMatches — filter device name by substring list
-//   6. selectBestProfile — scoring-based stream profile selection
 
 #include "nio_common.hpp"
 #include "nio_log.hpp"
@@ -138,59 +137,6 @@ bool deviceMatches(const std::string& deviceName, const std::vector<std::string>
             return true;
     }
     return false;
-}
-
-// === Section 6: selectBestProfile — scoring-based stream profile selection ===
-// Scoring: format match = +1000, width 640=+100 / 848=+90 / 1280=+80,
-// fps 30=+50 / 25=+45 / 15=+30.  Falls back to first profile if no match.
-
-std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
-                                                          OBFormat preferredFormat) {
-    std::shared_ptr<ob::VideoStreamProfile> best;
-    int bestScore = -1;
-
-    for (uint32_t i = 0; i < profiles->getCount(); i++) {
-        try {
-            auto sp = profiles->getProfile(i);
-            if (!sp)
-                continue;
-            auto vsp = sp->as<ob::VideoStreamProfile>();
-            if (!vsp)
-                continue;
-
-            int score = 0;
-            if (vsp->getFormat() == preferredFormat)
-                score += 1000;
-            if (vsp->getWidth() == 640)
-                score += 100;
-            else if (vsp->getWidth() == 848)
-                score += 90;
-            else if (vsp->getWidth() == 1280)
-                score += 80;
-            if (vsp->getFps() == 30)
-                score += 50;
-            else if (vsp->getFps() == 25)
-                score += 45;
-            else if (vsp->getFps() == 15)
-                score += 30;
-
-            if (score > bestScore) {
-                bestScore = score;
-                best = vsp;
-            }
-        } catch (...) {
-            continue;
-        }
-    }
-
-    if (!best && profiles->getCount() > 0) {
-        try {
-            auto sp = profiles->getProfile(0);
-            best = sp->as<ob::VideoStreamProfile>();
-        } catch (...) {
-        }
-    }
-    return best;
 }
 
 } // namespace nio

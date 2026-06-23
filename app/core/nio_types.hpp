@@ -6,7 +6,7 @@
 // Replaces direct usage of Orbbec SDK types (OBFormat, OBFrameType,
 // OBCameraIntrinsic, etc.) with SDK-agnostic equivalents.  Conversion
 // functions between NioFormat↔OBFormat and NioFrameType↔OBFrameType
-// are provided in nio_ob_adapter.hpp (Phase 2).
+// are provided in nio_ob_adapter.hpp / nio_rs_adapter.hpp (driver layer only).
 
 #pragma once
 
@@ -16,7 +16,7 @@
 
 namespace nio {
 
-// Pixel / frame format — mirrors OB_FORMAT_* but SDK-independent.
+// Pixel / frame format — SDK-independent.
 enum class NioFormat {
     UNKNOWN = 0,
     Y8,
@@ -39,6 +39,46 @@ enum class NioFormat {
     POINT,
     RGB888,
 };
+
+// Bytes per pixel for single-plane formats (Y16=2, RGB=3, RGBA=4, etc.).
+// Returns 0 for multi-plane or compressed formats (NV12/NV21/I420/MJPG/H264/POINT/UNKNOWN).
+inline int nioFormatBpp(NioFormat f) {
+    switch (f) {
+    case NioFormat::Y8:    return 1;
+    case NioFormat::Y16:   return 2;
+    case NioFormat::YUYV:
+    case NioFormat::UYVY:
+    case NioFormat::YUY2:  return 2;
+    case NioFormat::RGB:
+    case NioFormat::BGR:
+    case NioFormat::RGB888: return 3;
+    case NioFormat::RGBA:
+    case NioFormat::BGRA:  return 4;
+    default:               return 0;
+    }
+}
+
+// Raw buffer size in bytes for a given format + resolution.
+// Covers: Y8, Y16, YUYV/UYVY/YUY2, RGB/BGR/RGB888, RGBA/BGRA, NV12, NV21, I420.
+// Returns 0 for MJPEG, H264, POINT, UNKNOWN (variable-size).
+inline size_t nioFormatRawSize(NioFormat f, int w, int h) {
+    switch (f) {
+    case NioFormat::Y8:    return static_cast<size_t>(w * h);
+    case NioFormat::Y16:   return static_cast<size_t>(w * h * 2);
+    case NioFormat::YUYV:
+    case NioFormat::UYVY:
+    case NioFormat::YUY2:  return static_cast<size_t>(w * h * 2);
+    case NioFormat::RGB:
+    case NioFormat::BGR:
+    case NioFormat::RGB888: return static_cast<size_t>(w * h * 3);
+    case NioFormat::RGBA:
+    case NioFormat::BGRA:  return static_cast<size_t>(w * h * 4);
+    case NioFormat::NV12:
+    case NioFormat::NV21:  return static_cast<size_t>(w * h * 3 / 2);
+    case NioFormat::I420:  return static_cast<size_t>(w * h * 3 / 2);
+    default:               return 0;
+    }
+}
 
 // Frame type — identifies the sensor source of a frame.
 enum class NioFrameType {

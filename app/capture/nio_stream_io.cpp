@@ -13,7 +13,6 @@
 #include "nio_stream_io.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
-#include "nio_ob_adapter.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -131,8 +130,8 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 //     float x(4) + float y(4) + float z(4) + float intensity(4) +
 //     uint16 ring(2) + double timestamp(8) = 26 bytes
 
-void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size,
-                              uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs) {
+void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size, uint64_t frameIndex,
+                             std::mutex& mtx, uint64_t deviceTsUs) {
     std::lock_guard<std::mutex> lock(mtx);
     if (!file.is_open())
         return;
@@ -169,10 +168,10 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
     uint64_t fidx = frameIndex;
     file.write(reinterpret_cast<const char*>(&fidx), 8);
 
-    uint64_t ts = deviceTsUs ? deviceTsUs
-                              : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                                          std::chrono::system_clock::now().time_since_epoch())
-                                                          .count());
+    uint64_t ts = deviceTsUs ? deviceTsUs :
+                               static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                         std::chrono::system_clock::now().time_since_epoch())
+                                                         .count());
     file.write(reinterpret_cast<const char*>(&ts), 8);
 
     file.write(reinterpret_cast<const char*>(&pointCount), 4);
@@ -187,12 +186,18 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
         uint8_t rawIntensity;
         uint16_t ring;
         double ptTs;
-        std::memcpy(&x, ptr, 4); ptr += 4;
-        std::memcpy(&y, ptr, 4); ptr += 4;
-        std::memcpy(&z, ptr, 4); ptr += 4;
-        std::memcpy(&rawIntensity, ptr, 1); ptr += 1;
-        std::memcpy(&ring, ptr, 2); ptr += 2;
-        std::memcpy(&ptTs, ptr, 8); ptr += 8;
+        std::memcpy(&x, ptr, 4);
+        ptr += 4;
+        std::memcpy(&y, ptr, 4);
+        ptr += 4;
+        std::memcpy(&z, ptr, 4);
+        ptr += 4;
+        std::memcpy(&rawIntensity, ptr, 1);
+        ptr += 1;
+        std::memcpy(&ring, ptr, 2);
+        ptr += 2;
+        std::memcpy(&ptTs, ptr, 8);
+        ptr += 8;
 
         float intensity = static_cast<float>(rawIntensity);
         file.write(reinterpret_cast<const char*>(&x), 4);

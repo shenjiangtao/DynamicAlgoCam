@@ -4,6 +4,10 @@
 // nio_ob_adapter.hpp — Conversion functions between Orbbec SDK types and
 // Nio neutral types.  Only code that directly uses the Orbbec SDK should
 // include this file; all downstream consumers use nio_types.hpp instead.
+//
+// Also contains selectBestProfile (score-based stream profile selection)
+// and isLiDARDevice (moved from app/core/utils.hpp to remove ObSensor
+// dependency from the core layer).
 
 #pragma once
 
@@ -131,6 +135,68 @@ inline OBCameraIntrinsic nioIntrinsicToOb(const NioIntrinsic &n) {
     ob.width = n.width;
     ob.height = n.height;
     return ob;
+}
+
+// selectBestProfile: scoring-based stream profile selector.
+// Prefers the requested format (+1000), then favors 640w (+100) /
+// 848w (+90) / 1280w (+80), and 30fps (+50) / 25fps (+45) / 15fps (+30).
+// Falls back to first profile if no match.
+inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
+                                                                  OBFormat preferredFormat) {
+    std::shared_ptr<ob::VideoStreamProfile> best;
+    int bestScore = -1;
+
+    for (uint32_t i = 0; i < profiles->getCount(); i++) {
+        try {
+            auto sp = profiles->getProfile(i);
+            if (!sp)
+                continue;
+            auto vsp = sp->as<ob::VideoStreamProfile>();
+            if (!vsp)
+                continue;
+
+            int score = 0;
+            if (vsp->getFormat() == preferredFormat)
+                score += 1000;
+            if (vsp->getWidth() == 640)
+                score += 100;
+            else if (vsp->getWidth() == 848)
+                score += 90;
+            else if (vsp->getWidth() == 1280)
+                score += 80;
+            if (vsp->getFps() == 30)
+                score += 50;
+            else if (vsp->getFps() == 25)
+                score += 45;
+            else if (vsp->getFps() == 15)
+                score += 30;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = vsp;
+            }
+        } catch (...) {
+            continue;
+        }
+    }
+
+    if (!best && profiles->getCount() > 0) {
+        try {
+            auto sp = profiles->getProfile(0);
+            best = sp->as<ob::VideoStreamProfile>();
+        } catch (...) {
+        }
+    }
+    return best;
+}
+
+inline bool isLiDARDevice(std::shared_ptr<ob::Device> device) {
+    auto sensorList = device->getSensorList();
+    for (uint32_t i = 0; i < sensorList->getCount(); i++) {
+        if (sensorList->getSensorType(i) == OB_SENSOR_LIDAR)
+            return true;
+    }
+    return false;
 }
 
 } // namespace nio

@@ -12,6 +12,7 @@
 
 #include "nio_color_convert.hpp"
 #include "nio_common.hpp"
+#include "nio_device.hpp"
 #include "nio_frame.hpp"
 #include "nio_h264_encoder.hpp"
 #include "nio_stream_io.hpp"
@@ -64,7 +65,7 @@ public:
                      std::shared_ptr<H264Encoder> fusedEncoder,
                      std::shared_ptr<std::ofstream> fusedFile,
                      std::mutex &fusedMtx,
-                     std::shared_ptr<ob::Align> alignFilter,
+                     std::shared_ptr<NioD2CAlign> alignFilter,
                      bool hwD2CMode,
                      float alpha, float depthMinM, float depthMaxM, float depthScale,
                      std::shared_ptr<MjpgDecoderRes> mjpgRes);
@@ -72,7 +73,6 @@ public:
     std::atomic<uint64_t> frameCount{0};
 
     void enqueueNioFrameSet(std::shared_ptr<NioFrameSet> frameSet);
-    void enqueueObFrameSet(std::shared_ptr<ob::FrameSet> obFrameSet);
     void enqueueColor(const uint8_t *data, uint32_t size, uint64_t timestampUs);
     void enqueueDepth(const uint8_t *data, uint32_t size, uint64_t timestampUs,
                       float depthScale = 1.0f);
@@ -94,7 +94,7 @@ private:
     std::shared_ptr<H264Encoder> fusedEncoder_;
     std::shared_ptr<std::ofstream> fusedFile_;
     std::mutex &fusedMtx_;
-    std::shared_ptr<ob::Align> alignFilter_;
+    std::shared_ptr<NioD2CAlign> alignFilter_;
     bool hwD2CMode_;
 
     float alpha_;
@@ -123,7 +123,6 @@ private:
 
     std::mutex frameSetMtx_;
     std::shared_ptr<NioFrameSet> latestFrameSet_;
-    std::shared_ptr<ob::FrameSet> latestObFrameSet_;
     std::atomic<bool> frameSetReady_{false};
 };
 

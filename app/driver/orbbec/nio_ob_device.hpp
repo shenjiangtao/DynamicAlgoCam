@@ -55,9 +55,9 @@ public:
     bool isPointCloudDepth() const override { return false; }
     NioAlignMode getAlignMode() const override;
 
-    // Expose for SW D2C alignment (transitional).
-    std::shared_ptr<ob::Align> getAlignFilter() const { return alignFilter_; }
     bool isHwD2CMode() const { return hwD2CMode_; }
+
+    std::shared_ptr<ob::Align> getAlignFilter() const { return alignFilter_; }
 
     // Expose raw ob pipeline for legacy code paths.
     std::shared_ptr<ob::Pipeline> obPipeline() const { return obPipeline_; }

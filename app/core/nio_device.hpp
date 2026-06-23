@@ -128,6 +128,28 @@ public:
     // Current D2C alignment mode (HW / SW / NONE).
     // RS-AC1 always returns HW; OB returns the mode set via setAlignMode().
     virtual NioAlignMode getAlignMode() const = 0;
+
+    // Get D2C alignment filter (may be null if HW D2C or not applicable).
+    std::shared_ptr<struct NioD2CAlign> d2cAlignFilter;
+};
+
+// NioD2CAlign: abstract D2C alignment filter.
+// Wraps SDK-specific alignment (e.g. ob::Align for Orbbec).
+// process() takes a type-erased native FrameSet, performs alignment,
+// and returns aligned pixel data + metadata via NioAlignedFrameSet.
+struct NioAlignedFrame {
+    const uint8_t* colorData = nullptr;
+    uint32_t colorSize = 0;
+    uint64_t colorTs = 0;
+    const uint8_t* depthData = nullptr;
+    uint32_t depthSize = 0;
+    uint64_t depthTs = 0;
+    float depthScale = 1.0f;
+};
+
+struct NioD2CAlign {
+    virtual ~NioD2CAlign() = default;
+    virtual bool process(std::shared_ptr<void> nativeFrameSet, NioAlignedFrame& out) = 0;
 };
 
 // NioContext: abstract SDK context for device discovery.

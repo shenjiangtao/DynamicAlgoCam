@@ -98,7 +98,7 @@ private:
     bool seiWritten_;               // true after first copyright SEI is written
     std::string seiUuid_;
 
-    // --- MJPEG decoder state (only used for OB_FORMAT_MJPG/MJPEG) ---
+    // --- MJPEG decoder state (only used for NioFormat::MJPG/MJPEG) ---
     const AVCodec *mjpgCodec_;          // MJPEG decoder codec
     AVPixelFormat mjpgDecFmt_;          // actual decoder output format (lazy)
     bool mjpgSwsInitialized_;           // true after first-frame sws creation

@@ -26,7 +26,6 @@
 #include "nio_stream_tasks.hpp"
 #include "nio_thread.hpp"
 #include "nio_types.hpp"
-#include "utils.hpp"
 
 #ifdef ENABLE_RS_AC1
 #include "nio_rs_adapter.hpp"

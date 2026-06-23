@@ -6,7 +6,6 @@
 #include "utils_types.h"
 
 #include <sstream>
-#include <libobsensor/ObSensor.hpp>
 
 namespace ob_smpl {
 char waitForKeyPressed(uint32_t timeout_ms = 0);
@@ -22,46 +21,12 @@ template <typename T> std::string toString(const T a_value, const int n = 6) {
     return std::move(out).str();
 }
 
-/**
- * @brief Check if the device is a LiDAR device.
- *
- * @param device The device to check.
- * @return true if the device is a LiDAR device.
- * @return false otherwise.
- */
-bool isLiDARDevice(std::shared_ptr<ob::Device> device);
-
 bool supportAnsiEscape();
 
-/**
- * @brief Check if the device is a Gemini305 device.
- *
- * @param vid The vendor ID of the device.
- * @param pid The product ID of the device.
- * @return true if the device is a Gemini 305 device.
- * @return false otherwise.
- */
 bool isGemini305Device(int vid, int pid);
 
-/**
- * @brief Check if the device is a Gemini305 device.
- *
- * @param vid The vendor ID of the device.
- * @param pid The product ID of the device.
- * @param connectionType The connection type of the device.
- * @return true if the device is a Gemini 305g device.
- * @return false otherwise.
- */
 bool isGemini305gDevice(int vid, int pid, const char *connectionType);
 
-/**
- * @brief Check if the device is a Astra Mini device.
- *
- * @param vid The vendor ID of the device.
- * @param pid The product ID of the device.
- * @return true if the device is a Astra Mini device.
- * @return false otherwise.
- */
 bool isAstraMiniDevice(int vid, int pid);
 
 class StreamStateGuard {
@@ -79,3 +44,10 @@ private:
 };
 
 }  // namespace ob_smpl
+
+// Legacy Orbbec SDK utilities (requires ob::Device from ObSensor).
+// For modern app code, use nio::isLiDARDevice() from nio_ob_adapter.hpp.
+#include <libobsensor/ObSensor.hpp>
+namespace ob_smpl {
+bool isLiDARDevice(std::shared_ptr<ob::Device> device);
+}

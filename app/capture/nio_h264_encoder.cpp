@@ -21,7 +21,6 @@
 #include "nio_h264_encoder.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
-#include "nio_ob_adapter.hpp"
 
 #include <cstring>
 #include <iostream>
@@ -153,21 +152,35 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
 // Map NioFormat to AVPixelFormat for sws_getContext
 // 将NioFormat映射为FFmpeg AVPixelFormat
 AVPixelFormat H264Encoder::mapNioFormatToAV(NioFormat srcFormat) {
-    OBFormat obFmt = nioFormatToOb(srcFormat);
-    switch (obFmt) {
-    case OB_FORMAT_YUYV:  return AV_PIX_FMT_YUYV422;
-    case OB_FORMAT_UYVY:  return AV_PIX_FMT_UYVY422;
-    case OB_FORMAT_RGB:   return AV_PIX_FMT_RGB24;
-    case OB_FORMAT_BGR:   return AV_PIX_FMT_BGR24;
-    case OB_FORMAT_RGBA:  return AV_PIX_FMT_RGBA;
-    case OB_FORMAT_BGRA:  return AV_PIX_FMT_BGRA;
-    case OB_FORMAT_NV12:  return AV_PIX_FMT_NV12;
-    case OB_FORMAT_NV21:  return AV_PIX_FMT_NV21;
-    case OB_FORMAT_Y16:   return AV_PIX_FMT_GRAY16LE;
-    case OB_FORMAT_Y8:    return AV_PIX_FMT_GRAY8;
-    case OB_FORMAT_I420:  return AV_PIX_FMT_YUV420P;
-    case OB_FORMAT_MJPG:  return AV_PIX_FMT_YUV420P;
-    default:              return AV_PIX_FMT_NONE;
+    switch (srcFormat) {
+    case NioFormat::YUYV:
+        return AV_PIX_FMT_YUYV422;
+    case NioFormat::UYVY:
+        return AV_PIX_FMT_UYVY422;
+    case NioFormat::RGB:
+    case NioFormat::RGB888:
+        return AV_PIX_FMT_RGB24;
+    case NioFormat::BGR:
+        return AV_PIX_FMT_BGR24;
+    case NioFormat::RGBA:
+        return AV_PIX_FMT_RGBA;
+    case NioFormat::BGRA:
+        return AV_PIX_FMT_BGRA;
+    case NioFormat::NV12:
+        return AV_PIX_FMT_NV12;
+    case NioFormat::NV21:
+        return AV_PIX_FMT_NV21;
+    case NioFormat::Y16:
+        return AV_PIX_FMT_GRAY16LE;
+    case NioFormat::Y8:
+        return AV_PIX_FMT_GRAY8;
+    case NioFormat::I420:
+        return AV_PIX_FMT_YUV420P;
+    case NioFormat::MJPG:
+    case NioFormat::MJPEG:
+        return AV_PIX_FMT_YUV420P;
+    default:
+        return AV_PIX_FMT_NONE;
     }
 }
 
@@ -203,16 +216,15 @@ bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int 
     AVPixelFormat srcFmt = mapNioFormatToAV(srcFormat);
     if (srcFmt == AV_PIX_FMT_NONE) {
         std::cerr << "Unsupported format for H264 encoding" << std::endl;
-        NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << nioFormatToStr(srcFormat) << " " << width << "x" << height);
+        NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << nioFormatToStr(srcFormat) << " " << width << "x"
+                                                                 << height);
         close();
         return false;
     }
 
     // Defer sws creation for MJPEG: actual decoder output format unknown until first frame
-    AVPixelFormat swsSrcFmt = srcFmt;
-    OBFormat obFmt = nioFormatToOb(srcFormat);
-    if (obFmt == OB_FORMAT_MJPG || obFmt == OB_FORMAT_MJPEG)
-        swsSrcFmt = AV_PIX_FMT_NONE;
+    bool isMjpeg = (srcFormat == NioFormat::MJPG || srcFormat == NioFormat::MJPEG);
+    AVPixelFormat swsSrcFmt = isMjpeg ? AV_PIX_FMT_NONE : srcFmt;
 
     AVPixelFormat dstFmt = AV_PIX_FMT_YUV420P;
     if (swsSrcFmt != AV_PIX_FMT_NONE && swsSrcFmt != dstFmt) {
@@ -413,33 +425,32 @@ bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t d
 // Compute source strides based on srcFormat_ for sws_scale
 // 根据srcFormat_计算sws_scale所需的源步幅
 void H264Encoder::computeSrcStrides(int srcStride[4]) {
-    OBFormat obFmt = nioFormatToOb(srcFormat_);
-    switch (obFmt) {
-    case OB_FORMAT_YUYV:
-    case OB_FORMAT_UYVY:
+    switch (srcFormat_) {
+    case NioFormat::YUYV:
+    case NioFormat::UYVY:
+    case NioFormat::YUY2:
+    case NioFormat::Y16:
         srcStride[0] = width_ * 2;
         break;
-    case OB_FORMAT_RGB:
-    case OB_FORMAT_BGR:
+    case NioFormat::RGB:
+    case NioFormat::BGR:
+    case NioFormat::RGB888:
         srcStride[0] = width_ * 3;
         break;
-    case OB_FORMAT_RGBA:
-    case OB_FORMAT_BGRA:
+    case NioFormat::RGBA:
+    case NioFormat::BGRA:
         srcStride[0] = width_ * 4;
         break;
-    case OB_FORMAT_Y16:
-        srcStride[0] = width_ * 2;
-        break;
-    case OB_FORMAT_Y8:
+    case NioFormat::Y8:
         srcStride[0] = width_;
         break;
-    case OB_FORMAT_I420:
+    case NioFormat::I420:
         srcStride[0] = width_;
         srcStride[1] = width_ / 2;
         srcStride[2] = width_ / 2;
         break;
-    case OB_FORMAT_NV12:
-    case OB_FORMAT_NV21:
+    case NioFormat::NV12:
+    case NioFormat::NV21:
         srcStride[0] = width_;
         srcStride[1] = width_;
         break;
@@ -455,12 +466,11 @@ void H264Encoder::computeSrcSlices(const uint8_t* data, const uint8_t* srcSlice[
     srcSlice[1] = nullptr;
     srcSlice[2] = nullptr;
     srcSlice[3] = nullptr;
-    OBFormat obFmtS = nioFormatToOb(srcFormat_);
-    if (obFmtS == OB_FORMAT_I420) {
+    if (srcFormat_ == NioFormat::I420) {
         srcSlice[0] = data;
         srcSlice[1] = data + width_ * height_;
         srcSlice[2] = data + width_ * height_ * 5 / 4;
-    } else if (obFmtS == OB_FORMAT_NV12 || obFmtS == OB_FORMAT_NV21) {
+    } else if (srcFormat_ == NioFormat::NV12 || srcFormat_ == NioFormat::NV21) {
         srcSlice[0] = data;
         srcSlice[1] = data + width_ * height_;
     }
@@ -502,8 +512,7 @@ bool H264Encoder::encode(const uint8_t* data, uint32_t size, std::ofstream& outF
 
     AVFrame* srcFrame = nullptr;
 
-    OBFormat obFmtE = nioFormatToOb(srcFormat_);
-    if (obFmtE == OB_FORMAT_MJPG || obFmtE == OB_FORMAT_MJPEG) {
+    if (srcFormat_ == NioFormat::MJPG || srcFormat_ == NioFormat::MJPEG) {
         srcFrame = decodeMjpg(data, size);
         if (!srcFrame)
             return false;

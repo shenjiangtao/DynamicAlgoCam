@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 //
 // nio_common.hpp — Shared NIO utilities: signal handling, timestamps,
-// directory creation, SEI NAL unit writing, device matching, profile selection.
+// directory creation, SEI NAL unit writing, device matching.
 //
 // g_running / signalHandler: atomic flag set to false on SIGINT/SIGTERM,
 // used by the main capture loop to exit cleanly.
@@ -17,9 +17,6 @@
 //
 // deviceMatches: case-insensitive substring match of device name against
 // a filter list (used to select Orbbec camera models by name).
-//
-// selectBestProfile: scoring-based stream profile selector — prefers
-// the requested format, then favors 640w@30fps for real-time encoding.
 
 #pragma once
 
@@ -29,8 +26,6 @@
 #include <mutex>
 #include <atomic>
 #include <cstdint>
-
-#include <libobsensor/ObSensor.hpp>
 
 namespace nio {
 
@@ -52,8 +47,5 @@ void writeSEINalUnit(std::ofstream &outFile, const std::string &payload,
                      std::mutex &mtx, const char *uuid = "nio@orbbec-fusio");
 
 bool deviceMatches(const std::string &deviceName, const std::vector<std::string> &filter);
-
-std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(
-    std::shared_ptr<ob::StreamProfileList> profiles, OBFormat preferredFormat);
 
 } // namespace nio
