@@ -1,18 +1,19 @@
 ### nio.multi_capture 简介
 
-**nio_multi_capture** 是一个参考 Orbbec SDK_V2 实现的用于多台 Orbbec 摄像头同时采集与录制的工具。它会自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，并将采集到的流写入磁盘（原生 H.264 或通过 FFmpeg 转码为 H.264、原始深度数据、IMU 文本等）。同时支持 **D2C 深度对齐到彩色** 后进行 jet colormap 着色与 alpha 混合，将融合结果编码为 H.264 文件。
+**nio_multi_capture** 是一个多品牌深度摄像头同时采集与录制的工具。支持 **Orbbec** 和 **RoboSense RS-AC1** 两种设备，会自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，并将采集到的流写入磁盘（原生 H.264 或通过 FFmpeg 转码为 H.264、原始深度数据、IMU 文本等）。同时支持 **D2C 深度对齐到彩色** 后进行 jet colormap 着色与 alpha 混合，将融合结果编码为 H.264 文件。
 
 ---
 
 ### 功能说明
 
-- **多设备自动发现与过滤**：支持通过 `-c` 参数按设备名子串过滤要录制的设备（如 `-c "305" "336L"`）。
+- **多设备自动发现与过滤**：支持 Orbbec 和 RoboSense RS-AC1 两种设备，通过 `-c` 参数按设备名子串过滤要录制的设备（如 `-c "305" "336L"`）。
 - **自定义保存目录**：支持通过 `-s` 参数指定录制文件的保存目录（如 `-s /HDD/nio_capture`）。
-- **D2C 深度-彩色融合**：使用 `ob::Align(OB_STREAM_COLOR)` 将深度帧对齐到彩色坐标系，jet colormap 着色后 alpha 混合，输出融合 H.264 文件。
-- **智能流配置选择**：为每个传感器选择“最佳”流配置（分辨率、帧率、像素格式）。
+- **D2C 深度-彩色融合**：使用 `ob::Align(OB_STREAM_COLOR)` 将深度帧对齐到彩色坐标系，jet colormap 着色后 alpha 混合，输出融合 H.264 文件（Orbbec 设备）。
+- **智能流配置选择**：为每个传感器选择"最佳"的流配置（分辨率、帧率、像素格式）。
 - **多种像素格式转码**：使用 FFmpeg（libavcodec/libswscale）将多种输入像素格式统一转为 YUV420P 并编码为 H.264。
 - **原生 H.264 直写**：若设备输出原生 H.264/H.265/HEVC，程序可直接写入并处理起始码与关键帧门控。
 - **深度原始文件**：支持写入带自定义头部的 `.raw` 深度文件，头部包含魔数、宽高、bpp、scale、frameSize、时间戳。
+- **无头模式**：支持 `--no-show` 参数禁用 SDL 窗口，适用于无显示器环境。
 - **并发安全**：每流写入使用独立互斥锁保护，深度原始与 IMU 文件也有专用锁。
 - **运行时提示**：检测 USB 内存配置并在多设备场景下给出优化建议。
 
@@ -21,9 +22,23 @@
 ### 构建与依赖
 
 **必备依赖**
-- Orbbec SDK（`libobsensor`）
-- FFmpeg 开发库：`libavcodec`、`libavutil`、`libswscale`、`libavformat`（开发头文件与库）
 - CMake（建议 >= 3.10）与支持 C++11 的编译器（GCC/Clang/MSVC）
+- FFmpeg 开发库：`libavcodec`、`libavutil`、`libswscale`、`libavformat`（开发头文件与库）
+- SDL2 开发库（用于实时预览，无头模式可选）
+
+**可选依赖（通过 CMake option 控制编译）**
+- Orbbec SDK（`libobsensor`）— 编译选项 `ENABLE_ORBBEC=ON`（默认开启）
+- RoboSense rs_driver — 编译选项 `ENABLE_RS_AC1=ON`（默认开启）
+
+**CMake 构建选项**
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_ORBBEC` | ON | 启用 Orbbec 设备支持 (需要 OrbbecSDK) |
+| `ENABLE_RS_AC1` | ON | 启用 RoboSense RS-AC1 支持 (需要 rs_driver) |
+
+> 两个选项可独立开关。若都关闭，构建将只生成空驱动，无法发现任何设备。
+> RS-AC1 的 rs_driver 及其依赖 (libusb-ac, libuvc-ac) 均为静态链接，无需额外 .so。
 
 **CMakeLists.txt**
 ```cmake
@@ -79,6 +94,7 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 | `--depth-min M` | 0.3 | 着色最小深度 (米)，低于此值的像素显示原始彩色 |
 | `--depth-max M` | 5.0 | 着色最大深度 (米)，高于此值的像素显示原始彩色 |
 | `--no-fusion` | - | 禁用 D2C 融合输出（仅保存各流独立文件） |
+| `--no-show` | - | 禁用 SDL 实时预览窗口（无头模式） |
 | `--help` | - | 显示帮助信息 |
 
 **基本运行**
@@ -130,14 +146,14 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 - **H.264 写入**：对原生 H.264 流，程序会检测 NAL 单元并等待首个关键帧后开始写入，避免文件以不完整 GOP 开头。
 - **深度原始 `.raw`**：首帧写入自定义头部，包含魔数 `ORBBEC_DEPTH_RAW`、宽高、bpp、scale、frameSize、时间戳，后续追加原始 16 位深度帧。读取时请使用头部的 `scale` 将原始值转换为米等物理单位。
 - **像素格式支持**：程序支持 YUYV、UYVY、RGB/BGR、RGBA/BGRA、NV12/NV21、Y16、Y8、I420、MJPG 等输入格式并转为 YUV420P 编码。若需新增格式，请在 `H264Encoder::init` 中扩展映射并确保 `sws_getContext` 支持转换。
-- **性能与 USB 内存**：多设备场景下请检查 `/sys/module/usbcore/parameters/usbfs_memory_mb`，建议设置为 `>= 128` 或更高以避免 USB 缓冲不足。
+- **性能与 USB 内存**：多设备场景下请检查 `/sys/module/usbcore/parameters/usbfs_memory_mb`，建议设置为 `>= 128` 或更高以避免 USB 缓冲不足。Orbbec (VID=2bc5) 和 RoboSense RS-AC1 (VID=3244) 均为 USB3 设备，均需 usbfs 缓冲支持。
 
 ---
 
 ### 常见问题与排查建议
 
-- **程序提示 "No Orbbec device found!"**
-- 检查设备是否正确连接、驱动是否安装、当前用户是否有访问设备的权限。
+- **程序提示 "No device found!"**
+- 检查设备是否正确连接（Orbbec VID=2bc5, RS-AC1 VID=3244）、驱动是否安装、当前用户是否有访问设备的权限。确认 `ENABLE_ORBBEC`/`ENABLE_RS_AC1` 编译选项是否启用。
 - **录制文件无法播放或损坏**
 - 若为原生 H.264，确认文件中已包含关键帧；若使用转码，检查 FFmpeg 编码器初始化是否成功（程序会在 stderr 输出错误信息）。
 - **多设备掉帧或不稳定**
@@ -340,7 +356,7 @@ echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 # 在 /etc/modprobe.d/ 创建：options usbcore usbfs_memory_mb=256
 ```
 
-程序在启动时自动检测并在多设备场景下输出警告。
+程序在启动时自动检测 Orbbec (VID=2bc5) 和 RoboSense RS-AC1 (VID=3244) 设备数量，并按每设备 256MB 计算所需 usbfs 内存，不足时输出警告。
 
 ---
 

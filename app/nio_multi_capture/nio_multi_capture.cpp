@@ -103,9 +103,10 @@ int main(int argc, char** argv) try {
         if (usbfsFile.is_open()) {
             int usbfsMb = 0;
             usbfsFile >> usbfsMb;
-            if (usbfsMb < 128 && totalDevices > 1) {
+            int minUsbfs = (totalDevices > 1) ? 128 : 32;
+            if (usbfsMb < minUsbfs && totalDevices >= 1) {
                 std::cerr << "WARNING: usbfs_memory_mb=" << usbfsMb << "MB is too low for " << totalDevices
-                          << " devices. Recommend >= 128MB." << std::endl;
+                          << " device(s). Recommend >= " << minUsbfs << "MB." << std::endl;
                 std::cerr << "Fix: echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb" << std::endl;
             }
         }

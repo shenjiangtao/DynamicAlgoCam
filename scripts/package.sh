@@ -9,8 +9,8 @@
 # 输出: <output_dir>/nio_capture_tools_<arch>_<date>.tar.gz
 # 解压后目录结构:
 # nio_capture_tools/
-# ├── bin/                # nio_multi_capture 可执行文件 + detect_orbbec_usb.sh
-# ├── lib/                # libOrbbecSDK.so + extensions + 运行依赖 .so
+# ├── bin/                # nio_multi_capture 可执行文件
+# ├── lib/                # libOrbbecSDK.so + 运行依赖 .so
 # ├── extensions/         # SDK extensions (frameprocessor, filters 等)
 # ├── OrbbecSDKConfig.xml # SDK 配置文件 (供 CWD 查找)
 # ├── config/             # OrbbecSDKConfig.xml 副本
@@ -74,40 +74,60 @@ for bin_name in "${TARGET_BINARIES[@]}"; do
     fi
 done
 
-if [ ! -f "${LIB_DIR}/libOrbbecSDK.so" ]; then
-    echo "错误: libOrbbecSDK.so 未找到于 ${LIB_DIR}/" >&2
-    exit 1
+OB_SDK_LIB="${LIB_DIR}/libOrbbecSDK.so"
+if [ -f "${OB_SDK_LIB}" ]; then
+    HAVE_OB_SDK=true
+else
+    HAVE_OB_SDK=false
+    echo "提示: libOrbbecSDK.so 未找到于 ${LIB_DIR}/ (Orbbec 支持未编译或SDK未安装)" >&2
 fi
 
 rm -rf "${STAGE_DIR}"
-mkdir -p "${STAGE_DIR}"/{bin,lib,config,docs,rules}
+mkdir -p "${STAGE_DIR}"/{bin,lib,config,docs,rules,extensions}
 
 echo ""
-echo "[1/6] 复制可执行文件..."
+echo "[1/8] 复制可执行文件..."
 for bin_name in "${TARGET_BINARIES[@]}"; do
     cp -v "${BIN_DIR}/${bin_name}" "${STAGE_DIR}/bin/"
     chmod +x "${STAGE_DIR}/bin/${bin_name}"
 done
 
-DETECT_USB_SRC="${PROJECT_ROOT}/scripts/nio_multi_capture/detect_orbbec_usb.sh"
-if [ -f "${DETECT_USB_SRC}" ]; then
-    cp -v "${DETECT_USB_SRC}" "${STAGE_DIR}/bin/"
-    chmod +x "${STAGE_DIR}/bin/detect_orbbec_usb.sh"
+echo ""
+echo "[2/8] 复制 libOrbbecSDK.so..."
+if [ "${HAVE_OB_SDK}" = true ]; then
+    cp -v "${LIB_DIR}/libOrbbecSDK.so"        "${STAGE_DIR}/lib/"
+    cp -v "${LIB_DIR}/libOrbbecSDK.so."*      "${STAGE_DIR}/lib/" 2>/dev/null || true
+    cp -v "${LIB_DIR}/OrbbecSDKConfig.xml"    "${STAGE_DIR}/"
+    cp -v "${LIB_DIR}/OrbbecSDKConfig.xml"    "${STAGE_DIR}/config/"
 else
-    echo "警告: USB 检测脚本未找到 — ${DETECT_USB_SRC}" >&2
+    echo "  (跳过, OrbbecSDK 未构建)"
 fi
 
 echo ""
-echo "[2/6] 复制 libOrbbecSDK.so + extensions..."
-cp -v "${LIB_DIR}/libOrbbecSDK.so"        "${STAGE_DIR}/lib/"
-cp -v "${LIB_DIR}/libOrbbecSDK.so."*      "${STAGE_DIR}/lib/" 2>/dev/null || true
-cp -v "${LIB_DIR}/OrbbecSDKConfig.xml"    "${STAGE_DIR}/"
-cp -v "${LIB_DIR}/OrbbecSDKConfig.xml"    "${STAGE_DIR}/config/"
+echo "[3/8] 复制 SDK extensions..."
 
-if [ -d "${LIB_DIR}/extensions" ]; then
-    cp -rv "${LIB_DIR}/extensions" "${STAGE_DIR}/"
+if [ "${HAVE_OB_SDK}" = true ]; then
+    EXT_SRC_DIR="${PROJECT_ROOT}/extensions"
+    if [ -d "${EXT_SRC_DIR}" ]; then
+        for ext_subdir in "${EXT_SRC_DIR}"/*/; do
+            [ -d "$ext_subdir" ] || continue
+            ext_name="$(basename "$ext_subdir")"
+            arch_dir="${ext_subdir}/linux_${ARCH}"
+            if [ -d "${arch_dir}" ]; then
+                mkdir -p "${STAGE_DIR}/extensions/${ext_name}"
+                cp -v "${arch_dir}"/*.so* "${STAGE_DIR}/extensions/${ext_name}/" 2>/dev/null || true
+                echo "  + extension: ${ext_name} ($(ls "${arch_dir}"/*.so* 2>/dev/null | wc -l) .so files)"
+            fi
+        done
+    else
+        echo "  警告: 源码 extensions 目录未找到 — ${EXT_SRC_DIR}" >&2
+    fi
+else
+    echo "  (跳过, OrbbecSDK 未构建)"
 fi
 
+echo ""
+echo "[4/8] 复制 udev 规则..."
 UDEV_RULES_SRC="${PROJECT_ROOT}/scripts/env_setup/99-obsensor-libusb.rules"
 if [ -f "${UDEV_RULES_SRC}" ]; then
     cp -v "${UDEV_RULES_SRC}" "${STAGE_DIR}/rules/"
@@ -116,7 +136,7 @@ else
 fi
 
 echo ""
-echo "[3/6] 收集共享库..."
+echo "[5/8] 收集共享库..."
 
 # 核心系统库 — 这些由 glibc/libc 提供, 随 Linux 发行版自带, 无需打包
 SKIP_LIB_PATTERNS=(
@@ -169,17 +189,24 @@ collect_system_libs() {
             fi
 
             if [ ! -f "${STAGE_DIR}/lib/$lib_name" ]; then
-                cp -vn "$lib_path" "${STAGE_DIR}/lib/" 2>/dev/null && {
-                    cp -vn "$(readlink -f "$lib_path")" "${STAGE_DIR}/lib/" 2>/dev/null || true
-                    collected=$((collected + 1))
-                    echo "  + $lib_name (from $bin_name)"
-                }
+                real_lib_path="$(readlink -f "$lib_path")"
+                real_lib_name="$(basename "$real_lib_path")"
+                if [ ! -f "${STAGE_DIR}/lib/$real_lib_name" ]; then
+                    cp -vn "$real_lib_path" "${STAGE_DIR}/lib/" 2>/dev/null || true
+                fi
+                if [ "$real_lib_name" != "$lib_name" ] && [ ! -L "${STAGE_DIR}/lib/$lib_name" ]; then
+                    ln -snf "$real_lib_name" "${STAGE_DIR}/lib/$lib_name" 2>/dev/null || true
+                elif [ "$real_lib_name" = "$lib_name" ] && [ ! -f "${STAGE_DIR}/lib/$lib_name" ]; then
+                    :
+                fi
+                collected=$((collected + 1))
+                echo "  + $lib_name (from $bin_name)"
             fi
         done
     done
 
     # 同样收集 libOrbbecSDK.so 的运行依赖
-    if [ -f "${STAGE_DIR}/lib/libOrbbecSDK.so" ]; then
+    if [ "${HAVE_OB_SDK}" = true ] && [ -f "${STAGE_DIR}/lib/libOrbbecSDK.so" ]; then
         local sdk_libs
         sdk_libs=$(ldd "${STAGE_DIR}/lib/libOrbbecSDK.so" 2>/dev/null | grep '=>' | grep -v 'not found' | awk '{print $3}' | sort -u)
         for lib_path in $sdk_libs; do
@@ -192,18 +219,23 @@ collect_system_libs() {
             fi
 
             if [ ! -f "${STAGE_DIR}/lib/$lib_name" ]; then
-                cp -vn "$lib_path" "${STAGE_DIR}/lib/" 2>/dev/null && {
-                    cp -vn "$(readlink -f "$lib_path")" "${STAGE_DIR}/lib/" 2>/dev/null || true
-                    collected=$((collected + 1))
-                    echo "  + $lib_name (from libOrbbecSDK.so)"
-                }
+                real_lib_path="$(readlink -f "$lib_path")"
+                real_lib_name="$(basename "$real_lib_path")"
+                if [ ! -f "${STAGE_DIR}/lib/$real_lib_name" ]; then
+                    cp -vn "$real_lib_path" "${STAGE_DIR}/lib/" 2>/dev/null || true
+                fi
+                if [ "$real_lib_name" != "$lib_name" ] && [ ! -L "${STAGE_DIR}/lib/$lib_name" ]; then
+                    ln -snf "$real_lib_name" "${STAGE_DIR}/lib/$lib_name" 2>/dev/null || true
+                fi
+                collected=$((collected + 1))
+                echo "  + $lib_name (from libOrbbecSDK.so)"
             fi
         done
     fi
 
-    # 收集 lib/ 下已打包 .so 的传递依赖
+    # 收集 lib/ 下已打包 .so 的传递依赖 (包括 extensions/ 下的 .so)
     local transitive_libs
-    transitive_libs=$(ldd "${STAGE_DIR}"/lib/*.so* 2>/dev/null | grep '=>' | grep -v 'not found' | awk '{print $3}' | sort -u)
+    transitive_libs=$(ldd "${STAGE_DIR}"/lib/*.so* "${STAGE_DIR}"/extensions/*/*.so* 2>/dev/null | grep '=>' | grep -v 'not found' | awk '{print $3}' | sort -u)
     for lib_path in $transitive_libs; do
         [ -z "$lib_path" ] && continue
         local lib_name
@@ -214,11 +246,16 @@ collect_system_libs() {
         fi
 
         if [ ! -f "${STAGE_DIR}/lib/$lib_name" ]; then
-            cp -vn "$lib_path" "${STAGE_DIR}/lib/" 2>/dev/null && {
-                cp -vn "$(readlink -f "$lib_path")" "${STAGE_DIR}/lib/" 2>/dev/null || true
-                collected=$((collected + 1))
-                echo "  + $lib_name (transitive)"
-            }
+            real_lib_path="$(readlink -f "$lib_path")"
+            real_lib_name="$(basename "$real_lib_path")"
+            if [ ! -f "${STAGE_DIR}/lib/$real_lib_name" ]; then
+                cp -vn "$real_lib_path" "${STAGE_DIR}/lib/" 2>/dev/null || true
+            fi
+            if [ "$real_lib_name" != "$lib_name" ] && [ ! -L "${STAGE_DIR}/lib/$lib_name" ]; then
+                ln -snf "$real_lib_name" "${STAGE_DIR}/lib/$lib_name" 2>/dev/null || true
+            fi
+            collected=$((collected + 1))
+            echo "  + $lib_name (transitive)"
         fi
     done
 
@@ -228,7 +265,7 @@ collect_system_libs() {
 collect_system_libs
 
 echo ""
-echo "[4/6] 复制文档..."
+echo "[6/8] 复制文档..."
 
 MULTI_CAPTURE_DIR="${PROJECT_ROOT}/docs/nio_multi_capture"
 
@@ -241,7 +278,7 @@ if [ -f "${MULTI_CAPTURE_DIR}/troubleshooting.md" ]; then
 fi
 
 echo ""
-echo "[5/6] 生成运行脚本和 README..."
+echo "[7/8] 生成运行脚本和 README..."
 
 for bin_name in "${TARGET_BINARIES[@]}"; do
 RUN_SCRIPT="${STAGE_DIR}/run_${bin_name}"
@@ -267,8 +304,7 @@ export LD_LIBRARY_PATH="${SELF_DIR}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 cd "${SELF_DIR}"
 
 if [ ! -f "${SELF_DIR}/lib/libOrbbecSDK.so" ]; then
-    echo "错误: libOrbbecSDK.so 未找到于 ${SELF_DIR}/lib/" >&2
-    exit 1
+    echo "警告: libOrbbecSDK.so 未找到于 ${SELF_DIR}/lib/ (Orbbec 设备将不可用)" >&2
 fi
 
 # ---- 检查 udev 规则 ----
@@ -325,8 +361,10 @@ fi
 # ---- 自动检测并设置 usbfs_memory_mb ----
 USBFS_PER_DEV="${NIO_USBFS_PER_DEV:-256}"
 
-# 检测 Orbbec USB 设备数量 (VID=2bc5)
-DEVICE_COUNT=$(lsusb 2>/dev/null | grep -i -E '2bc5|orbbec' | wc -l)
+# 检测 Orbbec USB 设备数量 (VID=2bc5) + RoboSense RS-AC1 设备数量 (VID=3244)
+OB_COUNT=$(lsusb 2>/dev/null | grep -i -E '2bc5|orbbec' | wc -l)
+RS_COUNT=$(lsusb 2>/dev/null | grep -i '3244' | wc -l)
+DEVICE_COUNT=$((OB_COUNT + RS_COUNT))
 [ "${DEVICE_COUNT}" -eq 0 ] && DEVICE_COUNT=1
 
 # 若用户通过 NIO_USBFS_MB 手动指定, 优先使用; 否则按 设备数 * 每设备需求 自动计算
@@ -347,7 +385,7 @@ if [ "${CURRENT_USBFS}" -lt "${USBFS_MB}" ] 2>/dev/null; then
     echo " usbfs_memory_mb 检查"
     echo "========================================="
     echo "  当前值:    ${CURRENT_USBFS} MB"
-    echo "  需要值:    ${USBFS_MB} MB (设备数=${DEVICE_COUNT}, 每设备=${USBFS_PER_DEV}MB)"
+    echo "  需要值:    ${USBFS_MB} MB (OB=${OB_COUNT}, RS=${RS_COUNT}, 每设备=${USBFS_PER_DEV}MB)"
     echo "  差额:      $((USBFS_MB - CURRENT_USBFS)) MB"
     echo "========================================="
 
@@ -385,7 +423,7 @@ done
 
 cat > "${STAGE_DIR}/README.txt" << 'README'
 =======================================
-NIO Orbbec 采集工具包
+NIO Capture Tools (Orbbec + RoboSense)
 =======================================
 
 1. 快速开始
@@ -395,10 +433,12 @@ NIO Orbbec 采集工具包
 ./run_nio_multi_capture -c "305"            # 仅录制 305 型号
 ./run_nio_multi_capture -s /data/cap        # 指定保存目录
 ./run_nio_multi_capture --no-fusion         # 仅录制原始流
+./run_nio_multi_capture --no-show           # 无头模式 (无SDL窗口)
 
 2. USB 配置（多摄像头必读）
 --------------------------
-run_nio_multi_capture 启动时会自动检测 Orbbec USB 设备数量,
+run_nio_multi_capture 启动时会自动检测 Orbbec (VID=2bc5) 和
+RoboSense RS-AC1 (VID=3244) USB 设备数量,
 并自动计算和设置 usbfs_memory_mb (每设备 256MB):
   - 若当前值不足, 将自动通过 sudo 临时修改
   - 若自动修改失败(无 sudo 权限), 脚本将退出并提示手动命令
@@ -417,17 +457,18 @@ run_nio_multi_capture 启动时会自动检测 Orbbec USB 设备数量,
 
 3. 依赖说明
 -----------
-- 本包已自带 libOrbbecSDK.so 及 extensions + libSDL2 + 所有运行依赖 .so
-- 运行依赖 .so 已内置于 lib/ 目录，通过 RPATH + LD_LIBRARY_PATH 加载
+- 本包已自带 libOrbbecSDK.so + extensions/ + libSDL2 + 所有运行依赖 .so
+- 运行依赖 .so 已内置于 lib/ 目录，通过 LD_LIBRARY_PATH 加载
+- SDK extensions (filters, frameprocessor 等) 位于 extensions/ 目录
 - SDK 配置文件 OrbbecSDKConfig.xml 位于包根目录 (SDK 通过 CWD 查找)
 - 运行脚本会自动 cd 到包目录, 确保路径正确
 - 需要 Linux x86_64, glibc >= 2.31 (libc/libm/libpthread/libstdc++ 等核心库由系统提供)
+- RoboSense RS-AC1 支持已静态链接, 无需额外 .so
 
-4. USB 检测工具
---------------
-bin/detect_orbbec_usb.sh — 检测已连接的 Orbbec 设备:
-  ./bin/detect_orbbec_usb.sh
-  输出: 设备型号、USB 总线/速率、/dev/bus/usb 路径、USB2/3 汇总
+4. 支持设备
+----------
+- Orbbec: Gemini 305, 336L, 335L, 2, 2L 等 (通过 OrbbecSDK)
+- RoboSense: RS-AC1 (通过 rs_driver, 已静态链接)
 
 5. 文档
 -------
@@ -461,7 +502,7 @@ run_nio_multi_capture 启动时会自动检查:
 README
 
 echo ""
-echo "[6/6] 打包为 tar.gz..."
+echo "[8/8] 打包为 tar.gz..."
 mkdir -p "${DEFAULT_OUTPUT_DIR}"
 OUTPUT_FILE="${DEFAULT_OUTPUT_DIR}/${PKG_NAME}.tar.gz"
 
@@ -471,6 +512,7 @@ PKG_SIZE=$(du -sh "${OUTPUT_FILE}" | awk '{print $1}')
 STAGE_SIZE=$(du -sh "${STAGE_DIR}" | awk '{print $1}')
 BIN_COUNT=$(ls "${STAGE_DIR}/bin/" | wc -l)
 LIB_COUNT=$(ls "${STAGE_DIR}/lib/"*.so* 2>/dev/null | wc -l)
+EXT_COUNT=$(find "${STAGE_DIR}/extensions/" -name "*.so*" 2>/dev/null | wc -l)
 
 rm -rf "${STAGE_DIR}"
 
@@ -483,6 +525,7 @@ echo "包大小:       ${PKG_SIZE}"
 echo "解压后大小:   ${STAGE_SIZE}"
 echo "程序数:       ${BIN_COUNT}"
 echo "库文件数:     ${LIB_COUNT}"
+echo "扩展数:       ${EXT_COUNT}"
 echo ""
 echo "在目标机器上使用:"
 echo "  tar xzf ${PKG_NAME}.tar.gz"

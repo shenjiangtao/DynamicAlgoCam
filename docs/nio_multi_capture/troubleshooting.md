@@ -2,10 +2,13 @@
 
 ## 1. 设备发现与连接
 
-### 现象：程序提示 "No Orbbec device found!"
+### 现象：程序提示 "No device found!"
 
 **排查步骤**：
-1. 确认设备已通过 USB 正确连接，`lsusb` 中能看到 Orbbec 设备
+1. 确认设备已通过 USB 正确连接，`lsusb` 中能看到设备
+   - Orbbec 设备 VID 为 `2bc5`
+   - RoboSense RS-AC1 设备 VID 为 `3244`
+   - 命令: `lsusb | grep -E '2bc5|3244'`
 2. 检查 udev 规则是否已安装：
    ```bash
    ls /etc/udev/rules.d/ | grep orbbec
@@ -16,7 +19,9 @@
    sudo udevadm control --reload-rules && sudo udevadm trigger
    ```
 3. 拔插设备后重试
-4. 非	root 用户需要 udev 规则授权才能访问 USB 设备
+4. 非 root 用户需要 udev 规则授权才能访问 USB 设备
+5. 如果仅使用 RS-AC1 设备，检查 `ENABLE_RS_AC1=ON` 编译选项是否启用
+6. 如果仅使用 Orbbec 设备，检查 `ENABLE_ORBBEC=ON` 编译选项是否启用
 
 ### 现象：设备列表为空但 lsusb 可见
 
@@ -32,7 +37,7 @@
 
 ### 现象：多设备时 `UVC_ERROR_NO_MEM` 或第二台设备启动失败
 
-**原因**：Linux 默认 `usbfs_memory_mb=16`，不足以支撑多台 USB3 摄像头。
+**原因**：Linux 默认 `usbfs_memory_mb=16`，不足以支撑多台 USB3 摄像头（Orbbec 和 RS-AC1 均受影响）。
 
 **修复**：
 ```bash
@@ -164,7 +169,24 @@ sudo modprobe -r usbcore && sudo modprobe usbcore
 
 ---
 
-## 8. 日志与调试
+## 8. RoboSense RS-AC1 特定问题
+
+### 现象：RS-AC1 设备未被发现
+
+**排查**：
+1. 确认 `lsusb` 中可见 RS-AC1 设备 (VID=3244)
+2. 确认编译时 `ENABLE_RS_AC1=ON`（CMakeCache.txt 中检查）
+3. RS-AC1 使用 rs_driver 通过 USB 通信，同样需要 udev 规则和 usbfs 缓冲
+
+### 现象：RS-AC1 录制时 IMU 数据文件为空
+
+**原因**：RS-AC1 的 IMU 采集逻辑与 Orbbec 不同，需单独启动。
+
+**排查**：查看日志中 RS-AC1 设备初始化是否成功、IMU 管道是否启动。
+
+---
+
+## 9. 日志与调试
 
 ### 查看日志
 
@@ -181,15 +203,17 @@ sudo modprobe -r usbcore && sudo modprobe usbcore
 | `Git commit:` | 当前构建的 git commit hash |
 | `HW D2C supported` | 设备支持硬件深度对齐 |
 | `falling back to SW alignment` | 设备不支持 HW D2C，使用软件对齐 |
-| `usbfs_memory_mb=... too low` | USB 内存配置不足 |
+| `usbfs_memory_mb=... too low` | USB 内存配置不足 (Orbbec/RS-AC1 均可能触发) |
 | `Pipeline start failed` | 管道启动异常 |
 | `Failed to init fused H264 encoder` | 融合编码器初始化失败 |
+| `Found RS-AC1 device` | 发现 RoboSense RS-AC1 设备 |
 
 ### 问题反馈
 
 请附带以下信息：
 1. 程序版本（git commit hash）
-2. 设备型号与数量
+2. 设备型号与数量（Orbbec / RS-AC1）
 3. 完整日志输出
 4. 操作系统版本（`uname -a`）
 5. USB 拓扑结构（`lsusb -t`）
+6. 编译选项（`ENABLE_ORBBEC` / `ENABLE_RS_AC1` 是否开启）
