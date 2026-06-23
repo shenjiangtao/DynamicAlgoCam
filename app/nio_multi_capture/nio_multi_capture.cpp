@@ -18,7 +18,11 @@
 #include "nio_device.hpp"
 #include "nio_log.hpp"
 #include "nio_sdl_viewer.hpp"
+
+#ifdef ENABLE_ORBBEC
 #include "nio_ob_device.hpp"
+#endif
+
 #include "utils.hpp"
 
 #ifdef ENABLE_RS_AC1
@@ -36,7 +40,9 @@
 #include <thread>
 #include <vector>
 
+#ifdef ENABLE_ORBBEC
 #include <libobsensor/ObSensor.hpp>
+#endif
 
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "unknown"
@@ -63,8 +69,12 @@ int main(int argc, char** argv) try {
     }
 
     // Discover OB devices
+#ifdef ENABLE_ORBBEC
     ObContext obContext;
     auto obCount = obContext.getDeviceCount();
+#else
+    uint32_t obCount = 0;
+#endif
 
 #ifdef ENABLE_RS_AC1
     // Discover RS-AC1 devices
@@ -110,9 +120,10 @@ int main(int argc, char** argv) try {
 
     std::vector<std::shared_ptr<CaptureSession>> sessions;
 
+#if defined(ENABLE_ORBBEC) || defined(ENABLE_RS_AC1)
     // Helper: create session from NioDevice + NioPipeline
     auto addSession = [&](std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
-                         const std::string& safeName, const std::string& deviceOutputDir) {
+                          const std::string& safeName, const std::string& deviceOutputDir) {
         auto session = std::make_shared<CaptureSession>(device, pipeline, safeName, deviceOutputDir, cfg);
         if (!session->setup()) {
             NIO_LOG_ERROR_S("Setup failed for device: " << safeName);
@@ -129,8 +140,10 @@ int main(int argc, char** argv) try {
 
         sessions.push_back(std::move(session));
     };
+#endif
 
     // Enumerate OB devices
+#ifdef ENABLE_ORBBEC
     for (uint32_t i = 0; i < obCount; i++) {
         auto nioDev = obContext.getDevice(i);
         auto devInfo = nioDev->getDeviceInfo();
@@ -140,9 +153,9 @@ int main(int argc, char** argv) try {
             continue;
         }
 
-        std::cout << "Found OB device: " << devInfo.name << " (SN: " << devInfo.serialNumber
-                  << ", PID: 0x" << std::hex << std::setw(4) << std::setfill('0') << devInfo.pid << std::dec
-                  << ", " << devInfo.connectionType << ")" << std::endl;
+        std::cout << "Found OB device: " << devInfo.name << " (SN: " << devInfo.serialNumber << ", PID: 0x" << std::hex
+                  << std::setw(4) << std::setfill('0') << devInfo.pid << std::dec << ", " << devInfo.connectionType
+                  << ")" << std::endl;
 
         auto safeName = devInfo.name;
         std::replace(safeName.begin(), safeName.end(), ' ', '_');
@@ -155,6 +168,7 @@ int main(int argc, char** argv) try {
         auto pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
         addSession(nioDev, pipeline, safeName, deviceOutputDir);
     }
+#endif
 
 #ifdef ENABLE_RS_AC1
     // Enumerate RS-AC1 devices
@@ -237,11 +251,13 @@ int main(int argc, char** argv) try {
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
     NIO_LOG_SHUTDOWN();
     return 0;
+#ifdef ENABLE_ORBBEC
 } catch (ob::Error& e) {
     std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what() << "\n status: " << e.getStatus() << std::endl;
     NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
     NIO_LOG_SHUTDOWN();
     return -1;
+#endif
 } catch (std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;
     NIO_LOG_FATAL_S("Exception: " << e.what());

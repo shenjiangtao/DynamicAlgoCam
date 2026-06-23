@@ -2,37 +2,59 @@
 # Licensed under the MIT License.
 #
 # nio_drivers — Device driver layer: SDK-specific adapters.
-# Orbbec driver (always on) + RoboSense RS-AC1 driver (optional).
-# Depends on: nio_core, OrbbecSDK, (optionally) rs_driver.
+# Orbbec driver (optional) + RoboSense RS-AC1 driver (optional).
+# Depends on: nio_core, (optionally) OrbbecSDK, (optionally) rs_driver.
 
 cmake_minimum_required(VERSION 3.10)
 project(nio_drivers)
 
 add_library(nio_drivers STATIC
-    ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_adapter.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_frame_adapter.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_adapter.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_frame_adapter.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dummy.cpp
 )
 
 target_link_libraries(nio_drivers PUBLIC
     nio::core
-    ob::${OB_SDK_LIB_NAME}
 )
 
-target_include_directories(nio_drivers PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/orbbec
-    ${CMAKE_CURRENT_SOURCE_DIR}/robosense
-)
+if(ENABLE_ORBBEC)
+    target_include_directories(nio_drivers PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/orbbec
+    )
 
-# RS-AC1 support (optional)
-option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
+    target_sources(nio_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_frame_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
+    )
+
+    target_compile_definitions(nio_drivers PUBLIC
+        ENABLE_ORBBEC
+    )
+
+    target_link_libraries(nio_drivers PUBLIC
+        ob::${OB_SDK_LIB_NAME}
+    )
+
+    message(STATUS "Orbbec support enabled (OrbbecSDK)")
+endif()
 
 if(ENABLE_RS_AC1)
+    target_include_directories(nio_drivers PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/robosense
+    )
+
+    target_sources(nio_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_frame_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.cpp
+    )
+
+    target_compile_definitions(nio_drivers PUBLIC
+        ENABLE_RS_AC1
+    )
+
     set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../RoboSense/rs_driver-dev_opt_AC1")
 
     set(DISABLE_PCAP_PARSE ON CACHE BOOL "Disable PCAP file parse" FORCE)
@@ -41,7 +63,6 @@ if(ENABLE_RS_AC1)
     set(ENABLE_USB ON CACHE BOOL "Enable USB interface in rs_driver" FORCE)
 
     target_compile_definitions(nio_drivers PUBLIC
-        ENABLE_RS_AC1
         DISABLE_PCAP_PARSE
         ENABLE_USB
         ENABLE_IMU_PARSE
@@ -76,10 +97,6 @@ if(ENABLE_RS_AC1)
     _rs_remove_werror(usb-ac-static)
     _rs_remove_werror(uvc-ac-static)
 
-    # Include InputUsb implementation directly in nio_drivers (instead of
-    # linking rsac_usb shared lib) because rsac_usb.so hides all symbols
-    # with -fvisibility=hidden and our inline InputFactory usage needs
-    # the InputUsb vtable/typeinfo at link time.
     target_sources(nio_drivers PRIVATE
         ${RS_DRIVER_ROOT}/src/rs_driver/driver/input/input_usb.cpp
     )
@@ -91,6 +108,10 @@ if(ENABLE_RS_AC1)
     target_link_libraries(nio_drivers PUBLIC usb-ac-static uvc-ac-static pthread)
 
     message(STATUS "RS-AC1 support enabled (rs_driver root: ${RS_DRIVER_ROOT})")
+endif()
+
+if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)
+    message(WARNING "Both ENABLE_ORBBEC and ENABLE_RS_AC1 are OFF — no device drivers will be built")
 endif()
 
 add_library(nio::drivers ALIAS nio_drivers)

@@ -5,7 +5,10 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
+#ifdef ENABLE_ORBBEC
 #include <libobsensor/ObSensor.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +29,7 @@ uint64_t ob_smpl_get_current_timestamp_ms(void);
  */
 char ob_smpl_wait_for_key_press(uint32_t timeout_ms);
 
+#ifdef ENABLE_ORBBEC
 /**
  * @brief Check if the device is a LiDAR device.
  *
@@ -34,6 +38,7 @@ char ob_smpl_wait_for_key_press(uint32_t timeout_ms);
  * @return false otherwise.
  */
 bool ob_smpl_is_lidar_device(ob_device *device);
+#endif
 
 /**
  * @brief Check if stdout supports ANSI escape sequences.
@@ -42,6 +47,7 @@ bool ob_smpl_is_lidar_device(ob_device *device);
  */
 int ob_smpl_support_ansi_escape(void);
 
+#ifdef ENABLE_ORBBEC
 /**
  * @brief Check if the device is a Gemini305 device.
  *
@@ -84,6 +90,7 @@ bool ob_smpl_is_astra_mini_device(int vid, int pid);
         exit(-1);                                                                \
     }                                                                            \
     *error = NULL;
+#endif
 
 #ifdef __cplusplus
 }

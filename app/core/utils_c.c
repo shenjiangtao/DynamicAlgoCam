@@ -6,6 +6,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#ifdef ENABLE_ORBBEC
+#include <libobsensor/ObSensor.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -168,6 +172,7 @@ int ob_smpl_support_ansi_escape(void) {
 
 #endif
 
+#ifdef ENABLE_ORBBEC
 bool ob_smpl_is_lidar_device(ob_device *device) {
     ob_error       *error       = NULL;
     ob_sensor_list *sensorList  = NULL;
@@ -211,6 +216,7 @@ bool ob_smpl_is_gemini305g_device(int vid, int pid, const char *connectionType) 
 bool ob_smpl_is_astra_mini_device(int vid, int pid) {
     return (vid == OB_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e));
 }
+#endif
 
 #ifdef __cplusplus
 }
