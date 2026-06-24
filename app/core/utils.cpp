@@ -6,9 +6,9 @@
 
 #include <chrono>
 
-namespace ob_smpl {
+namespace nio {
 char waitForKeyPressed(uint32_t timeout_ms) {
-    return ob_smpl_wait_for_key_press(timeout_ms);
+    return nio_wait_for_key_press(timeout_ms);
 }
 
 uint64_t getNowTimesMs() {
@@ -17,7 +17,7 @@ uint64_t getNowTimesMs() {
 }
 
 int getInputOption() {
-    char inputOption = ob_smpl::waitForKeyPressed();
+    char inputOption = nio::waitForKeyPressed();
     if (inputOption == ESC_KEY) {
         return -1;
     }
@@ -25,22 +25,22 @@ int getInputOption() {
 }
 
 bool supportAnsiEscape() {
-    if (ob_smpl_support_ansi_escape() == 0) {
+    if (nio_support_ansi_escape() == 0) {
         return false;
     }
     return true;
 }
 
 bool isGemini305Device(int vid, int pid) {
-    return ob_smpl_is_gemini305_device(vid, pid);
+    return nio_is_gemini305_device(vid, pid);
 }
 
 bool isGemini305gDevice(int vid, int pid, const char* connectionType) {
-    return ob_smpl_is_gemini305g_device(vid, pid, connectionType);
+    return nio_is_gemini305g_device(vid, pid, connectionType);
 }
 
 bool isAstraMiniDevice(int vid, int pid) {
-    return ob_smpl_is_astra_mini_device(vid, pid);
+    return nio_is_astra_mini_device(vid, pid);
 }
 
-} // namespace ob_smpl
+} // namespace nio

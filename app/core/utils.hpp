@@ -7,7 +7,7 @@
 
 #include <sstream>
 
-namespace ob_smpl {
+namespace nio {
 char waitForKeyPressed(uint32_t timeout_ms = 0);
 
 uint64_t getNowTimesMs();
@@ -42,4 +42,4 @@ private:
     char               fill{ 0 };
 };
 
-}  // namespace ob_smpl
+}  // namespace nio

@@ -95,7 +95,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
     auto devInfo = obDevice_->getDeviceInfo();
     auto pid = devInfo->getPid();
     auto vid = devInfo->getVid();
-    bool is305 = ob_smpl::isGemini305Device(vid, pid);
+    bool is305 = nio::isGemini305Device(vid, pid);
     NioFormat colorPreferredFmt = is305 ? NioFormat::YUYV : NioFormat::MJPG;
 
     NioSensorInfo si;
@@ -272,7 +272,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
     }
 
     // Device quirks
-    if (ob_smpl::isGemini305gDevice(devInfo->getVid(), devInfo->getPid(), devInfo->getConnectionType())) {
+    if (nio::isGemini305gDevice(devInfo->getVid(), devInfo->getPid(), devInfo->getConnectionType())) {
         obPipe->disableStream(NioFrameType::IR_LEFT);
         si.hasIRLeft = false;
         std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;

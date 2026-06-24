@@ -43,7 +43,7 @@ CVWindow::CVWindow(std::string name, uint32_t width, uint32_t height, ArrangeMod
 
     processThread_ = std::thread(&CVWindow::processFrames, this);
 
-    winCreatedTime_ = ob_smpl::getNowTimesMs();
+    winCreatedTime_ = nio::getNowTimesMs();
 }
 
 CVWindow::~CVWindow() noexcept {
@@ -89,13 +89,13 @@ bool CVWindow::run() {
             if (alpha_ > 1) {
                 alpha_ = 1;
             }
-            addLog("Adjust alpha to " + ob_smpl::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
+            addLog("Adjust alpha to " + nio::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
         } else if (key == '-' || key == '_') {
             alpha_ -= 0.1f;
             if (alpha_ < 0) {
                 alpha_ = 0;
             }
-            addLog("Adjust alpha to " + ob_smpl::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
+            addLog("Adjust alpha to " + nio::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
         }
         if (keyPressedCallback_) {
             keyPressedCallback_(key);
@@ -148,7 +148,7 @@ void CVWindow::setKeyPrompt(const std::string& prompt) {
 
 void CVWindow::addLog(const std::string& log) {
     log_ = log;
-    logCreatedTime_ = ob_smpl::getNowTimesMs();
+    logCreatedTime_ = nio::getNowTimesMs();
 }
 
 void CVWindow::pushFramesToView(std::vector<const NioFrame*> frames, int groupId) {
@@ -309,12 +309,12 @@ void CVWindow::arrangeFrames() {
         return;
     }
 
-    if (showPrompt_ || ob_smpl::getNowTimesMs() - winCreatedTime_ < 5000) {
+    if (showPrompt_ || nio::getNowTimesMs() - winCreatedTime_ < 5000) {
         cv::putText(renderMat, prompt_, cv::Point(8, 16), cv::FONT_HERSHEY_DUPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
                     cv::LINE_AA);
     }
 
-    if (!log_.empty() && ob_smpl::getNowTimesMs() - logCreatedTime_ < 3000) {
+    if (!log_.empty() && nio::getNowTimesMs() - logCreatedTime_ < 3000) {
         cv::putText(renderMat, log_, cv::Point(8, height_ - 16), cv::FONT_HERSHEY_DUPLEX, 0.5,
                     cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
     }

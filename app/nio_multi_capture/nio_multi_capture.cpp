@@ -155,17 +155,17 @@ int main(int argc, char** argv) try {
     }
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
 
-    auto lastReportTime = ob_smpl::getNowTimesMs();
+    auto lastReportTime = nio::getNowTimesMs();
     uint32_t waitTime = 1000;
 
     while (g_running) {
-        auto key = ob_smpl::waitForKeyPressed(waitTime);
+        auto key = nio::waitForKeyPressed(waitTime);
         if (key == ESC_KEY || key == 'q' || key == 'Q') {
             g_running = false;
             break;
         }
 
-        auto currentTime = ob_smpl::getNowTimesMs();
+        auto currentTime = nio::getNowTimesMs();
         if (currentTime >= lastReportTime + waitTime) {
             uint64_t reportDuration = currentTime - lastReportTime;
             lastReportTime = currentTime;

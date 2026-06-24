@@ -14,19 +14,19 @@
 extern "C" {
 #endif
 
-uint64_t ob_smpl_get_current_timestamp_ms(void);
+uint64_t nio_get_current_timestamp_ms(void);
 
-char ob_smpl_wait_for_key_press(uint32_t timeout_ms);
+char nio_wait_for_key_press(uint32_t timeout_ms);
 
 #ifdef ENABLE_ORBBEC
-bool ob_smpl_is_lidar_device(ob_device* device);
+bool nio_is_lidar_device(ob_device* device);
 #endif
 
-int ob_smpl_support_ansi_escape(void);
+int nio_support_ansi_escape(void);
 
-bool ob_smpl_is_gemini305_device(int vid, int pid);
-bool ob_smpl_is_gemini305g_device(int vid, int pid, const char* connectionType);
-bool ob_smpl_is_astra_mini_device(int vid, int pid);
+bool nio_is_gemini305_device(int vid, int pid);
+bool nio_is_gemini305g_device(int vid, int pid, const char* connectionType);
+bool nio_is_astra_mini_device(int vid, int pid);
 
 #ifdef ENABLE_ORBBEC
 #define CHECK_OB_ERROR_EXIT(error)                                               \
