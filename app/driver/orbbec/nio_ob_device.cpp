@@ -6,7 +6,6 @@
 #include "nio_ob_device.hpp"
 #include "nio_common.hpp"
 #include "nio_log.hpp"
-#include "utils.hpp"
 
 namespace nio {
 

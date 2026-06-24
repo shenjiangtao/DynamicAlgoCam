@@ -29,15 +29,6 @@ add_library(nio_core STATIC
 find_package(Threads REQUIRED)
 target_link_libraries(nio_core PUBLIC Threads::Threads)
 
-# Forward optional driver compile definitions to nio_core so that
-# #ifdef ENABLE_ORBBEC / ENABLE_RS_AC1 guards in core headers/sources work.
-if(ENABLE_ORBBEC)
-    target_compile_definitions(nio_core PUBLIC ENABLE_ORBBEC)
-endif()
-if(ENABLE_RS_AC1)
-    target_compile_definitions(nio_core PUBLIC ENABLE_RS_AC1)
-endif()
-
 target_include_directories(nio_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )

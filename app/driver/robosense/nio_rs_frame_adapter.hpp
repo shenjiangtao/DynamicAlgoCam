@@ -12,18 +12,13 @@
 #include "nio_frame.hpp"
 #include "nio_rs_adapter.hpp"
 
-#ifdef ENABLE_RS_AC1
 #include <rs_driver/msg/point_cloud_msg.hpp>
 #include <rs_driver/msg/image_data_msg.hpp>
-#endif
 
 #include <cmath>
 #include <cstring>
 
 namespace nio {
-
-#ifdef ENABLE_RS_AC1
-
 // RS-AC1 depth grid dimensions (from decoder_RSAC1.hpp constants)
 static constexpr int RS_AC1_DEPTH_WIDTH  = 96;
 static constexpr int RS_AC1_DEPTH_HEIGHT = 288;
@@ -115,7 +110,5 @@ inline NioFrame rsImageToNioFrame(const std::shared_ptr<robosense::lidar::ImageD
 
     return f;
 }
-
-#endif // ENABLE_RS_AC1
 
 } // namespace nio

@@ -13,7 +13,6 @@
 #include "nio_rs_adapter.hpp"
 #include "nio_rs_frame_adapter.hpp"
 
-#ifdef ENABLE_RS_AC1
 #include <rs_driver/api/lidar_driver.hpp>
 #include <rs_driver/msg/point_cloud_msg.hpp>
 #include <rs_driver/msg/imu_data_msg.hpp>
@@ -22,7 +21,6 @@
 #include <rs_driver/utility/sync_queue.hpp>
 
 #include <libusb.h>
-#endif
 
 #include <atomic>
 #include <chrono>
@@ -33,7 +31,6 @@
 
 namespace nio {
 
-#ifdef ENABLE_RS_AC1
 
 using RsPointCloudMsg = ::PointCloudT<::PointXYZIRT>;
 using RsLidarDriver = robosense::lidar::LidarDriver<RsPointCloudMsg>;
@@ -157,7 +154,5 @@ private:
     std::vector<std::string> deviceUuids_;
     bool scanned_ = false;
 };
-
-#endif // ENABLE_RS_AC1
 
 } // namespace nio

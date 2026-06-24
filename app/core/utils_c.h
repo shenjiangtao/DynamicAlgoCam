@@ -6,10 +6,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#ifdef ENABLE_ORBBEC
-#include <libobsensor/ObSensor.h>
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,28 +14,7 @@ uint64_t nio_get_current_timestamp_ms(void);
 
 char nio_wait_for_key_press(uint32_t timeout_ms);
 
-#ifdef ENABLE_ORBBEC
-bool nio_is_lidar_device(ob_device* device);
-#endif
-
 int nio_support_ansi_escape(void);
-
-bool nio_is_gemini305_device(int vid, int pid);
-bool nio_is_gemini305g_device(int vid, int pid, const char* connectionType);
-bool nio_is_astra_mini_device(int vid, int pid);
-
-#ifdef ENABLE_ORBBEC
-#define CHECK_OB_ERROR_EXIT(error)                                               \
-    if (*error) {                                                                \
-        const char* error_message = ob_error_get_message(*error);                \
-        ob_status status = ob_error_get_status(*error);                          \
-        fprintf(stderr, "Error: %s (status: %d)\n", error_message, (int)status); \
-        ob_delete_error(*error);                                                 \
-        *error = NULL;                                                           \
-        exit(-1);                                                                \
-    }                                                                            \
-    *error = NULL;
-#endif
 
 #ifdef __cplusplus
 }

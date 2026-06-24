@@ -2,13 +2,8 @@
 // Licensed under the MIT License.
 
 #include "utils_c.h"
-#include "utils_types.h"
 #include <stdbool.h>
 #include <stdio.h>
-
-#ifdef ENABLE_ORBBEC
-#include <libobsensor/ObSensor.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -171,53 +166,6 @@ int nio_support_ansi_escape(void) {
 }
 
 #endif
-
-#ifdef ENABLE_ORBBEC
-bool nio_is_lidar_device(ob_device* device) {
-    ob_error* error = NULL;
-    ob_sensor_list* sensorList = NULL;
-    uint32_t sensorCount = 0;
-
-    if (device == NULL) {
-        return false;
-    }
-
-    sensorList = ob_device_get_sensor_list(device, &error);
-    CHECK_OB_ERROR_EXIT(&error);
-
-    sensorCount = ob_sensor_list_get_count(sensorList, &error);
-    CHECK_OB_ERROR_EXIT(&error);
-
-    for (uint32_t index = 0; index < sensorCount; index++) {
-        OBSensorType sensorType = ob_sensor_list_get_sensor_type(sensorList, index, &error);
-        CHECK_OB_ERROR_EXIT(&error);
-
-        if (sensorType == OB_SENSOR_LIDAR) {
-            ob_delete_sensor_list(sensorList, &error);
-            CHECK_OB_ERROR_EXIT(&error);
-            return true;
-        }
-    }
-
-    ob_delete_sensor_list(sensorList, &error);
-    CHECK_OB_ERROR_EXIT(&error);
-
-    return false;
-}
-
-#endif // ENABLE_ORBBEC
-
-bool nio_is_gemini305_device(int vid, int pid) {
-    return (vid == NIO_DEVICE_VID && (pid == 0x0840 || pid == 0x0841 || pid == 0x0842 || pid == 0x0843));
-}
-
-bool nio_is_gemini305g_device(int vid, int pid, const char* connectionType) {
-    return nio_is_gemini305_device(vid, pid) && strcmp(connectionType, "GMSL2") == 0;
-}
-
-bool nio_is_astra_mini_device(int vid, int pid) {
-    return (vid == NIO_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e));
-}
 
 #ifdef __cplusplus
 }

@@ -31,16 +31,4 @@ bool supportAnsiEscape() {
     return true;
 }
 
-bool isGemini305Device(int vid, int pid) {
-    return nio_is_gemini305_device(vid, pid);
-}
-
-bool isGemini305gDevice(int vid, int pid, const char* connectionType) {
-    return nio_is_gemini305g_device(vid, pid, connectionType);
-}
-
-bool isAstraMiniDevice(int vid, int pid) {
-    return nio_is_astra_mini_device(vid, pid);
-}
-
 } // namespace nio

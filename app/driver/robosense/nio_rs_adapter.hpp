@@ -11,15 +11,10 @@
 #include "nio_types.hpp"
 #include "nio_frame.hpp"
 
-#ifdef ENABLE_RS_AC1
 #include <rs_driver/msg/image_data_msg.hpp>
 #include <rs_driver/msg/imu_data_msg.hpp>
-#endif
 
 namespace nio {
-
-#ifdef ENABLE_RS_AC1
-
 // RS frame_format_t → NioFormat
 inline NioFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
     using F = robosense::lidar::frame_format_t;
@@ -69,7 +64,4 @@ inline std::vector<NioImuSample> rsImuToNioSamples(const std::shared_ptr<robosen
 
     return samples;
 }
-
-#endif // ENABLE_RS_AC1
-
 } // namespace nio

@@ -23,11 +23,6 @@ template <typename T> std::string toString(const T a_value, const int n = 6) {
 
 bool supportAnsiEscape();
 
-// Device type checks by VID/PID (no SDK dependency).
-bool isGemini305Device(int vid, int pid);
-bool isGemini305gDevice(int vid, int pid, const char *connectionType);
-bool isAstraMiniDevice(int vid, int pid);
-
 class StreamStateGuard {
 public:
     explicit StreamStateGuard(std::ios &s) : ios(s), flags(s.flags()), fill(s.fill()) {}

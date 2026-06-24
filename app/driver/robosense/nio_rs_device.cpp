@@ -5,8 +5,6 @@
 
 #include "nio_rs_device.hpp"
 
-#ifdef ENABLE_RS_AC1
-
 #include "nio_log.hpp"
 #include "nio_thread.hpp"
 
@@ -370,4 +368,3 @@ std::shared_ptr<NioDevice> RsContext::getDevice(uint32_t index) {
 
 } // namespace nio
 
-#endif // ENABLE_RS_AC1

@@ -190,6 +190,21 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
     return best;
 }
 
+// Orbbec VID (was NIO_DEVICE_VID — specific to Orbbec, not generic).
+static constexpr uint16_t OB_DEVICE_VID = 0x2bc5;
+
+inline bool isGemini305Device(int vid, int pid) {
+    return vid == OB_DEVICE_VID && (pid == 0x0840 || pid == 0x0841 || pid == 0x0842 || pid == 0x0843);
+}
+
+inline bool isGemini305gDevice(int vid, int pid, const char *connectionType) {
+    return isGemini305Device(vid, pid) && strcmp(connectionType, "GMSL2") == 0;
+}
+
+inline bool isAstraMiniDevice(int vid, int pid) {
+    return vid == OB_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e);
+}
+
 inline bool isLiDARDevice(std::shared_ptr<ob::Device> device) {
     auto sensorList = device->getSensorList();
     for (uint32_t i = 0; i < sensorList->getCount(); i++) {
