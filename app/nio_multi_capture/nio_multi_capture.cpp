@@ -16,18 +16,10 @@
 #include "nio_capture_session.hpp"
 #include "nio_common.hpp"
 #include "nio_device.hpp"
+#include "nio_driver_factory.hpp"
 #include "nio_log.hpp"
 #include "nio_sdl_viewer.hpp"
-
-#ifdef ENABLE_ORBBEC
-#include "nio_ob_device.hpp"
-#endif
-
 #include "utils.hpp"
-
-#ifdef ENABLE_RS_AC1
-#include "nio_rs_device.hpp"
-#endif
 
 #include <algorithm>
 #include <atomic>
@@ -39,10 +31,6 @@
 #include <memory>
 #include <thread>
 #include <vector>
-
-#ifdef ENABLE_ORBBEC
-#include <libobsensor/ObSensor.hpp>
-#endif
 
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "unknown"
@@ -68,23 +56,11 @@ int main(int argc, char** argv) try {
         NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
 
-    // Discover OB devices
-#ifdef ENABLE_ORBBEC
-    ObContext obContext;
-    auto obCount = obContext.getDeviceCount();
-#else
-    uint32_t obCount = 0;
-#endif
+    // Discover all devices via the driver factory
+    auto discovered = discoverDevices();
+    uint32_t totalDevices = static_cast<uint32_t>(discovered.size());
 
-#ifdef ENABLE_RS_AC1
-    // Discover RS-AC1 devices
-    RsContext rsContext;
-    auto rsCount = rsContext.getDeviceCount();
-#else
-    uint32_t rsCount = 0;
-#endif
-
-    if (obCount + rsCount < 1) {
+    if (totalDevices < 1) {
         std::cerr << "No device found!" << std::endl;
         NIO_LOG_FATAL("No device found!");
         return -1;
@@ -97,7 +73,6 @@ int main(int argc, char** argv) try {
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
     // Check USB memory for multi-device
-    uint32_t totalDevices = obCount + rsCount;
     {
         std::ifstream usbfsFile("/sys/module/usbcore/parameters/usbfs_memory_mb");
         if (usbfsFile.is_open()) {
@@ -121,40 +96,15 @@ int main(int argc, char** argv) try {
 
     std::vector<std::shared_ptr<CaptureSession>> sessions;
 
-#if defined(ENABLE_ORBBEC) || defined(ENABLE_RS_AC1)
-    // Helper: create session from NioDevice + NioPipeline
-    auto addSession = [&](std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
-                          const std::string& safeName, const std::string& deviceOutputDir) {
-        auto session = std::make_shared<CaptureSession>(device, pipeline, safeName, deviceOutputDir, cfg);
-        if (!session->setup()) {
-            NIO_LOG_ERROR_S("Setup failed for device: " << safeName);
-            return;
-        }
-
-        session->startImuPipeline();
-        session->startVideoPipeline(viewer, cfg.noShow);
-        if (!session->hasVideoPipeline()) {
-            NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping");
-            sessions.push_back(session);
-            return;
-        }
-
-        sessions.push_back(std::move(session));
-    };
-#endif
-
-    // Enumerate OB devices
-#ifdef ENABLE_ORBBEC
-    for (uint32_t i = 0; i < obCount; i++) {
-        auto nioDev = obContext.getDevice(i);
-        auto devInfo = nioDev->getDeviceInfo();
+    for (auto& dd : discovered) {
+        auto devInfo = dd.device->getDeviceInfo();
 
         if (!deviceMatches(devInfo.name, cfg.cameraFilter)) {
             std::cout << "Skipping device: " << devInfo.name << std::endl;
             continue;
         }
 
-        std::cout << "Found OB device: " << devInfo.name << " (SN: " << devInfo.serialNumber << ", PID: 0x" << std::hex
+        std::cout << "Found device: " << devInfo.name << " (SN: " << devInfo.serialNumber << ", PID: 0x" << std::hex
                   << std::setw(4) << std::setfill('0') << devInfo.pid << std::dec << ", " << devInfo.connectionType
                   << ")" << std::endl;
 
@@ -165,37 +115,22 @@ int main(int argc, char** argv) try {
         std::string deviceOutputDir = outputRootDir + "/" + safeName;
         mkdirp(deviceOutputDir);
 
-        auto obDev = std::dynamic_pointer_cast<ObDevice>(nioDev);
-        auto pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
-        addSession(nioDev, pipeline, safeName, deviceOutputDir);
-    }
-#endif
-
-#ifdef ENABLE_RS_AC1
-    // Enumerate RS-AC1 devices
-    for (uint32_t i = 0; i < rsCount; i++) {
-        auto nioDev = rsContext.getDevice(i);
-        auto devInfo = nioDev->getDeviceInfo();
-
-        if (!deviceMatches(devInfo.name, cfg.cameraFilter)) {
-            std::cout << "Skipping RS-AC1 device: " << devInfo.name << std::endl;
+        auto session = std::make_shared<CaptureSession>(dd.device, dd.pipeline, safeName, deviceOutputDir, cfg);
+        if (!session->setup()) {
+            NIO_LOG_ERROR_S("Setup failed for device: " << safeName);
             continue;
         }
 
-        std::cout << "Found RS-AC1 device: " << devInfo.name << std::endl;
+        session->startImuPipeline();
+        session->startVideoPipeline(viewer, cfg.noShow);
+        if (!session->hasVideoPipeline()) {
+            NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping");
+            sessions.push_back(session);
+            continue;
+        }
 
-        auto safeName = devInfo.name;
-        std::replace(safeName.begin(), safeName.end(), ' ', '_');
-        safeName = safeName + "_" + devInfo.serialNumber;
-
-        std::string deviceOutputDir = outputRootDir + "/" + safeName;
-        mkdirp(deviceOutputDir);
-
-        auto rsDev = std::dynamic_pointer_cast<RsDevice>(nioDev);
-        auto pipeline = std::make_shared<RsPipeline>(rsDev);
-        addSession(nioDev, pipeline, safeName, deviceOutputDir);
+        sessions.push_back(std::move(session));
     }
-#endif
 
     if (!cfg.noShow) {
         if (!viewer.createWindow()) {
@@ -252,13 +187,6 @@ int main(int argc, char** argv) try {
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
     NIO_LOG_SHUTDOWN();
     return 0;
-#ifdef ENABLE_ORBBEC
-} catch (ob::Error& e) {
-    std::cerr << "OB Error: " << e.getFunction() << "\n  " << e.what() << "\n status: " << e.getStatus() << std::endl;
-    NIO_LOG_FATAL_S("OB Error: " << e.getFunction() << " " << e.what() << " status=" << e.getStatus());
-    NIO_LOG_SHUTDOWN();
-    return -1;
-#endif
 } catch (std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;
     NIO_LOG_FATAL_S("Exception: " << e.what());

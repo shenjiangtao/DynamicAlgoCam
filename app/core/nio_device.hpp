@@ -31,6 +31,7 @@ class NioPipeline;
 
 // Forward declarations
 class NioFrameSet;
+struct NioD2CAlign;
 
 // Device info (SDK-agnostic).
 struct NioDeviceInfo {
@@ -130,7 +131,7 @@ public:
     virtual NioAlignMode getAlignMode() const = 0;
 
     // Get D2C alignment filter (may be null if HW D2C or not applicable).
-    std::shared_ptr<struct NioD2CAlign> d2cAlignFilter;
+    virtual std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const { return nullptr; }
 };
 
 // NioD2CAlign: abstract D2C alignment filter.

@@ -7,15 +7,6 @@
 #include "nio_log.hpp"
 #include "nio_sdl_viewer.hpp"
 
-#ifdef ENABLE_ORBBEC
-#include "nio_ob_d2c_align.hpp"
-#include "nio_ob_device.hpp"
-#endif
-
-#ifdef ENABLE_RS_AC1
-#include "nio_rs_device.hpp"
-#endif
-
 namespace nio {
 
 CaptureSession::CaptureSession(std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
@@ -186,12 +177,7 @@ void CaptureSession::setupFusion() {
 
     std::shared_ptr<NioD2CAlign> alignFilter;
     if (!hwD2CMode_) {
-#ifdef ENABLE_ORBBEC
-        auto* obPipe = dynamic_cast<ObPipeline*>(pipeline_.get());
-        if (obPipe && obPipe->getAlignFilter())
-            alignFilter = std::make_shared<ObD2CAlign>(obPipe->getAlignFilter());
-#endif
-        pipeline_->d2cAlignFilter = alignFilter;
+        alignFilter = pipeline_->getD2CAlignFilter();
     }
 
     fusedFps_ = std::min(sensorInfo_.colorFps, sensorInfo_.depthFps);

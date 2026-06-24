@@ -18,6 +18,7 @@ target_link_libraries(nio_drivers PUBLIC
 
 if(ENABLE_ORBBEC)
     target_include_directories(nio_drivers PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/orbbec
     )
 
@@ -26,6 +27,9 @@ if(ENABLE_ORBBEC)
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_frame_adapter.hpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_d2c_align.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.cpp
     )
 
     target_compile_definitions(nio_drivers PUBLIC
@@ -41,6 +45,7 @@ endif()
 
 if(ENABLE_RS_AC1)
     target_include_directories(nio_drivers PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/robosense
     )
 

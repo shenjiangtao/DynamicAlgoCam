@@ -5,9 +5,6 @@
 #include "utils_c.h"
 
 #include <chrono>
-#ifdef ENABLE_ORBBEC
-#include <libobsensor/ObSensor.hpp>
-#endif
 
 namespace ob_smpl {
 char waitForKeyPressed(uint32_t timeout_ms) {
@@ -34,7 +31,6 @@ bool supportAnsiEscape() {
     return true;
 }
 
-#ifdef ENABLE_ORBBEC
 bool isGemini305Device(int vid, int pid) {
     return ob_smpl_is_gemini305_device(vid, pid);
 }
@@ -46,15 +42,5 @@ bool isGemini305gDevice(int vid, int pid, const char* connectionType) {
 bool isAstraMiniDevice(int vid, int pid) {
     return ob_smpl_is_astra_mini_device(vid, pid);
 }
-
-bool isLiDARDevice(std::shared_ptr<ob::Device> device) {
-    auto sensorList = device->getSensorList();
-    for (uint32_t i = 0; i < sensorList->getCount(); i++) {
-        if (sensorList->getSensorType(i) == OB_SENSOR_LIDAR)
-            return true;
-    }
-    return false;
-}
-#endif
 
 } // namespace ob_smpl

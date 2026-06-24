@@ -27,10 +27,6 @@
 #include "nio_thread.hpp"
 #include "nio_types.hpp"
 
-#ifdef ENABLE_RS_AC1
-#include "nio_rs_adapter.hpp"
-#endif
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>

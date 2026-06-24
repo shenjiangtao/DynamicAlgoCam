@@ -7,7 +7,9 @@ extern "C" {
 
 #define ESC_KEY 27
 
-#define OB_DEVICE_VID 0x2bc5
+#ifndef NIO_DEVICE_VID
+#define NIO_DEVICE_VID 0x2bc5
+#endif
 
 #ifdef __cplusplus
 }

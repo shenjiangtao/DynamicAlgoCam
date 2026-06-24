@@ -10,8 +10,7 @@
 
 namespace nio {
 
-ObDevice::ObDevice(std::shared_ptr<ob::Device> device)
-: obDevice_(std::move(device)) {}
+ObDevice::ObDevice(std::shared_ptr<ob::Device> device) : obDevice_(std::move(device)) {}
 
 NioDeviceInfo ObDevice::getDeviceInfo() const {
     auto di = obDevice_->getDeviceInfo();
@@ -46,14 +45,29 @@ NioSensorInfo ObDevice::getSensorInfo() const {
     for (uint32_t s = 0; s < sensorList->getCount(); s++) {
         auto sensorType = sensorList->getSensorType(s);
         switch (sensorType) {
-        case OB_SENSOR_COLOR:    si.hasColor = true; break;
-        case OB_SENSOR_DEPTH:    si.hasDepth = true; break;
-        case OB_SENSOR_IR:       si.hasIR = true; break;
-        case OB_SENSOR_IR_LEFT:  si.hasIRLeft = true; break;
-        case OB_SENSOR_IR_RIGHT: si.hasIRRight = true; break;
-        case OB_SENSOR_ACCEL:   si.hasAccel = true; break;
-        case OB_SENSOR_GYRO:    si.hasGyro = true; break;
-        default: break;
+        case OB_SENSOR_COLOR:
+            si.hasColor = true;
+            break;
+        case OB_SENSOR_DEPTH:
+            si.hasDepth = true;
+            break;
+        case OB_SENSOR_IR:
+            si.hasIR = true;
+            break;
+        case OB_SENSOR_IR_LEFT:
+            si.hasIRLeft = true;
+            break;
+        case OB_SENSOR_IR_RIGHT:
+            si.hasIRRight = true;
+            break;
+        case OB_SENSOR_ACCEL:
+            si.hasAccel = true;
+            break;
+        case OB_SENSOR_GYRO:
+            si.hasGyro = true;
+            break;
+        default:
+            break;
         }
     }
 
@@ -94,129 +108,166 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
         auto profileList = sensor->getStreamProfileList();
 
         switch (sensorType) {
-        case OB_SENSOR_COLOR: {
-            si.hasColor = true;
-            OBFormat obPreferred = nioFormatToOb(colorPreferredFmt);
-            auto profile = selectBestProfile(profileList, obPreferred);
-            NioFormat resolvedFmt = NioFormat::UNKNOWN;
-            if (profile) {
-                resolvedFmt = obFormatToNio(profile->getFormat());
-                if (resolvedFmt == NioFormat::UNKNOWN) {
-                    for (uint32_t k = 0; k < profileList->getCount(); k++) {
-                        try {
-                            auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
-                            if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
-                                profile = p;
-                                resolvedFmt = obFormatToNio(p->getFormat());
-                                break;
+        case OB_SENSOR_COLOR:
+            {
+                si.hasColor = true;
+                OBFormat obPreferred = nioFormatToOb(colorPreferredFmt);
+                auto profile = selectBestProfile(profileList, obPreferred);
+                NioFormat resolvedFmt = NioFormat::UNKNOWN;
+                if (profile) {
+                    resolvedFmt = obFormatToNio(profile->getFormat());
+                    if (resolvedFmt == NioFormat::UNKNOWN) {
+                        for (uint32_t k = 0; k < profileList->getCount(); k++) {
+                            try {
+                                auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
+                                if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
+                                    profile = p;
+                                    resolvedFmt = obFormatToNio(p->getFormat());
+                                    break;
+                                }
+                            } catch (...) {
                             }
-                        } catch (...) {}
+                        }
                     }
                 }
+                if (profile && resolvedFmt != NioFormat::UNKNOWN) {
+                    obCfg->enableStream(profile);
+                    obPipe->setColorProfile(profile);
+                    si.colorFormat = resolvedFmt;
+                    si.colorW = profile->getWidth();
+                    si.colorH = profile->getHeight();
+                    si.colorFps = profile->getFps();
+                    try {
+                        si.colorIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
+                    } catch (...) {
+                        NIO_LOG_WARN_S("Color intrinsic not available");
+                    }
+                } else {
+                    si.hasColor = false;
+                }
+                break;
             }
-            if (profile && resolvedFmt != NioFormat::UNKNOWN) {
-                obCfg->enableStream(profile);
-                obPipe->setColorProfile(profile);
-                si.colorFormat = resolvedFmt;
-                si.colorW = profile->getWidth();
-                si.colorH = profile->getHeight();
-                si.colorFps = profile->getFps();
-                try { si.colorIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic()); }
-                catch (...) { NIO_LOG_WARN_S("Color intrinsic not available"); }
-            } else {
-                si.hasColor = false;
-            }
-            break;
-        }
-        case OB_SENSOR_DEPTH: {
-            si.hasDepth = true;
-            auto profile = selectBestProfile(profileList, OB_FORMAT_Y16);
-            NioFormat resolvedFmt = NioFormat::UNKNOWN;
-            if (profile) {
-                resolvedFmt = obFormatToNio(profile->getFormat());
-                if (resolvedFmt == NioFormat::UNKNOWN) {
-                    for (uint32_t k = 0; k < profileList->getCount(); k++) {
-                        try {
-                            auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
-                            if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
-                                profile = p;
-                                resolvedFmt = obFormatToNio(p->getFormat());
-                                break;
+        case OB_SENSOR_DEPTH:
+            {
+                si.hasDepth = true;
+                auto profile = selectBestProfile(profileList, OB_FORMAT_Y16);
+                NioFormat resolvedFmt = NioFormat::UNKNOWN;
+                if (profile) {
+                    resolvedFmt = obFormatToNio(profile->getFormat());
+                    if (resolvedFmt == NioFormat::UNKNOWN) {
+                        for (uint32_t k = 0; k < profileList->getCount(); k++) {
+                            try {
+                                auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
+                                if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
+                                    profile = p;
+                                    resolvedFmt = obFormatToNio(p->getFormat());
+                                    break;
+                                }
+                            } catch (...) {
                             }
-                        } catch (...) {}
+                        }
                     }
                 }
-            }
-            if (profile && resolvedFmt != NioFormat::UNKNOWN) {
-                obCfg->enableStream(profile);
-                obPipe->setDepthProfile(profile);
-                si.depthFormat = resolvedFmt;
-                si.depthW = profile->getWidth();
-                si.depthH = profile->getHeight();
-                si.depthFps = profile->getFps();
-                try { si.depthIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic()); }
-                catch (...) { NIO_LOG_WARN_S("Depth intrinsic not available"); }
-            } else {
-                si.hasDepth = false;
-            }
-            // Depth scale
-            try {
-                int32_t level = obDevice_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
-                switch (level) {
-                case 0: si.depthScale = 0.001f; break;
-                case 1: si.depthScale = 0.0005f; break;
-                case 2: si.depthScale = 0.00025f; break;
-                case 3: si.depthScale = 0.0001f; break;
-                default: si.depthScale = 0.001f; break;
+                if (profile && resolvedFmt != NioFormat::UNKNOWN) {
+                    obCfg->enableStream(profile);
+                    obPipe->setDepthProfile(profile);
+                    si.depthFormat = resolvedFmt;
+                    si.depthW = profile->getWidth();
+                    si.depthH = profile->getHeight();
+                    si.depthFps = profile->getFps();
+                    try {
+                        si.depthIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
+                    } catch (...) {
+                        NIO_LOG_WARN_S("Depth intrinsic not available");
+                    }
+                } else {
+                    si.hasDepth = false;
                 }
-                std::cout << " Depth scale: " << si.depthScale << " (precision level " << level << ")" << std::endl;
-            } catch (...) {
-                si.depthScale = 0.001f;
+                // Depth scale
+                try {
+                    int32_t level = obDevice_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
+                    switch (level) {
+                    case 0:
+                        si.depthScale = 0.001f;
+                        break;
+                    case 1:
+                        si.depthScale = 0.0005f;
+                        break;
+                    case 2:
+                        si.depthScale = 0.00025f;
+                        break;
+                    case 3:
+                        si.depthScale = 0.0001f;
+                        break;
+                    default:
+                        si.depthScale = 0.001f;
+                        break;
+                    }
+                    std::cout << " Depth scale: " << si.depthScale << " (precision level " << level << ")" << std::endl;
+                } catch (...) {
+                    si.depthScale = 0.001f;
+                }
+                break;
             }
+        case OB_SENSOR_IR:
+            {
+                si.hasIR = true;
+                auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+                if (profile) {
+                    si.irFormat = obFormatToNio(profile->getFormat());
+                    if (si.irFormat == NioFormat::UNKNOWN)
+                        si.irFormat = NioFormat::Y8;
+                    obCfg->enableStream(profile);
+                    si.irW = profile->getWidth();
+                    si.irH = profile->getHeight();
+                    si.irFps = profile->getFps();
+                } else {
+                    si.hasIR = false;
+                }
+                break;
+            }
+        case OB_SENSOR_IR_LEFT:
+            {
+                si.hasIRLeft = true;
+                auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+                if (profile) {
+                    si.irLeftFormat = obFormatToNio(profile->getFormat());
+                    if (si.irLeftFormat == NioFormat::UNKNOWN)
+                        si.irLeftFormat = NioFormat::Y8;
+                    obCfg->enableStream(profile);
+                    si.irLW = profile->getWidth();
+                    si.irLH = profile->getHeight();
+                    si.irLFps = profile->getFps();
+                } else {
+                    si.hasIRLeft = false;
+                }
+                break;
+            }
+        case OB_SENSOR_IR_RIGHT:
+            {
+                si.hasIRRight = true;
+                auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
+                if (profile) {
+                    si.irRightFormat = obFormatToNio(profile->getFormat());
+                    if (si.irRightFormat == NioFormat::UNKNOWN)
+                        si.irRightFormat = NioFormat::Y8;
+                    obCfg->enableStream(profile);
+                    si.irRW = profile->getWidth();
+                    si.irRH = profile->getHeight();
+                    si.irRFps = profile->getFps();
+                } else {
+                    si.hasIRRight = false;
+                }
+                break;
+            }
+        case OB_SENSOR_ACCEL:
+            si.hasAccel = true;
             break;
-        }
-        case OB_SENSOR_IR: {
-            si.hasIR = true;
-            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
-            if (profile) {
-                si.irFormat = obFormatToNio(profile->getFormat());
-                if (si.irFormat == NioFormat::UNKNOWN) si.irFormat = NioFormat::Y8;
-                obCfg->enableStream(profile);
-                si.irW = profile->getWidth();
-                si.irH = profile->getHeight();
-                si.irFps = profile->getFps();
-            } else { si.hasIR = false; }
+        case OB_SENSOR_GYRO:
+            si.hasGyro = true;
             break;
-        }
-        case OB_SENSOR_IR_LEFT: {
-            si.hasIRLeft = true;
-            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
-            if (profile) {
-                si.irLeftFormat = obFormatToNio(profile->getFormat());
-                if (si.irLeftFormat == NioFormat::UNKNOWN) si.irLeftFormat = NioFormat::Y8;
-                obCfg->enableStream(profile);
-                si.irLW = profile->getWidth();
-                si.irLH = profile->getHeight();
-                si.irLFps = profile->getFps();
-            } else { si.hasIRLeft = false; }
+        default:
             break;
-        }
-        case OB_SENSOR_IR_RIGHT: {
-            si.hasIRRight = true;
-            auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
-            if (profile) {
-                si.irRightFormat = obFormatToNio(profile->getFormat());
-                if (si.irRightFormat == NioFormat::UNKNOWN) si.irRightFormat = NioFormat::Y8;
-                obCfg->enableStream(profile);
-                si.irRW = profile->getWidth();
-                si.irRH = profile->getHeight();
-                si.irRFps = profile->getFps();
-            } else { si.hasIRRight = false; }
-            break;
-        }
-        case OB_SENSOR_ACCEL: si.hasAccel = true; break;
-        case OB_SENSOR_GYRO:  si.hasGyro = true; break;
-        default: break;
         }
     }
 
@@ -229,8 +280,8 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
 
     // HW D2C check
     if (si.hasColor && si.hasDepth) {
-        bool hwD2CSupported = obPipe->checkHWD2CSupport(
-            si.colorW, si.colorH, si.colorFormat, si.depthW, si.depthH, si.depthFormat, si.depthFps);
+        bool hwD2CSupported = obPipe->checkHWD2CSupport(si.colorW, si.colorH, si.colorFormat, si.depthW, si.depthH,
+                                                        si.depthFormat, si.depthFps);
         pipeline.setAlignMode(hwD2CSupported ? NioAlignMode::HW : NioAlignMode::SW);
         std::cout << "  HW D2C: " << (hwD2CSupported ? "supported" : "not supported") << std::endl;
     }
@@ -242,14 +293,13 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
 
 // === ObPipeline ===
 
-ObPipeline::ObPipeline(std::shared_ptr<ob::Device> device)
-: obDevice_(device) {
+ObPipeline::ObPipeline(std::shared_ptr<ob::Device> device) : obDevice_(device) {
     obPipeline_ = std::make_shared<ob::Pipeline>(device);
     obConfig_ = std::make_shared<ob::Config>();
     obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
 }
 
-void ObPipeline::enableStream(const NioStreamConfig &/*cfg*/) {
+void ObPipeline::enableStream(const NioStreamConfig& /*cfg*/) {
     // 流启用需要 ob::VideoStreamProfile，由 CaptureSession 中具体实现。
     // Phase 4 重构时将完整实现。
 }
@@ -274,8 +324,8 @@ void ObPipeline::setAlignMode(NioAlignMode mode) {
     }
 }
 
-bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, NioFormat /*colorFmt*/,
-                                    int /*depthW*/, int /*depthH*/, NioFormat /*depthFmt*/, int /*depthFps*/) {
+bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, NioFormat /*colorFmt*/, int /*depthW*/,
+                                   int /*depthH*/, NioFormat /*depthFmt*/, int /*depthFps*/) {
     if (!colorProfile_ || !depthProfile_)
         return false;
     auto hwD2CDepthProfiles = obPipeline_->getD2CDepthProfileList(colorProfile_, ALIGN_D2C_HW_MODE);
@@ -312,7 +362,7 @@ bool ObPipeline::start(NioVideoCallback callback) {
         });
         videoCallback_ = callback;
         return true;
-    } catch (ob::Error &e) {
+    } catch (ob::Error& e) {
         NIO_LOG_ERROR_S("Pipeline start failed: " << e.what());
         return false;
     }
@@ -338,7 +388,7 @@ bool ObPipeline::startImu(NioImuCallback callback) {
         });
         imuStarted_ = true;
         return true;
-    } catch (ob::Error &e) {
+    } catch (ob::Error& e) {
         NIO_LOG_ERROR_S("IMU pipeline start failed: " << e.what());
         return false;
     }
@@ -373,6 +423,12 @@ NioAlignMode ObPipeline::getAlignMode() const {
     if (alignFilter_)
         return NioAlignMode::SW;
     return NioAlignMode::NONE;
+}
+
+std::shared_ptr<NioD2CAlign> ObPipeline::getD2CAlignFilter() const {
+    if (alignFilter_)
+        return std::make_shared<ObD2CAlign>(alignFilter_);
+    return nullptr;
 }
 
 // === ObContext ===

@@ -1,12 +1,12 @@
-// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Copyright (c) NIO Inc. All Rights Reserved.
 // Licensed under the MIT License.
 //
 // nio_color_convert_cv.cpp — OpenCV-based color conversion implementation.
 //
-// frameToBGR: dispatches on OBFormat → cv::cvtColor or cv::imdecode.
+// frameToBGR: dispatches on NioFormat -> cv::cvtColor or cv::imdecode.
 //   Supports: BGR, RGB, RGBA, BGRA, MJPEG, YUYV, UYVY, NV12, NV21, I420, Y8.
 //
-// colorizeDepth: Y16 → float (meters) → normalize → JET colormap → BGR.
+// colorizeDepth: Y16 -> float (meters) -> normalize -> JET colormap -> BGR.
 //   Zero-valued pixels (invalid/no-signal) are masked to black.
 
 #include "nio_color_convert_cv.hpp"
@@ -15,98 +15,90 @@
 
 namespace nio {
 
-// frameToBGR: convert any ob::VideoFrame to a BGR cv::Mat (deep copy).
-// MJPEG is decoded via cv::imdecode; all others use cv::cvtColor.
-cv::Mat frameToBGR(std::shared_ptr<ob::Frame> frame) {
-    auto vf = frame->as<ob::VideoFrame>();
-    if (!vf)
+cv::Mat frameToBGR(const NioFrame& frame) {
+    int w = frame.width;
+    int h = frame.height;
+    auto fmt = frame.format;
+    const auto* data = frame.rawData();
+
+    if (!data || w <= 0 || h <= 0)
         return cv::Mat();
 
-    int w = static_cast<int>(vf->getWidth());
-    int h = static_cast<int>(vf->getHeight());
-    auto fmt = vf->getFormat();
-    const auto* data = vf->getData();
-
-    if (fmt == OB_FORMAT_BGR) {
+    if (fmt == NioFormat::BGR) {
         return cv::Mat(h, w, CV_8UC3, const_cast<uint8_t*>(data)).clone();
     }
-    if (fmt == OB_FORMAT_RGB) {
+    if (fmt == NioFormat::RGB || fmt == NioFormat::RGB888) {
         cv::Mat rgb(h, w, CV_8UC3, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
         return bgr;
     }
-    if (fmt == OB_FORMAT_RGBA) {
+    if (fmt == NioFormat::RGBA) {
         cv::Mat rgba(h, w, CV_8UC4, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
         return bgr;
     }
-    if (fmt == OB_FORMAT_BGRA) {
+    if (fmt == NioFormat::BGRA) {
         cv::Mat bgra(h, w, CV_8UC4, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
         return bgr;
     }
-    if (fmt == OB_FORMAT_MJPG || fmt == OB_FORMAT_MJPEG) {
-        auto dataSize = vf->getDataSize();
+    if (fmt == NioFormat::MJPG || fmt == NioFormat::MJPEG) {
+        auto dataSize = frame.dataSize();
         std::vector<uint8_t> buf(data, data + dataSize);
         return cv::imdecode(buf, cv::IMREAD_COLOR);
     }
-    if (fmt == OB_FORMAT_YUYV) {
+    if (fmt == NioFormat::YUYV) {
         cv::Mat yuyv(h, w, CV_8UC2, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(yuyv, bgr, cv::COLOR_YUV2BGR_YUYV);
         return bgr;
     }
-    if (fmt == OB_FORMAT_UYVY) {
+    if (fmt == NioFormat::UYVY) {
         cv::Mat uyvy(h, w, CV_8UC2, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(uyvy, bgr, cv::COLOR_YUV2BGR_UYVY);
         return bgr;
     }
-    if (fmt == OB_FORMAT_NV12) {
+    if (fmt == NioFormat::NV12) {
         cv::Mat nv12(h + h / 2, w, CV_8UC1, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(nv12, bgr, cv::COLOR_YUV2BGR_NV12);
         return bgr;
     }
-    if (fmt == OB_FORMAT_NV21) {
+    if (fmt == NioFormat::NV21) {
         cv::Mat nv21(h + h / 2, w, CV_8UC1, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(nv21, bgr, cv::COLOR_YUV2BGR_NV21);
         return bgr;
     }
-    if (fmt == OB_FORMAT_I420) {
+    if (fmt == NioFormat::I420) {
         cv::Mat i420(h + h / 2, w, CV_8UC1, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(i420, bgr, cv::COLOR_YUV2BGR_I420);
         return bgr;
     }
-    if (fmt == OB_FORMAT_Y8) {
+    if (fmt == NioFormat::Y8) {
         cv::Mat y8(h, w, CV_8UC1, const_cast<uint8_t*>(data));
         cv::Mat bgr;
         cv::cvtColor(y8, bgr, cv::COLOR_GRAY2BGR);
         return bgr;
     }
 
-    std::cerr << "Unsupported display format: " << fmt << std::endl;
+    std::cerr << "Unsupported display format: " << nioFormatToStr(fmt) << std::endl;
     return cv::Mat();
 }
 
-// colorizeDepth: apply JET colormap to Y16 depth frame.
-// depthScale: raw→millimeters conversion; depthMinM/depthMaxM: clip range in meters.
-cv::Mat colorizeDepth(std::shared_ptr<ob::Frame> depthFrame, float depthScale, float depthMinM, float depthMaxM) {
-    auto vf = depthFrame->as<ob::VideoFrame>();
-    if (!vf)
-        return cv::Mat();
+cv::Mat colorizeDepth(const NioFrame& depthFrame, float depthMinM, float depthMaxM) {
+    int w = depthFrame.width;
+    int h = depthFrame.height;
+    auto fmt = depthFrame.format;
+    const auto* data = depthFrame.rawData();
+    float depthScale = depthFrame.depthScale;
 
-    int w = static_cast<int>(vf->getWidth());
-    int h = static_cast<int>(vf->getHeight());
-    auto fmt = vf->getFormat();
-    const auto* data = vf->getData();
-
-    if (fmt != OB_FORMAT_Y16 || !data) {
+    if (fmt != NioFormat::Y16 || !data) {
         return cv::Mat::zeros(h, w, CV_8UC3);
     }
 

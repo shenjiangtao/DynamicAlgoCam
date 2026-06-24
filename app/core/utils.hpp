@@ -23,13 +23,10 @@ template <typename T> std::string toString(const T a_value, const int n = 6) {
 
 bool supportAnsiEscape();
 
-#ifdef ENABLE_ORBBEC
+// Device type checks by VID/PID (no SDK dependency).
 bool isGemini305Device(int vid, int pid);
-
 bool isGemini305gDevice(int vid, int pid, const char *connectionType);
-
 bool isAstraMiniDevice(int vid, int pid);
-#endif
 
 class StreamStateGuard {
 public:
@@ -46,12 +43,3 @@ private:
 };
 
 }  // namespace ob_smpl
-
-// Legacy Orbbec SDK utilities (requires ob::Device from ObSensor).
-// For modern app code, use nio::isLiDARDevice() from nio_ob_adapter.hpp.
-#ifdef ENABLE_ORBBEC
-#include <libobsensor/ObSensor.hpp>
-namespace ob_smpl {
-bool isLiDARDevice(std::shared_ptr<ob::Device> device);
-}
-#endif

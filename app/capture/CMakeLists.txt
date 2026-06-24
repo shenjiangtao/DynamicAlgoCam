@@ -43,7 +43,6 @@ target_compile_options(nio_capture PRIVATE
 
 target_link_libraries(nio_capture PUBLIC
     nio::core
-    nio::drivers
     ${AVCODEC_LIBRARIES}
     ${AVFORMAT_LIBRARIES}
     ${AVUTIL_LIBRARIES}
