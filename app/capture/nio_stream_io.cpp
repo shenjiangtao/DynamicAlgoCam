@@ -6,7 +6,7 @@
 // Sections:
 //   1. isH264KeyFrame / writeH264StartCode / writeH264Frame — native H.264 NAL handling
 //   2. writeDepthRawWithHeader — ORBBEC_DEPTH_RAW format writer
-//   2b. writePointRawWithHeader — NIO_POINT_CLOUD_RAW format writer
+//   2b. writePcdFile — PCD v0.7 binary per-frame point cloud writer
 //   3. openBufferedFile — large-buffer ofstream factory
 //   4. createStreamEncoder / writeStreamFrame — encoder+file management
 
@@ -15,9 +15,12 @@
 #include "nio_log.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <vector>
 
 namespace nio {
@@ -108,34 +111,17 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
     file.flush();
 }
 
-// === Section 2b: NIO_POINT_CLOUD_RAW format writer ===
+// === Section 2b: PCD file writer ===
 
-// Binary container format for multi-frame point cloud data.
-//
-// File header (frame 0 only, 68 bytes):
-//   [20B] magic = "NIO_POINT_CLOUD_RAW\0"
-//   [4B]  version = 1 (uint32)
-//   [4B]  pointFieldCount = 6 (uint32)
-//   [40B] pointFieldNames = "x\0y\0z\0intensity\0ring\0timestamp\0" (padded)
-//
-// Per-frame header (32 bytes, every frame including frame 0):
-//   [8B]  frameIndex (uint64)
-//   [8B]  timestampUs (uint64)
-//   [4B]  pointCount (uint32)
-//   [4B]  pointDataBytes (uint32) = pointCount * 26
-//   [8B]  reserved (uint64, zero)
-//
-// Per-frame point data:
-//   pointCount * 26 bytes each:
-//     float x(4) + float y(4) + float z(4) + float intensity(4) +
-//     uint16 ring(2) + double timestamp(8) = 26 bytes
+// Writes a single PCD v0.7 binary file for one frame of point cloud data.
+// Input wire format: [4B pointCount (uint32)] + pointCount * 23B
+//   per point: float x(4) + float y(4) + float z(4) + uint8 intensity(1) +
+//              uint16 ring(2) + double timestamp(8) = 23 bytes
+// Output PCD fields: x y z intensity ring timestamp (F F F F U F)
+//   intensity is expanded from uint8 → float32 for standard PCD compatibility.
 
-void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size, uint64_t frameIndex,
-                             std::mutex& mtx, uint64_t deviceTsUs) {
-    std::lock_guard<std::mutex> lock(mtx);
-    if (!file.is_open())
-        return;
-
+void writePcdFile(const std::string& outputDir, const std::string& baseName, uint64_t frameIndex, const uint8_t* data,
+                  uint32_t size, std::mutex& mtx, uint64_t /*deviceTsUs*/) {
     if (size < sizeof(uint32_t))
         return;
 
@@ -143,42 +129,55 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
     std::memcpy(&pointCount, data, sizeof(uint32_t));
     const uint8_t* pointData = data + sizeof(uint32_t);
 
-    constexpr size_t srcPointSize = 4 + 4 + 4 + 1 + 2 + 8; // 23 bytes (wire format)
+    constexpr size_t srcPointSize = 4 + 4 + 4 + 1 + 2 + 8;
     size_t expectedSrcBytes = static_cast<size_t>(pointCount) * srcPointSize;
     if (size - sizeof(uint32_t) < expectedSrcBytes)
         return;
 
-    if (frameIndex == 0) {
-        const char magic[] = "NIO_POINT_CLOUD_RAW";
-        file.write(magic, 20);
-
-        uint32_t version = 1;
-        file.write(reinterpret_cast<const char*>(&version), 4);
-
-        uint32_t fieldCount = 6;
-        file.write(reinterpret_cast<const char*>(&fieldCount), 4);
-
-        const char fieldNames[40] = "x\0y\0z\0intensity\0ring\0timestamp";
-        file.write(fieldNames, 40);
+    std::string filepath;
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        static bool dirCreated = false;
+        if (!dirCreated) {
+            std::string path = outputDir;
+            for (size_t pos = 0; pos < path.size();) {
+                pos = path.find('/', pos + 1);
+                if (pos == std::string::npos)
+                    pos = path.size();
+                mkdir(path.substr(0, pos).c_str(), 0755);
+            }
+            dirCreated = true;
+        }
     }
 
-    constexpr uint32_t dstPointSize = 4 + 4 + 4 + 4 + 2 + 8; // 26 bytes per point
-    uint32_t pointDataBytes = pointCount * dstPointSize;
+    char fname[512];
+    std::snprintf(fname, sizeof(fname), "%s/%s_%06lu.pcd", outputDir.c_str(), baseName.c_str(),
+                  static_cast<unsigned long>(frameIndex));
+    filepath = fname;
 
-    uint64_t fidx = frameIndex;
-    file.write(reinterpret_cast<const char*>(&fidx), 8);
+    std::ofstream pcd(filepath, std::ios::binary);
+    if (!pcd.is_open())
+        return;
 
-    uint64_t ts = deviceTsUs ? deviceTsUs :
-                               static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                                         std::chrono::system_clock::now().time_since_epoch())
-                                                         .count());
-    file.write(reinterpret_cast<const char*>(&ts), 8);
+    char header[1024];
+    int hdrLen = std::snprintf(header, sizeof(header),
+                               "# .PCD v0.7 - Point Cloud Data file format\n"
+                               "VERSION 0.7\n"
+                               "FIELDS x y z intensity ring timestamp\n"
+                               "SIZE 4 4 4 4 2 8\n"
+                               "TYPE F F F F U F\n"
+                               "COUNT 1 1 1 1 1 1\n"
+                               "WIDTH %u\n"
+                               "HEIGHT 1\n"
+                               "VIEWPOINT 0 0 0 1 0 0 0\n"
+                               "POINTS %u\n"
+                               "DATA binary\n",
+                               pointCount, pointCount);
+    pcd.write(header, hdrLen);
 
-    file.write(reinterpret_cast<const char*>(&pointCount), 4);
-    file.write(reinterpret_cast<const char*>(&pointDataBytes), 4);
-
-    uint64_t reserved = 0;
-    file.write(reinterpret_cast<const char*>(&reserved), 8);
+    constexpr size_t dstPointSize = 4 + 4 + 4 + 4 + 2 + 8;
+    std::vector<uint8_t> buf(static_cast<size_t>(pointCount) * dstPointSize);
+    uint8_t* dst = buf.data();
 
     const uint8_t* ptr = pointData;
     for (uint32_t i = 0; i < pointCount; ++i) {
@@ -200,15 +199,22 @@ void writePointRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
         ptr += 8;
 
         float intensity = static_cast<float>(rawIntensity);
-        file.write(reinterpret_cast<const char*>(&x), 4);
-        file.write(reinterpret_cast<const char*>(&y), 4);
-        file.write(reinterpret_cast<const char*>(&z), 4);
-        file.write(reinterpret_cast<const char*>(&intensity), 4);
-        file.write(reinterpret_cast<const char*>(&ring), 2);
-        file.write(reinterpret_cast<const char*>(&ptTs), 8);
+        std::memcpy(dst, &x, 4);
+        dst += 4;
+        std::memcpy(dst, &y, 4);
+        dst += 4;
+        std::memcpy(dst, &z, 4);
+        dst += 4;
+        std::memcpy(dst, &intensity, 4);
+        dst += 4;
+        std::memcpy(dst, &ring, 2);
+        dst += 2;
+        std::memcpy(dst, &ptTs, 8);
+        dst += 8;
     }
 
-    file.flush();
+    pcd.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+    pcd.close();
 }
 
 // === Section 3: Buffered file factory ===

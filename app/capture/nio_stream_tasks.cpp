@@ -300,13 +300,11 @@ void ImuStreamTask::enqueueLine(std::string line) {
 
 // === PcdStreamTask ===
 
-PcdStreamTask::PcdStreamTask(const std::string& name, std::shared_ptr<std::ofstream> pcdFile)
-: StreamTask(name, 4), pcdFile_(std::move(pcdFile)) {}
+PcdStreamTask::PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
+: StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
 
 void PcdStreamTask::processFrame(const FrameBlob& blob) {
-    if (!pcdFile_ || !pcdFile_->is_open())
-        return;
-    writePointRawWithHeader(*pcdFile_, blob.data.data(), blob.size, frameIdx_++, fileMtx_, blob.timestampUs);
+    writePcdFile(outputDir_, baseName_, frameIdx_++, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
     frameCount++;
 }
 

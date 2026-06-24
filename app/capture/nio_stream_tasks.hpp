@@ -142,14 +142,15 @@ private:
 
 class PcdStreamTask : public StreamTask {
 public:
-    PcdStreamTask(const std::string &name, std::shared_ptr<std::ofstream> pcdFile);
+    PcdStreamTask(const std::string &name, const std::string &outputDir, const std::string &baseName);
     std::atomic<uint64_t> frameCount{0};
 
 protected:
     void processFrame(const FrameBlob &blob) override;
 
 private:
-    std::shared_ptr<std::ofstream> pcdFile_;
+    std::string outputDir_;
+    std::string baseName_;
     std::mutex fileMtx_;
     uint64_t frameIdx_ = 0;
 };

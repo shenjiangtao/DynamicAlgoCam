@@ -158,12 +158,12 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
             int score = 0;
             if (vsp->getFormat() == preferredFormat)
                 score += 1000;
-            if (vsp->getWidth() == 640)
+            if (vsp->getWidth() == 1280)
+                score += 120;
+            else if (vsp->getWidth() == 640)
                 score += 100;
             else if (vsp->getWidth() == 848)
                 score += 90;
-            else if (vsp->getWidth() == 1280)
-                score += 80;
             if (vsp->getFps() == 30)
                 score += 50;
             else if (vsp->getFps() == 25)

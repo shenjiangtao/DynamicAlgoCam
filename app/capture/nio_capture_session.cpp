@@ -145,17 +145,16 @@ void CaptureSession::createPcdTask() {
     if (!pipeline_ || !pipeline_->isPointCloudDepth())
         return;
 
-    std::string pcdPath = baseName_ + "_point_raw_" + startTs_ + ".raw";
-    auto sf = sensorFiles_;
-    sf->pcdFile = openBufferedFile(pcdPath, std::ios::binary);
+    std::string pcdDir = baseName_ + "_pcd_" + startTs_;
+    std::string pcdBase = devId_;
 
-    pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", sf->pcdFile);
+    pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
     pcdTask_->start();
 
-    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sf)));
+    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
 
-    NIO_LOG_INFO_S("PCD point cloud output: " << pcdPath);
-    std::cout << "  PCD point cloud: " << pcdPath << std::endl;
+    NIO_LOG_INFO_S("PCD point cloud output: " << pcdDir << "/");
+    std::cout << "  PCD point cloud: " << pcdDir << "/" << std::endl;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,8 +442,6 @@ void CaptureSession::stop() {
         sf->depthRawFile->close();
     if (sf->imuFile)
         sf->imuFile->close();
-    if (sf->pcdFile)
-        sf->pcdFile->close();
 
     mjpgRes_.reset();
 
