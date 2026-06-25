@@ -60,7 +60,7 @@ if(ENABLE_RS_AC1)
         ENABLE_RS_AC1
     )
 
-    set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../RoboSense/rs_driver-dev_opt_AC1")
+    set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../vendors/RoboSense")
 
     set(DISABLE_PCAP_PARSE ON CACHE BOOL "Disable PCAP file parse" FORCE)
     set(COMPILE_DEMOS OFF CACHE BOOL "Build rs_driver demos" FORCE)
