@@ -22,7 +22,13 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 set(NIO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_DEFAULT_SOURCE")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_DEFAULT_SOURCE")
+
 set(OB_BUILD_MAIN_PROJECT ON CACHE BOOL "OrbbecSDK is the main SDK project" FORCE)
+set(OB_SDK_LIB_NAME "OrbbecSDK" CACHE STRING "OrbbecSDK library name" FORCE)
 
 add_subdirectory(vendors/OrbbecSDK)
+
+add_subdirectory(app)
 

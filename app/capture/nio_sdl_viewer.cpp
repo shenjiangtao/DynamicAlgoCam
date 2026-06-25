@@ -8,9 +8,11 @@
 // - decodeThread(): converts rawBuf → RGB24 into slot.renderBuf (parallel)
 // - renderLoop(): uploads renderBuf to SDL textures + draws text overlays (30fps)
 //
-// Text rendering uses scaled-up 5x7 bitmap font (no SDL_ttf dependency).
 
 #include "nio_sdl_viewer.hpp"
+
+constexpr int nio::SDLViewer::MAX_TILE_W;
+constexpr int nio::SDLViewer::MAX_TILE_H;
 #include "nio_log.hpp"
 #include <algorithm>
 #include <cmath>

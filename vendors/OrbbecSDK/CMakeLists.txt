@@ -23,8 +23,8 @@ else()
     set(OB_BUILD_DOCS OFF CACHE BOOL "Build api document and install doc" FORCE)
 endif()
 
-# Set CXX standard to C++14 (needed for RS-AC1 rs_driver; safe upgrade from C++11)
-set(CMAKE_CXX_STANDARD 14)
+# Set CXX standard to C++11
+set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Set C standard to C99
@@ -71,10 +71,6 @@ set(OB_PROJECT_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR})
 
 add_subdirectory(extensions)
 add_subdirectory(src)
-
-if(OB_BUILD_APPS)
-    add_subdirectory(${NIO_PROJECT_ROOT_DIR}/app ${CMAKE_BINARY_DIR}/app)
-endif()
 
 if(OB_BUILD_EXAMPLES)
     add_subdirectory(examples)
