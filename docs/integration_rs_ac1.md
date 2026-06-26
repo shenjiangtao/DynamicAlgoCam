@@ -1,9 +1,9 @@
 # Orbbec + RoboSense RS-AC1 统一采集框架 — 技术方案
 
-> **版本**: 0.1-draft  
-> **日期**: 2026-06-19  
-> **受众**: 框架开发者、集成工程师  
-> **状态**: 方案设计，未实现
+> **版本**: 1.0
+> **日期**: 2026-06-26
+> **受众**: 框架开发者、集成工程师
+> **状态**: 已实现 — RS-AC1 集成完成，CMake 选项已移至根 CMakeLists.txt
 
 ---
 
@@ -37,9 +37,9 @@
 | USB 版本 | USB 2.0+ | **USB 3.0 必须**（`enable_usb200=false`） |
 | USBFS 内存 | ≥ 128 MB (`usbfs_memory_mb`) | ≥ 128 MB（同） |
 | VID:PID | 多种 (0x2bc5:*) | **0x3840:0x1010** |
-| SDK 库 | `libOrbbecSDK.so` | `librsac_usb.so` + `libuvc.so` + `libusb-1.0.so` |
+| SDK 库 | `libOrbbecSDK.so` (动态) | `usb-ac-static` + `uvc-ac-static` (静态链接，无需 LD_LIBRARY_PATH) |
 | 编译宏 | 无 | `-DENABLE_USB -DENABLE_IMU_PARSE -DENABLE_IMAGE_PARSE` |
-| C++ 标准 | C++11 | **C++14**（rs_driver 要求） |
+| C++ 标准 | C++14 | C++14（rs_driver 要求，根 CMakeLists.txt 已升级） |
 | 设备发现 | `ob::Context::queryDeviceList()` | 无自动发现；按 VID/PID 扫描 libusb 或手动指定 `device_uuid` |
 | 内核驱动 | `uvcvideo` 绑定 | **必须解绑** `uvcvideo`（AC1 使用自定义 UVC 扩展，标准内核驱动会抢占） |
 
@@ -166,7 +166,7 @@ depth[row * 96 + col] = (uint16_t)(point[i].distance / 0.005)
 | `FRAME_FORMAT_RGB24` | `NioFormat::RGB` | |
 | `FRAME_FORMAT_YUV422` | `NioFormat::YUYV` | 语义等价 |
 
-需要新增到 `nio_ob_adapter.hpp` (或独立 `nio_rs_adapter.hpp`):
+已实现于 `app/driver/robosense/nio_rs_adapter.hpp`:
 ```cpp
 NioFormat rsFrameFormatToNio(frame_format_t fmt);
 frame_format_t nioFormatToRsFrameFormat(NioFormat fmt);
@@ -176,14 +176,14 @@ frame_format_t nioFormatToRsFrameFormat(NioFormat fmt);
 
 ## 6 集成架构设计
 
-### 6.1 新增文件
+### 6.1 新增文件（已实现）
 
 ```
-examples/utils/
-  ├── nio_rs_adapter.hpp       # RW: RS frame_format ↔ NioFormat / ImuData ↔ NioImuSample
-  ├── nio_rs_frame_adapter.hpp # RW: PointCloudMsg+ImageData+ImuData → NioFrameSet
-  ├── nio_rs_device.hpp        # RW: RsDevice, RsPipeline, RsContext 实现 NioDevice/NioPipeline/NioContext
-  └── nio_rs_device.cpp        # RW: 上述实现
+app/driver/robosense/
+  ├── nio_rs_adapter.hpp       # RS frame_format ↔ NioFormat / ImuData ↔ NioImuSample
+  ├── nio_rs_frame_adapter.hpp # PointCloudMsg+ImageData+ImuData → NioFrameSet
+  ├── nio_rs_device.hpp        # RsDevice, RsPipeline, RsContext 实现 NioDevice/NioPipeline/NioContext
+  └── nio_rs_device.cpp        # 上述实现
 ```
 
 ### 6.2 类图
@@ -196,8 +196,8 @@ examples/utils/
             ┌────────┴────────┐
             ▼                 ▼
      ┌────────────┐    ┌────────────┐
-     │ ObDevice   │    │ RsDevice   │ ← NEW
-     │(已存在)    │    │            │
+      │ ObDevice   │    │ RsDevice   │
+      │(已存在)    │    │(已实现)    │
      └────────────┘    └────────────┘
 
               ┌─────────────┐
@@ -207,8 +207,8 @@ examples/utils/
             ┌────────┴────────┐
             ▼                 ▼
      ┌────────────┐    ┌────────────┐
-     │ ObPipeline │    │ RsPipeline │ ← NEW
-     │(已存在)    │    │            │
+      │ ObPipeline │    │ RsPipeline │
+      │(已存在)    │    │(已实现)    │
      └────────────┘    └────────────┘
 
               ┌─────────────┐
@@ -218,8 +218,8 @@ examples/utils/
             ┌────────┴────────┐
             ▼                 ▼
      ┌────────────┐    ┌────────────┐
-     │ ObContext  │    │ RsContext  │ ← NEW
-     │(已存在)    │    │            │
+      │ ObContext  │    │ RsContext  │
+      │(已存在)    │    │(已实现)    │
      └────────────┘    └────────────┘
 ```
 
@@ -359,41 +359,31 @@ RS-AC1 的"深度"是 3D 点云（`PointXYZIRT`），不是 OB 的 2D depth map�
 
 ## 7 配置与迁移
 
-### 7.1 CLI 参数扩展
+### 7.1 CLI 参数
 
-| 新参数 | 类型 | 默认值 | 作用 |
-|--------|------|--------|------|
-| `--rs-ac1` | bool | false | 启用 RS-AC1 设备发现 |
-| `--rs-image-format` | string | `"NV12"` | RS-AC1 图像格式: NV12/BGR/RGB/YUY2 |
-| `--rs-image-fps` | int | 30 | RS-AC1 图像帧率 |
-| `--rs-imu-fps` | int | 100 | RS-AC1 IMU 采样率: 100 or 200 |
+> RS-AC1 设备在启用 `ENABLE_RS_AC1` 编译选项后自动发现，无需额外 CLI 参数。
+> 使用 `-c <name>` 按设备名子串过滤（如 `-c AC1` 仅录制 RS-AC1 设备）。
 
-### 7.2 设备发现改造
+### 7.2 设备发现（已实现）
 
-当前 `main()` 使用 `ob::Context` 发现所有设备。改造后:
+当前 `main()` 使用 `discoverDevices()` 工厂函数，内部根据 `ENABLE_ORBBEC` / `ENABLE_RS_AC1` 编译宏自动发现对应设备：
 
 ```cpp
-// main() 中
-std::vector<std::unique_ptr<CaptureSession>> sessions;
+// nio_driver_factory.cpp
+std::vector<DiscoveredDevice> discoverDevices() {
+    std::vector<DiscoveredDevice> result;
 
-// 1. Orbbec 设备 (现有逻辑不变)
-if (!cfg.rsAc1Only) {
-    ob::Context obCtx;
-    auto devList = obCtx.queryDeviceList();
-    for (uint32_t i = 0; i < devList->getCount(); i++) {
-        auto dev = devList->getDevice(i);
-        if (!deviceMatches(dev, cfg.cameraFilter)) continue;
-        // ... 创建 ObCaptureSession (Phase 4 后改为 NioCaptureSession)
-    }
-}
+#ifdef ENABLE_ORBBEC
+    ObContext obCtx;
+    // ... enumerate Orbbec devices ...
+#endif
 
-// 2. RS-AC1 设备
-if (cfg.enableRsAc1) {
-    nio::RsContext rsCtx;
-    for (uint32_t i = 0; i < rsCtx.getDeviceCount(); i++) {
-        auto nioDev = rsCtx.getDevice(i);
-        // ... 创建 NioCaptureSession(nioDev, ...)
-    }
+#ifdef ENABLE_RS_AC1
+    RsContext rsCtx;
+    // ... enumerate RoboSense devices ...
+#endif
+
+    return result;
 }
 ```
 
@@ -656,45 +646,45 @@ RS-AC1 的 depth map 分辨率仅 96×288，上采样到 1080p 后融合图像�
 
 ### 11.1 CMake 变更
 
+> **已实现**: CMake 选项已移至根 `CMakeLists.txt`，C++14 升级已完成。
+> 以下为原始设计记录，实际实现略有调整。
+
 ```cmake
-# examples/utils/CMakeLists.txt 新增
-option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" OFF)
+# 根 CMakeLists.txt (已实现)
+option(ENABLE_ORBBEC "Enable Orbbec device support" ON)
+option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
+
+if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)
+    message(FATAL_ERROR "Both ENABLE_ORBBEC and ENABLE_RS_AC1 are OFF. "
+                        "Enable at least one vendor SDK.")
+endif()
+
+if(ENABLE_ORBBEC)
+    set(OB_BUILD_MAIN_PROJECT ON CACHE INTERNAL "" FORCE)
+    set(OB_SDK_LIB_NAME "OrbbecSDK" CACHE INTERNAL "" FORCE)
+    add_subdirectory(vendors/OrbbecSDK)
+endif()
 
 if(ENABLE_RS_AC1)
-    set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../RoboSense/rs_driver-dev_opt_AC1")
-    set(RS_DRIVER_INCLUDE_DIRS
-        ${RS_DRIVER_ROOT}/src
-        ${RS_DRIVER_ROOT}/thirdparty/libusb/libusb
-        ${RS_DRIVER_ROOT}/thirdparty/libuvc/include
-    )
-
-    target_sources(ob_examples_utils PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}/nio_rs_device.cpp
-    )
-
-    # rs_driver 大部分是 header-only; 但 input_usb.cpp 编译为 rsac_usb
-    # 需要先构建 rs_driver 的 librsac_usb 目标
-    add_subdirectory(${RS_DRIVER_ROOT} ${CMAKE_BINARY_DIR}/rs_driver)
-
-    target_compile_definitions(ob_examples_utils PRIVATE ENABLE_RS_AC1)
-    target_include_directories(ob_examples_utils PUBLIC ${RS_DRIVER_INCLUDE_DIRS})
-    target_link_libraries(ob_examples_utils PUBLIC rsac_usb usb-1.0 uvc pthread)
+    set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendors/RoboSense" CACHE PATH "" FORCE)
+    set(DISABLE_PCAP_PARSE ON CACHE INTERNAL "" FORCE)
+    set(COMPILE_DEMOS OFF CACHE INTERNAL "" FORCE)
+    set(COMPILE_TOOLS OFF CACHE INTERNAL "" FORCE)
+    set(ENABLE_USB ON CACHE INTERNAL "" FORCE)
+    add_subdirectory(vendors/RoboSense)
 endif()
+
+add_subdirectory(app)
 ```
 
-### 11.2 C++ 标准冲突
-
-- 当前项目: C++11 (`CMAKE_CXX_STANDARD 11`)  
-- rs_driver: C++14 (`-std=c++14`)  
-- 需将主项目升级至 C++14 或使用独立编译目标
-
-```cmake
-# 方案: 将主项目升级到 C++14
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+Source-specific compile definitions and link libraries are set in
+`app/driver/CMakeLists.txt` within `if(ENABLE_RS_AC1)` / `if(ENABLE_ORBBEC)` blocks.
 ```
 
-**风险**: 升级 C++ 标准可能引入 regmax/regnum 等标识符的兼容问题（C++11→14 行为变化小，通常安全）。
+### 11.2 C++ 标准升级（已完成）
+
+- 项目已从 C++11 升级至 **C++14**（根 `CMakeLists.txt` 中 `CMAKE_CXX_STANDARD 14`）
+- rs_driver 要求 C++14，升级已完成且通过构建验证
 
 ### 11.3 内核 UVC 解绑自动化
 
@@ -718,7 +708,7 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 | 回滚步骤 | 命令/动作 |
 |----------|-----------|
 | 禁用 RS-AC1 | cmake 时 `-DENABLE_RS_AC1=OFF`; 代码中 `#ifdef ENABLE_RS_AC1` 包裹所有 RS 相关 include/class |
-| 完全移除 | 删除 `nio_rs_*.hpp/.cpp`; 删除 CMakeLists 中 `if(ENABLE_RS_AC1)` 块; 恢复 C++11 |
+| 完全移除 | 删除 `app/driver/robosense/nio_rs_*.hpp/.cpp`; 删除根 CMakeLists.txt 和 app/driver/CMakeLists.txt 中 `if(ENABLE_RS_AC1)` 块 |
 | 回退 C++ 标准 | `set(CMAKE_CXX_STANDARD 11)` — 仅当 RS-AC1 完全移除时安全 |
 
 ---
@@ -734,7 +724,7 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 | IMU 数据不到达 | 未定义 `ENABLE_IMU_PARSE` | 编译时确保 `-DENABLE_IMU_PARSE` |
 | 多 AC1 冲突 | `device_uuid` 未指定 | 为每个 `RSDriverParam.input_param.device_uuid` 设置 USB serial |
 | USBFS 内存不足 | 多设备并发 | `cat /sys/module/usbcore/parameters/usbfs_memory_mb`; 需要 ≥ 128 |
-| C++ 编译错误 (lambda init-capture) | C++11 限制 | 确认 CMake 设置 `CMAKE_CXX_STANDARD=14` |
+| C++ 编译错误 (lambda init-capture) | C++ 标准过低 | 确认 CMake 设置 `CMAKE_CXX_STANDARD=14`（已完成） |
 | depthScale 不匹配 | OB=1mm/unit, AC1=5mm/unit | 检查 `NioFrame::depthScale`; fusion colormap 使用 `rawVal * scale / 1000.0` |
 
 ---
@@ -743,13 +733,13 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 
 | 阶段 | 内容 | 依赖 | 预估工作量 |
 |------|------|------|-----------|
-| **Phase 4a** | 扩展 `NioDevice`/`NioPipeline` 接口（hasIRSensor, isPointCloudDepth, getAlignMode） | Phase 3 完成 | 0.5d |
-| **Phase 4b** | 实现 `RsDevice`, `RsPipeline`, `RsContext` | Phase 4a | 2d |
-| **Phase 4c** | 实现 `RsFrameAdapter` (rsDepthToNioFrame, rsImageToNioFrame, rsImuToNioSamples) | Phase 4b | 1d |
-| **Phase 4d** | CMake 集成 + 构建验证 (C++14 升级, rs_driver subdirectory) | Phase 4c | 1d |
-| **Phase 4e** | `CaptureSession` 改用 `NioPipeline` (替换 `ob::Pipeline`); 按 pipeline 类型分发 | Phase 3 完整 + Phase 4d | 3d |
-| **Phase 4f** | `main()` 多设备发现分流 (OB + RS-AC1) | Phase 4e | 0.5d |
-| **Phase 5a** | RS-AC1 + OB 双设备功能测试 | Phase 4f | 2d |
+| **Phase 4a** | 扩展 `NioDevice`/`NioPipeline` 接口（hasIRSensor, isPointCloudDepth, getAlignMode） | Phase 3 完成 | ✅ 完成 |
+| **Phase 4b** | 实现 `RsDevice`, `RsPipeline`, `RsContext` | Phase 4a | ✅ 完成 |
+| **Phase 4c** | 实现 `RsFrameAdapter` (rsDepthToNioFrame, rsImageToNioFrame, rsImuToNioSamples) | Phase 4b | ✅ 完成 |
+| **Phase 4d** | CMake 集成 + 构建验证 (C++14 升级, rs_driver subdirectory) | Phase 4c | ✅ 完成 |
+| **Phase 4e** | `CaptureSession` 改用 `NioPipeline` (替换 `ob::Pipeline`); 按 pipeline 类型分发 | Phase 3 完整 + Phase 4d | ✅ 完成 |
+| **Phase 4f** | `main()` 多设备发现分流 (OB + RS-AC1) → `discoverDevices()` 工厂 | Phase 4e | ✅ 完成 |
+| **Phase 5a** | RS-AC1 + OB 双设备功能测试 | Phase 4f | ✅ 完成 |
 
 ---
 
@@ -757,11 +747,11 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 
 | 项目 | 状态 | 需要确认 |
 |------|------|---------|
-| RS-AC1 depthScale 精度 | 待确认 | OB 管线使用 `scale/1000.0` 得到米; AC1 使用 `distance*0.005`; 当 NioFrame 中 encoding 为 uint16 `depthScale=5.0f` 时, 后者计算为 `rawVal * 5.0f / 1000.0 = rawVal * 0.005`, 与原始 `distance = rawVal * 0.005` 一致 ✓ |
-| C++14 升级影响 | 待验证 | 当前代码库大量使用 C++11; 需在 CI 中全量构建验证 |
-| udev 规则 | 待编写 | RS-AC1 需解绑 uvcvideo; 应通过 udev rule + systemd 自动化 |
-| RS-AC1 多机并行 | 未测试 | 同一台主机上 2+ 个 AC1 需 `device_uuid`; 需实际硬件测试 |
-| rs_driver 编译为独立 .so | 当前方案 | rs_driver 大部分 header-only; 仅 `input_usb.cpp` 编译为 `librsac_usb.a`; 与 OB SDK 的 .so 共存无冲突 |
+| RS-AC1 depthScale 精度 | ✅ 已确认 | OB 管线使用 `scale/1000.0` 得到米; AC1 使用 `distance*0.005`; NioFrame 中 encoding 为 uint16 `depthScale=5.0f`, 后者计算为 `rawVal * 5.0f / 1000.0 = rawVal * 0.005`, 与原始 `distance = rawVal * 0.005` 一致 |
+| C++14 升级影响 | ✅ 已完成 | 已在根 CMakeLists.txt 升级至 C++14，构建通过 |
+| udev 规则 | ✅ 已部署 | `/etc/udev/rules.d/99-robosense-ac1.rules` |
+| RS-AC1 多机并行 | ✅ 已支持 | 同一台主机上 2+ 个 AC1 使用 `device_uuid` (USB serial) 区分 |
+| rs_driver 编译为独立 .so | ✅ 已确定 | rs_driver 编译为 `usb-ac-static` + `uvc-ac-static` 静态库, 与 OrbbecSDK .so 共存无冲突 |
 | PCD/BIN 点云保存 | 不在本方案范围 | 如需保存原始 3D 点云文件, 需额外开发; 方案 A 的 depth map 不含 intensity 和方向向量 |
 | RS-AC1 IR-Left/IR-Right | 不存在 | AC1 无独立 IR 流; IR 编码路径不应为 AC1 创建 |
 | Fusion 可视化质量 | 受限 | 96×288 上采样到 1080p 的块效应; 可考虑调整 `depthMinM`/`depthMaxM` 范围以改善 colormap 映射 |
@@ -810,20 +800,23 @@ RS-AC1 的输出文件与 OB 完全一致:
 
 | 引用 | 路径 |
 |------|------|
-| RS-AC1 USB demo | `RoboSense/rs_driver-dev_opt_AC1/demo/demo_usb.cpp` |
-| RS-AC1 decoder | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/decoder/decoder_RSAC1.hpp` |
-| RS USB input | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/input/input_usb.hpp/.cpp` |
-| RS driver param | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/driver_param.hpp` |
-| RS LidarDriver API | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/api/lidar_driver.hpp` |
-| RS ImageData | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/msg/image_data_msg.hpp` |
-| RS ImuData | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/msg/imu_data_msg.hpp` |
-| RS PointCloudMsg | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/msg/point_cloud_msg.hpp` |
-| Nio types | `examples/utils/nio_types.hpp` |
-| Nio frame | `examples/utils/nio_frame.hpp` |
-| Nio device | `examples/utils/nio_device.hpp` |
-| Nio OB device | `examples/utils/nio_ob_device.hpp/.cpp` |
-| Nio OB adapter | `examples/utils/nio_ob_adapter.hpp` |
-| Nio OB frame adapter | `examples/utils/nio_ob_frame_adapter.hpp` |
-| CaptureSession | `examples/utils/nio_capture_session.hpp/.cpp` |
-| FusionStreamTask | `examples/utils/nio_stream_tasks.hpp/.cpp` |
+| RS-AC1 USB demo | `vendors/RoboSense/demo/demo_usb.cpp` |
+| RS-AC1 decoder | `vendors/RoboSense/src/rs_driver/driver/decoder/decoder_RSAC1.hpp` |
+| RS USB input | `vendors/RoboSense/src/rs_driver/driver/input/input_usb.hpp/.cpp` |
+| RS driver param | `vendors/RoboSense/src/rs_driver/driver/driver_param.hpp` |
+| RS LidarDriver API | `vendors/RoboSense/src/rs_driver/api/lidar_driver.hpp` |
+| RS ImageData | `vendors/RoboSense/src/rs_driver/msg/image_data_msg.hpp` |
+| RS ImuData | `vendors/RoboSense/src/rs_driver/msg/imu_data_msg.hpp` |
+| RS PointCloudMsg | `vendors/RoboSense/src/rs_driver/msg/point_cloud_msg.hpp` |
+| Nio types | `app/core/nio_types.hpp` |
+| Nio frame | `app/core/nio_frame.hpp` |
+| Nio device | `app/core/nio_device.hpp` |
+| Nio OB device | `app/driver/orbbec/nio_ob_device.hpp/.cpp` |
+| Nio OB adapter | `app/driver/orbbec/nio_ob_adapter.hpp` |
+| Nio OB frame adapter | `app/driver/orbbec/nio_ob_frame_adapter.hpp` |
+| Nio RS device | `app/driver/robosense/nio_rs_device.hpp/.cpp` |
+| Nio RS frame adapter | `app/driver/robosense/nio_rs_frame_adapter.hpp` |
+| CaptureSession | `app/capture/nio_capture_session.hpp/.cpp` |
+| FusionStreamTask | `app/capture/nio_stream_tasks.hpp/.cpp` |
+| Driver factory | `app/driver/nio_driver_factory.hpp/.cpp` |
 | app 入口 | `app/nio_multi_capture/nio_multi_capture.cpp` |

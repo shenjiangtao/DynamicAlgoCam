@@ -1,440 +1,208 @@
-# Open Source Orbbec SDK
+# NIO Multi-Device Capture
 
-> [!IMPORTANT]
-> Welcome to Orbbec's latest open-source Orbbec SDK! Before you begin using this version of the SDK, it's crucial to check the [device support list](#12-supported-devices) to verify that your device is supported to ensure compatibility.
+Multi-vendor depth camera capture tool. Simultaneously records from **Orbbec** depth cameras (Gemini 305/335L/336L) and **RoboSense RS-AC1** solid-state LiDAR, encoding all streams to H.264 and raw depth/point-cloud binary files.
 
--  **LiDAR** devices are supported in **OrbbecSDK v2.6.2 and later** , For detailed instructions on using the LiDAR, please refer to the [LiDAR_README.md](LiDAR_README.md).
+## Supported Devices
 
-Here is the device support list of OrbbecSDK v1 (v1.x) and Orbbec SDK v2 (v2.x):
+| Device | VID | Sensors | Output Files |
+|---|---|---|---|
+| Orbbec Gemini 305 | `2bc5:0840` | Color, Depth, IR L+R | `.h264`, `.raw`, fusion `.h264` |
+| Orbbec Gemini 335L | `2bc5:0804` | Color, Depth, IR L+R, IMU | `.h264`, `.raw`, `.txt`, fusion `.h264` |
+| Orbbec Gemini 336L | `2bc5:0807` | Color, Depth, IR L+R, IMU | `.h264`, `.raw`, `.txt`, fusion `.h264` |
+| RoboSense RS-AC1 | `3840:1010` | Color, Depth (point cloud), Point Cloud | `.h264`, `.raw`, fusion `.h264`, `*_point_raw_*.raw` |
 
-<table border="1" style="border-collapse: collapse; text-align: left; width: 100%;">
-  <thead>
-    <tr style="background-color: #1f4e78; color: white; text-align: center;">
-      <th>Product Series</th>
-      <th>Product</th>
-      <th><a href="https://github.com/orbbec/OrbbecSDK/tree/main" style="color: black; text-decoration: none;">Orbbec SDK v1</a></th>
-      <th><a href="https://github.com/orbbec/OrbbecSDK_v2" style="color: black; text-decoration: none;">Orbbec SDK v2</a></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="text-align: center; font-weight: bold;">Gemini 305</td>
-      <td>Gemini 305</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td style="text-align: center; font-weight: bold;">Gemini 305g</td>
-      <td>Gemini 305g</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td rowspan="2" style="text-align: center; font-weight: bold;">Gemini 340</td>
-      <td>Gemini 345</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 345Lg</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-      <tr>
-      <td style="text-align: center; font-weight: bold;">Gemini 435Le</td>
-      <td>Gemini 435Le</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td rowspan="8" style="text-align: center; font-weight: bold;">Gemini 330</td>
-      <td>Gemini 335Le</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 335</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 336</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 330</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 335L</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 336L</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 330L</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 335Lg</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td rowspan="5" style="text-align: center; font-weight: bold;">Gemini 2</td>
-      <td>Gemini 2</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 2 L</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 2 XL</td>
-      <td>recommended for new designs</td>
-      <td>not supported</td>
-    </tr>
-    <tr>
-      <td>Gemini 215</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Gemini 210</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td rowspan="3" style="text-align: center; font-weight: bold;">Femto</td>
-      <td>Femto Bolt</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Femto Mega</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Femto Mega I</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td rowspan="3" style="text-align: center; font-weight: bold;">Astra</td>
-      <td>Astra 2</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Astra+</td>
-      <td>limited maintenance</td>
-      <td>not supported</td>
-    </tr>
-    <tr>
-      <td>Astra Pro Plus</td>
-      <td>limited maintenance</td>
-      <td>not supported</td>
-    </tr>
-    <tr>
-      <td rowspan="2" style="text-align: center; font-weight: bold;">Astra Mini</td>
-      <td>Astra Mini Pro</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    <tr>
-      <td>Astra Mini S Pro</td>
-      <td>full maintenance</td>
-      <td>recommended for new designs</td>
-    </tr>
-    </tr>
-        <tr>
-      <td rowspan="2" style="text-align: center; font-weight: bold;">LiDAR</td>
-      <td>Pulsar ME450</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-    <tr>
-      <td>Pulsar SL450</td>
-      <td>not supported</td>
-      <td>recommended for new designs</td>
-    </tr>
-  </tbody>
-</table>
+See [docs/device_comparison.md](docs/device_comparison.md) for detailed hardware specs, stream profiles, and output format differences.
 
-**Note**: 
-1. If you do not find your device, please contact our FAE or sales representative for help.
-2. If a device is supported by both Orbbec SDK v1 and Orbbec SDK v2, **the minimum supported firmware version may differ between the two SDKs.** Please refer to **Supported Devices** list for detailed information.
-In particular, note that the Astra Mini Pro and Astra Mini S Pro use different communication protocols in firmware v1.x.x and v2.x.x, Orbbec SDK v1 supports only v1.x.x firmware, while Orbbec SDK v2 supports only v2.x.x firmware. Upgrading from v1.x.x to v2.x.x, please refer to [Upgrading from OpenNI Protocol to UVC Protocol](https://github.com/orbbec/OrbbecSDK_v2?tab=readme-ov-file#12-upgrading-from-openni-protocol-to-uvc-protocol).
+## Architecture
 
-**Definition**:
+```
+┌─────────────────────────────────────────────────┐
+│  nio_multi_capture  (executable)                │
+├─────────────────────────────────────────────────┤
+│  nio_capture         (capture logic + encoding) │
+├─────────────────────────────────────────────────┤
+│  nio_drivers         (vendor SDK adapters)       │
+├─────────────────────────────────────────────────┤
+│  nio_core            (SDK-neutral types)        │
+└─────────────────────────────────────────────────┘
+  + nio_opencv_plugin (optional, if OpenCV found)
+```
 
-1. recommended for new designs: we will provide full supports with new features,  bug fix and performance optimization;
-2. full maintenance: we will provide bug fix support;
-3. limited maintenance: we will provide critical bug fix support;
-4. not supported: we will not support specific device in this version;
-5. to be supported: we will add support in the near future.
+Vendor SDK headers (`libobsensor/`, `rs_driver/`) are **only** allowed in `app/driver/`. All other layers are SDK-agnostic, communicating through abstract `NioDevice` / `NioPipeline` / `NioContext` interfaces.
 
+## Build
 
-## 1. Introduction
+### Prerequisites
 
+| Dependency | Required | Source |
+|---|---|---|
+| CMake >= 3.10 | Yes | System package |
+| C++14 compiler | Yes | GCC / Clang |
+| FFmpeg (libavcodec, libavutil, libswscale, libavformat, libswresample) | Yes | pkg-config |
+| SDL2 | Yes | pkg-config |
+| pthreads | Yes | System |
+| OpenCV | No | Optional — enables `nio_opencv_plugin` |
 
-This is the open-source library of Orbbec SDK v2.x.
-The Orbbec SDK is a cross-platform library for interfacing with Orbbec RGB-D cameras, providing C/C++ APIs as well as [wrappers](wrappers/README.md) for various other languages and frameworks.
+### Vendor SDK Options
 
-<div align=center>
-<img src="docs/resource/Overview.jpg" width="400" align="center" />
-</div>
+Options are declared in the **root** `CMakeLists.txt`. At least one must be ON.
 
-### 1.1 Migration from Orbbec SDK v1 to Open-Source Orbbec SDK v2
-To enhance performance and meet the diverse needs of our customers, the Orbbec SDK has been open-sourced since version 2.0.0.
+| CMake Option | Default | Effect |
+|---|---|---|
+| `ENABLE_ORBBEC` | ON | Build OrbbecSDK adapter, link `ob::OrbbecSDK` |
+| `ENABLE_RS_AC1` | ON | Build rs_driver adapter, link `usb-ac-static` / `uvc-ac-static` |
 
-#### Upgrade Recommendation
-
-For projects currently utilizing version Orbbec SDK v1.x that are considering an upgrade to Orbbec SDK v2.x, we advise using the pre-compiled binaries available in the [Release](https://github.com/orbbec/OrbbecSDK_v2/releases) page. This ensures a seamless transition and maintains consistency with your existing setup.
-
-#### API Compatibility
-We have made every effort to maintain backward compatibility with the previous API. However, in pursuit of higher performance and an improved user experience, several updates have been introduced. Some interfaces were modified or removed due to infrequent use or design limitations. These adjustments were made carefully to minimize disruption and do not affect the SDK’s standard functionality.
-
-#### Migration Resources
-
-- Migration guidance: [orbbecsdkv1_to_openorbbecsdkv2.md](docs/tutorial/orbbecsdkv1_to_openorbbecsdkv2.md)
-- Comprehensive API Changes Overview: [api_changes_at_v2.x.x.md](docs/api/api_changes_at_v2.x.x.md)
-
-#### Continued using for Orbbec SDK v1.x
-
-If you wish to continue using Orbbec SDK v1.x, the pre-compiled binaries remain available in our [OrbbecSDK v1](https://github.com/orbbec/OrbbecSDK) repository.
-Nonetheless, we strongly encourage migration to Orbbec SDK v2.x, which offers enhanced features, better performance, and ongoing support.
-Our commitment to SDK v2.x reflects Orbbec’s long-term strategy to provide robust support, foster an open-source community, and drive continuous innovation.
-
-### 1.2 Upgrading from OpenNI Protocol to UVC Protocol
-
-#### Timeline and Scope
-Starting from October 2025 (Orbbec SDK v2.5.5), we will begin upgrading devices that use the OpenNI protocol to the UVC protocol, enabling full compatibility with Orbbec SDK v2.
-
-Already upgraded devices and future upgrade schedule：
-
-| **Already Upgraded Devices** | **Future Upgrade Schedule** |
-|---|---|
-| • Astra Mini S Pro<br>• Astra Mini Pro | • Gemini E, Gemini UW, Gemini EW<br>• DaBai Max, DaBai Max Pro<br>• DaBai DW, DaBai DCW, DaBai DCW2, DaBai DW2 |
-
-#### OpenNI-to-UVC Firmware Upgrade Tool
-Orbbec provides a dedicated [firmware upgrade tool](https://github.com/orbbec/OrbbecFirmware) that enables devices to switch from the OpenNI protocol to the UVC protocol.
-Please select the firmware download link for your device type and follow the corresponding upgrade guide to update the firmware.
-
-
-#### Upgrade Instructions
-If you are currently using the OpenNI SDK, please refer to the [How to Upgrade OpenNI Protocol Devices to UVC Protocol and API Usage Guide](docs/tutorial/opennisdk_to_orbbecsdkv2.md) for detailed instructions on switching to Orbbec SDK v2 after updating your device firmware.
-After upgrading to the UVC protocol, these devices will have a firmware major version number of 2 (for example: v2.x.xx).
-
-
-#### Important Notes
-- Firmware version v2.x.x (major version 2) indicates a UVC protocol device, which requires Orbbec SDK v2.
-- Firmware version v1.x.x (major version 1) indicates an OpenNI protocol device, which requires either the OpenNI SDK or Orbbec SDK v1.
-
-
-### 1.3 Supported Platforms
-
-- Windows 10 or later: x86 and x64 architectures
-- Linux x64: tested on Ubuntu 20.04, 22.04 and 24.04
-- Linux ARM64: tested on  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX, NVIDIA Jetson Thor
-- [Android](https://github.com/orbbec/OrbbecSDK-Android-Wrapper/tree/v2-main): tested on Android 13
-- macOS: tested on M2 chip, OS version 13.2
-
-### 1.4 Supported Devices
-
-| **Products List** | **Minimal Firmware Version** | **Recommended Firmware Version**    |
-|-------------------|------------------------------|-------------------------------|
-| Gemini 305        | 1.0.30                     |        1.0.70                   |
-| Gemini 305g        | 1.0.70                     |        1.0.70                   |
-| Gemini 345        | 1.7.04                     |        1.9.03                   |
-| Gemini 345Lg        | 1.7.04                     |        1.9.03                   |
-| Gemini 435Le        | 1.2.4                     |        1.3.6                   |
-| Gemini 335Le        | 1.5.31                     |        1.6.00                     |
-| Gemini 330        | 1.2.20                       |        1.6.00                       |
-| Gemini 330L       | 1.2.20                       |       1.6.00                      |
-| Gemini 335        | 1.2.20                       |       1.6.00                        |
-| Gemini 335L       | 1.2.20                       |        1.6.00                       |
-| Gemini 336        | 1.2.20                       |       1.6.00                        |
-| Gemini 336L       | 1.2.20                       |        1.6.00                       |
-| Gemini 335Lg      | 1.3.46                       |        1.6.00                       |
-| Femto Bolt        | 1.1.2                  |              1.1.3                       |
-| Femto Mega        | 1.3.0                  |              1.3.1                       |
-| Femto Mega I        | 2.0.4                  |            2.0.4                     |
-| Astra 2           | 2.8.20                       |         2.8.20                      |
-| Gemini 2 L        | 1.4.53                       |        1.5.2                       |
-| Gemini 2          | 1.4.92               |                1.4.98                       |
-| Gemini 215        | 1.0.9                        |        1.0.9                      |
-| Gemini 210        | 1.0.9                        |        1.0.9                      |
-| Astra mini Pro        | 2.0.03                        |        2.0.03                        |
-| Astra mini S Pro        | 2.0.03                        |        2.0.03                        |
-| Pulsar SL450      | 2.2.4.5                      | 2.2.4.5                          |
-| Pulsar ME450      | 1.0.0.6                      | 1.0.0.6                          |
-
-
-For optimal performance, we strongly recommend updating to the latest firmware version. This ensures that you benefit from the most recent enhancements and bug fixes.
-
-More devices support will be added in the near future. If you can not find your device in the table above currently, try the version v1.x.y at [Orbbec SDK v1](https://github.com/orbbec/OrbbecSDK)
-
-## 2. Documentation
-
-*The Orbbec SDK documentation is available on [GitHub Pages](https://orbbec.github.io/OrbbecSDK_v2/).*
-
-### 2.1 Environment Setup
-
-#### windows
-
-For windows, you need to register the metadata associated with frames (this includes things like timestamps and other information about the video frame).
-
-- Metadata registration follow this:[/scripts/env_setup/obsensor_metadata_win10.md](scripts/env_setup/obsensor_metadata_win10.md)
-
-*Notes: If the metadata is not registered, the device timestamp will be abnormal, thereby affecting the SDK’s internal frame synchronization functionality.*
-
-#### Linux
-
-For Linux, we have provided a script to help you set up the environment. You can run the script as follows:
+### Build Steps
 
 ```bash
-cd scripts/env_setup
-  sudo chmod +x ./install_udev_rules.sh
-  sudo ./install_udev_rules.sh
-  sudo udevadm control --reload && sudo udevadm trigger
+mkdir -p build && cd build
+
+# Default: both vendors enabled
+cmake ..
+
+# Orbbec only
+cmake .. -DENABLE_RS_AC1=OFF
+
+# RS-AC1 only
+cmake .. -DENABLE_ORBBEC=OFF
+
+cmake --build . -j$(nproc)
 ```
 
-*Notes: If this script is not executed, open the device will fail due to permission issues. You need to run the sample with sudo (administrator privileges).*
+The executable is `build/nio_multi_capture`. Install with `cmake --install .` (installs to `bin/`).
 
+### Runtime Library Path
 
-### 2.2 How to Use install package
-If you do not want to compile the Orbbec SDK, you can use the SDK installation package. First [download the corresponding installation package](https://github.com/orbbec/OrbbecSDK_v2/releases) for your platform.
-
-1. The file `OrbbecSDK_vx.x.x_win64.exe` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Windows.
-2. The file `OrbbecSDK_vx.x.x_amd64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Linux x86_64, likes ubuntu.
-3. The file `OrbbecSDK_vx.x.x_arm64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on ARM64，likes  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX.
-
-#### Linux Install via .deb Package
-- On the Linux x64 (ubuntu) platform, install using the following command. (If you are using the Arm64 platform, please use `OrbbecSDK_vx.x.x_arm64.deb`)
-~~~
-sudo dpkg -i OrbbecSDK_v2.x.x_amd64.deb
-~~~
-
-- Check the entire package path of the Orbbec SDK using dpkg -L orbbecsdk, while the header files and library files of the Orbbec SDK will be installed in the /usr/local path.
-~~~
-dpkg -L orbbecsdk
-~~~
-
-- Run the Orbbec Viewer.
-~~~
-sudo ./OrbbecViewer
-~~~
-
-#### Windows Install via .exe Package
-On the windows platform, Double-click OrbbecSDK_vx.x.x_win64.exe directly to install, After installation is complete, run OrbbecViewer or the Orbbec SDK from the installation directory.
-
-### 2.3 Quick Start
-
-If you do not intend to modify the SDK itself, it is recommended to use a [pre-compiled distribution](https://github.com/orbbec/OrbbecSDK_v2/releases). For a comprehensive guide on installing the SDK, setting up your development environment, and developing applications, please consult the [Tutorial](docs/tutorial/installation_and_development_guide.md) section for detailed information.
-
-To explore practical examples and gain insights on utilizing the SDK, please navigate to [Examples](examples/README.md) section for more information.
-
-Orbbec Viewer is an all-in-one graphical user interface (GUI) built on the Orbbec SDK, offering a suite of features including data stream preview, camera configuration, post-processing, and more. To learn how to effectively use the Orbbec Viewer, please refer to the  [Orbbec Viewer User Guide](docs/tutorial/orbbecviewer.md).
-
-### 2.4 API Reference
-
-[Orbbec SDK v2 API User Guide](https://orbbec.github.io/docs/OrbbecSDKv2_API_User_Guide/), this document provides an overview of key features in the Orbbec SDK v2 and demonstrates how to use its most commonly used APIs. For more detailed APIs, please refer to [Orbbec SDK v2 API Reference](https://orbbec.github.io/docs/OrbbecSDKv2/index.html)
-
-### 2.5 Camera Parameters and Value Ranges
-
-For common depth, IR, and color camera parameters and their value ranges, refer to [orbbec_camera_params.html](https://orbbec.github.io/OrbbecSDK_v2/docs/tutorial/orbbec_camera_params.html)
-
-### 2.6 Camera Distortion
-
-For each device's Original depth and color distortions, as well as depth distortion after D2C, color distortion after C2C, and point cloud distortion, refer to [orbbec_camera_distortion.md](docs/tutorial/orbbec_camera_distortion.md).
-
-
-### 2.7 Performance tuning
-
-For different use cases, the SDK can be tuned to achieve optimal performance. Please refer to the [performance tuning guide](docs/tutorial/performance_tuning.md) for more information.
-
-### 2.8 Building from Source
-
-If you would like to modify the SDK itself, you can build the SDK from source. Please refer to the [build guide](docs/tutorial/building_orbbec_sdk.md) for more information.
-
-### 2.9 FAQ
-
-Most frequently asked questions can be found in the [FAQ](docs/FAQ.md) file.
-
-More asked and answered questions can be found in the [issues](https://github.com/orbbec/OrbbecSDK_v2/issues) channel. Use key words for searching may help you find the answer you are looking for.
-
-## 3. Gallery
-
-### 3.1 The QuickStart Example
-
-```c++
-// Create a pipeline.
-ob::Pipeline pipe;
-
-// Start the pipeline with default config.
-pipe.start();
-
-// Create a window for showing the frames, and set the size of the window.
-ob_smpl::CVWindow win("QuickStart", 1280, 720, ob_smpl::ARRANGE_ONE_ROW);
-
-while(win.run()) {
-    // Wait for frameSet from the pipeline, the default timeout is 1000ms.
-    auto frameSet = pipe.waitForFrameset();
-
-    // Push the frames to the window for showing.
-    win.pushFramesToView(frameSet);
-}
-
-// Stop the Pipeline, no frame data will be generated
-pipe.stop();
+OrbbecSDK ships `libOrbbecSDK.so`. Either install it to a system path or set:
+```bash
+export LD_LIBRARY_PATH=/path/to/orbbeccamera/build/linux_x86_64/lib:$LD_LIBRARY_PATH
 ```
 
-![QuickStart Example](docs/resource/QuickStart.jpg)
+RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_driver.
 
-### 3.2 The Orbbec Viewer
+## Usage
 
-![Orbbec Viewer](docs/resource/OrbbecViewer.jpg)
-- Notes
+```bash
+# Record all connected devices
+./nio_multi_capture
 
-If the Orbbec Viewer is used under Linux OS and is used for updating any camera firmware, users may encounter the issue that the firmware file selection window is not poping up. Users are unable to proceed with the firmware update work flow and are unable to update the camera firmware.
+# Filter by device name substring
+./nio_multi_capture -c "305" "336L"
 
-- Solution:
-1. Exit the Orbbec Viewer under Linux OS .
-2. Run the following command as root in a terminal for installing the necessary tool Zenity.
+# Custom save directory
+./nio_multi_capture -s /HDD/nio_capture
+
+# Adjust D2C fusion parameters
+./nio_multi_capture --alpha 0.7 --depth-min 0.2 --depth-max 3.0
+
+# Headless (no SDL window)
+./nio_multi_capture --no-show
+
+# Disable D2C fusion output
+./nio_multi_capture --no-fusion
 ```
-sudo apt-get install zenity
+
+### CLI Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `-c <name...>` | All devices | Filter by device name substring |
+| `-s <dir>` | `capture_output/` | Save directory |
+| `--alpha VAL` | 0.5 | Depth overlay opacity (0=raw color, 1=raw depth colorized) |
+| `--depth-min M` | 0.3 | Min depth for jet colormap (meters) |
+| `--depth-max M` | 5.0 | Max depth for jet colormap (meters) |
+| `--no-fusion` | off | Skip D2C fusion output |
+| `--no-show` | off | Disable SDL preview window |
+| `--help` | — | Show help |
+
+### Output Structure
+
+```
+<saveDir>/<sessionTimestamp>/<deviceName>/
+├── <name>_color_<ts>.h264
+├── <name>_depth_<ts>.h264
+├── <name>_depth_raw_<ts>.raw
+├── <name>_ir_left_<ts>.h264     (Orbbec only)
+├── <name>_ir_right_<ts>.h264    (Orbbec only)
+├── <name>_imu_<ts>.txt          (if device has IMU)
+├── <name>_d2c_fused_<ts>.h264   (if fusion enabled)
+└── <name>_point_raw_<ts>.raw    (RS-AC1 only)
 ```
 
-3. Start the Orbbec Viewer under Linux OS and proceed with the firmware update work flow.
+### Stopping
 
-### 3.3 DepthQualityTool
-[Depth Quality Tool](https://github.com/orbbec/OrbbecTools/releases/tag/DepthQualityTool) enables users to evaluate the camera’s depth quality across key metrics: Depth Accuracy, Spatial Precision, Temporal Precision, and Fill Rate.
-Users can easily view and interpret these metrics in real time or record the data for offline analysis.
+`Ctrl+C` or `SIGTERM` triggers graceful shutdown: stop SDK pipelines → flush encoders → close files.
 
+## Pre-Capture Setup
 
-## 4. Contributing
+### USB Buffer (Required for Multi-Device)
 
-At present, we are focusing our efforts on the internal development of the SDK and are not accepting external contributions for functionality expansion. However, we value your input and are open to reviewing any pull requests or suggestions you might have.
+```bash
+# Check current value
+cat /sys/module/usbcore/parameters/usbfs_memory_mb
 
-Should you have any questions or concerns, please feel free to reach out to us through the [issues](https://github.com/orbbec/OrbbecSDK_v2/issues) channel.
+# Set to 256 MB (temporary)
+echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 
-## 5. License
+# Permanent
+echo "options usbcore usbfs_memory_mb=256" | sudo tee /etc/modprobe.d/usbcore.conf
+```
 
-This project is licensed under the MIT License with some other licenses for third-party libraries and extensions - see the [LICENSE](LICENSE.txt) file for details.
+### udev Rules (Orbbec)
 
-## 6. Links
+```bash
+sudo cp vendors/OrbbecSDK/scripts/99-obsensor-usb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
 
-- [Orbbec SDK V2.x Open Source Library](https://github.com/orbbec/OrbbecSDK_v2)
-- [Orbbec SDK V1.x Pre-Compiled Library](https://github.com/orbbec/OrbbecSDK)
-- [Orbbec Company Main Page](https://www.orbbec.com/)
-- [Orbbec 3D Club](https://3dclub.orbbec3d.com)
+### RS-AC1 USB Unbind (Required)
+
+RS-AC1 uses a custom libuvc. The kernel `uvcvideo` driver must be unbound:
+
+```bash
+# Find device
+lsusb | grep 3840:1010
+
+# Unbind (replace with actual bus/device path)
+echo '1-5' | sudo tee /sys/bus/usb/drivers/uvcvideo/unbind 2>/dev/null || true
+```
+
+## Post-Processing Tools
+
+```bash
+# Depth raw parser
+python3 app/tools/parse_depth_raw.py <file.raw> --stats
+python3 app/tools/parse_depth_raw.py <file.raw> --output vis --all
+
+# Point cloud raw parser (RS-AC1)
+python3 app/tools/parse_point_raw.py <file.raw> --info
+python3 app/tools/parse_point_raw.py <file.raw> --frame 0
+
+# H.264 playback
+ffplay -f h264 <file>.h264
+
+# Wrap H.264 into MP4
+ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
+```
+
+## Documentation
+
+| Document | Content |
+|---|---|
+| [docs/device_comparison.md](docs/device_comparison.md) | Hardware specs, stream profiles, output format differences per device |
+| [docs/VENDOR_DEVICE_PORTING_MANUAL.md](docs/VENDOR_DEVICE_PORTING_MANUAL.md) | How to add a new vendor device adapter |
+| [docs/nio_multi_capture/use_guide.md](docs/nio_multi_capture/use_guide.md) | Detailed usage guide (Chinese) |
+| [docs/nio_multi_capture/troubleshooting.md](docs/nio_multi_capture/troubleshooting.md) | Troubleshooting reference |
+| [docs/nio_multi_capture/nio_multi_capture_technical_reference.md](docs/nio_multi_capture/nio_multi_capture_technical_reference.md) | Technical reference (architecture, algorithms, data formats) |
+
+## Packaging
+
+```bash
+./scripts/package.sh [--output DIR] [--skip-libs]
+```
+
+Creates a self-contained tar.gz with the binary, SDK libraries, udev rules, and launcher scripts.
+
+## License
+
+MIT License. See vendor SDKs under `vendors/` for their respective licenses.

@@ -347,13 +347,28 @@ std::vector<DiscoveredDevice> discoverDevices() {
 }
 ```
 
-### Phase 6: Update CMake (app/driver/CMakeLists.txt)
+### Phase 6: Update CMake
+
+**`option()` declarations go in the root `CMakeLists.txt`**, not in `app/driver/CMakeLists.txt`.
+The `add_subdirectory(vendors/XYZ)` call and its cache variable setup also go in root `CMakeLists.txt`,
+gated by `if(ENABLE_XYZ)`. See the existing `ENABLE_ORBBEC` / `ENABLE_RS_AC1` blocks for reference.
+
+In `app/driver/CMakeLists.txt`, add a new `if(ENABLE_XYZ)` block for source files, include paths,
+compile definitions, and link libraries (following the existing Orbbec/RoboSense pattern):
 
 Add a new `if(ENABLE_XYZ)` block following the existing pattern:
 
 ```cmake
+# Root CMakeLists.txt — option declaration + vendor subdirectory
 option(ENABLE_XYZ "Enable XYZ device support" OFF)
 
+if(ENABLE_XYZ)
+    set(XYZ_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendors/XYZ" CACHE PATH "" FORCE)
+    # ... vendor-specific cache variables ...
+    add_subdirectory(vendors/XYZ)
+endif()
+
+# app/driver/CMakeLists.txt — source, includes, definitions, links
 if(ENABLE_XYZ)
     target_include_directories(nio_drivers PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -381,7 +396,9 @@ if(ENABLE_XYZ)
 endif()
 ```
 
-Also add the `option()` declaration in `app/CMakeLists.txt`.
+Also ensure the driver factory source (`nio_driver_factory.hpp/.cpp`) is included
+when **any** vendor is enabled (it sits in the shared `if(ENABLE_ORBBEC OR ENABLE_RS_AC1)` block;
+extend the condition to `if(ENABLE_ORBBEC OR ENABLE_RS_AC1 OR ENABLE_XYZ)`).
 
 ---
 
@@ -446,3 +463,4 @@ VideoFrameQueue (bounded SPSC, capacity 8)
 3. **Device property IDs** (`getIntProperty(int)`) pass raw vendor property IDs. Should be abstracted to `NioPropertyID` enum if more vendors need it.
 4. **Point cloud depth** (`isPointCloudDepth() == true`) is currently only used by RS-AC1. The 96×288 synthetic depth map is vendor-specific. A future depth abstraction may be needed for vendors with different point cloud layouts.
 5. **`app/core/utils_c.h` and `utils_c.c`** contain C API functions (timestamp, key press). They are SDK-agnostic. The former `NIO_DEVICE_VID 0x2bc5` and Orbbec vid/pid device-type checks have been moved to `app/driver/orbbec/nio_ob_adapter.hpp` as `OB_DEVICE_VID`, `isGemini305Device()`, `isGemini305gDevice()`, `isAstraMiniDevice()`.
+6. **FATAL_ERROR guard**: root `CMakeLists.txt` requires at least one `ENABLE_*` option to be ON. When adding a new vendor option, update the guard condition from `if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)` to also include the new option.

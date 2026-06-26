@@ -198,7 +198,7 @@ Parse with: `python3 app/tools/parse_point_raw.py <file.raw> [--frame N|--all|--
 | **udev rule** | Orbbec SDK includes one | `SUBSYSTEM=="usb", ATTR{idVendor}=="3840", ATTR{idProduct}=="1010", MODE="0666"` at `/etc/udev/rules.d/99-robosense-ac1.rules` |
 | **SDK libs** | `libOrbbecSDK.so` | `librsac_usb.so` + `libuvc.so` + `libusb-1.0.so` |
 | **Compile flags** | — | `-DENABLE_RS_AC1 -DENABLE_USB -DENABLE_IMU_PARSE -DENABLE_IMAGE_PARSE` |
-| **CMake** | Default | `ENABLE_RS_AC1=ON` (default ON) |
+| **CMake** | `ENABLE_ORBBEC=ON` (root CMakeLists.txt) | `ENABLE_RS_AC1=ON` (root CMakeLists.txt, default ON) |
 | **Device serial** | Read by OrbbecSDK | USB string descriptor `iSerialNumber` (e.g. `1111bfa90090`) |
 
 ### AC1 USB Unbind (required before capture)
