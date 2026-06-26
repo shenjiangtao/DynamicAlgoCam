@@ -39,7 +39,7 @@ H264Encoder::H264Encoder()
 , srcFormat_(NioFormat::UNKNOWN)
 , initialized_(false)
 , seiWritten_(false)
-, seiUuid_("nio@orbbec-fusio")
+, seiUuid_("jiangtao.shen@ad")
 , mjpgCodec_(nullptr)
 , mjpgDecFmt_(AV_PIX_FMT_NONE)
 , mjpgSwsInitialized_(false)
@@ -208,7 +208,7 @@ void H264Encoder::initMjpgDecoder(int width, int height) {
 // init：主入口 — 根据NioFormat创建编码器 + sws转换上下文
 bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int bitRate, const char* seiUuid) {
     srcFormat_ = srcFormat;
-    seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
+    seiUuid_ = seiUuid ? seiUuid : "jiangtao.shen@ad";
 
     if (!initEncoder(width, height, fps, bitRate))
         return false;
@@ -249,7 +249,7 @@ bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int 
 // --- initRGB / initBGR: convenience wrappers for RGB/BGR-only encoding ---
 bool H264Encoder::initRGB(int width, int height, int fps, int bitRate, const char* seiUuid) {
     srcFormat_ = NioFormat::RGB;
-    seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
+    seiUuid_ = seiUuid ? seiUuid : "jiangtao.shen@ad";
 
     if (!initEncoder(width, height, fps, bitRate))
         return false;
@@ -262,7 +262,7 @@ bool H264Encoder::initRGB(int width, int height, int fps, int bitRate, const cha
 
 bool H264Encoder::initBGR(int width, int height, int fps, int bitRate, const char* seiUuid) {
     srcFormat_ = NioFormat::BGR;
-    seiUuid_ = seiUuid ? seiUuid : "nio@orbbec-fusio";
+    seiUuid_ = seiUuid ? seiUuid : "jiangtao.shen@ad";
 
     if (!initEncoder(width, height, fps, bitRate))
         return false;

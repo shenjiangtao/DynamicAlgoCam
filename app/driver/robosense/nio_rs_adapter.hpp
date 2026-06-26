@@ -8,8 +8,8 @@
 
 #pragma once
 
-#include "nio_types.hpp"
 #include "nio_frame.hpp"
+#include "nio_types.hpp"
 
 #include <rs_driver/msg/image_data_msg.hpp>
 #include <rs_driver/msg/imu_data_msg.hpp>
@@ -19,11 +19,16 @@ namespace nio {
 inline NioFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
-    case F::FRAME_FORMAT_NV12:   return NioFormat::NV12;
-    case F::FRAME_FORMAT_BGR24:  return NioFormat::BGR;
-    case F::FRAME_FORMAT_RGB24:  return NioFormat::RGB;
-    case F::FRAME_FORMAT_YUV422: return NioFormat::YUYV;
-    default:                     return NioFormat::UNKNOWN;
+    case F::FRAME_FORMAT_NV12:
+        return NioFormat::NV12;
+    case F::FRAME_FORMAT_BGR24:
+        return NioFormat::BGR;
+    case F::FRAME_FORMAT_RGB24:
+        return NioFormat::RGB;
+    case F::FRAME_FORMAT_YUV422:
+        return NioFormat::YUYV;
+    default:
+        return NioFormat::UNKNOWN;
     }
 }
 
@@ -31,11 +36,16 @@ inline NioFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
 inline robosense::lidar::frame_format_t nioFormatToRsFrameFormat(NioFormat fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
-    case NioFormat::NV12:   return F::FRAME_FORMAT_NV12;
-    case NioFormat::BGR:    return F::FRAME_FORMAT_BGR24;
-    case NioFormat::RGB:    return F::FRAME_FORMAT_RGB24;
-    case NioFormat::YUYV:   return F::FRAME_FORMAT_YUV422;
-    default:                return F::FRAME_FORMAT_NV12;
+    case NioFormat::NV12:
+        return F::FRAME_FORMAT_NV12;
+    case NioFormat::BGR:
+        return F::FRAME_FORMAT_BGR24;
+    case NioFormat::RGB:
+        return F::FRAME_FORMAT_RGB24;
+    case NioFormat::YUYV:
+        return F::FRAME_FORMAT_YUV422;
+    default:
+        return F::FRAME_FORMAT_NV12;
     }
 }
 

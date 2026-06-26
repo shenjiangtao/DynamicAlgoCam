@@ -5,14 +5,15 @@
 
 #pragma once
 
+#include <getopt.h>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <getopt.h>
 
 namespace nio {
 
-struct CaptureConfig {
+struct CaptureConfig
+{
     std::vector<std::string> cameraFilter;
     std::string saveDir;
     float alpha = 0.5f;
@@ -23,7 +24,7 @@ struct CaptureConfig {
     bool noShow = false;
 };
 
-inline void printUsage(const char *prog) {
+inline void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options] [camera_name_filter...]\n"
               << "\nOptions:\n"
               << "  -c <name...>  Camera type filter (can specify multiple, e.g. -c \"305\" \"336L\")\n"
@@ -42,17 +43,15 @@ inline void printUsage(const char *prog) {
               << std::endl;
 }
 
-inline CaptureConfig parseArgs(int argc, char **argv) {
+inline CaptureConfig parseArgs(int argc, char** argv) {
     CaptureConfig cfg;
-    static struct option longOpts[] = {
-        {"alpha", required_argument, nullptr, 'a'},
-        {"depth-min", required_argument, nullptr, 'm'},
-        {"depth-max", required_argument, nullptr, 'x'},
-        {"no-fusion", no_argument, nullptr, 'n'},
-        {"no-show", no_argument, nullptr, 'S'},
-        {"help", no_argument, nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}
-    };
+    static struct option longOpts[] = { { "alpha", required_argument, nullptr, 'a' },
+                                        { "depth-min", required_argument, nullptr, 'm' },
+                                        { "depth-max", required_argument, nullptr, 'x' },
+                                        { "no-fusion", no_argument, nullptr, 'n' },
+                                        { "no-show", no_argument, nullptr, 'S' },
+                                        { "help", no_argument, nullptr, 'h' },
+                                        { nullptr, 0, nullptr, 0 } };
 
     opterr = 0;
     int ch;

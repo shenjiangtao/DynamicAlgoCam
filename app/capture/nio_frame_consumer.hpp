@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include "nio_frame.hpp"
 #include "nio_color_convert.hpp"
+#include "nio_frame.hpp"
 #include "nio_sdl_viewer.hpp"
 #include "nio_stream_io.hpp"
 #include "nio_stream_tasks.hpp"
@@ -26,7 +26,8 @@ namespace nio {
 // consumer thread. Each subclass handles encode, viewer push, and frame
 // counting for one sensor type (color / depth / IR variants).
 
-class FrameConsumer {
+class FrameConsumer
+{
 public:
     virtual ~FrameConsumer() = default;
 
@@ -35,26 +36,26 @@ public:
     virtual void consume(std::shared_ptr<NioFrameSet> frameSet) = 0;
 
     // Late-bind the viewer pointer and device slot index.
-    virtual void setViewer(SDLViewer *viewer, int viewerIdx) = 0;
+    virtual void setViewer(SDLViewer* viewer, int viewerIdx) = 0;
 
     // Stop the underlying StreamTask worker thread(s).
     virtual void stopTask() = 0;
 };
 
 // ColorFrameConsumer: handles COLOR frames — H264 encode + viewer display + count.
-class ColorFrameConsumer : public FrameConsumer {
+class ColorFrameConsumer : public FrameConsumer
+{
 public:
-    ColorFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask,
-                       SDLViewer *viewer, int viewerIdx, ViewerChannel channel,
-                       std::shared_ptr<SensorFiles> sensorFiles);
+    ColorFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask, SDLViewer* viewer, int viewerIdx,
+                       ViewerChannel channel, std::shared_ptr<SensorFiles> sensorFiles);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
-    void setViewer(SDLViewer *viewer, int viewerIdx) override;
+    void setViewer(SDLViewer* viewer, int viewerIdx) override;
     void stopTask() override;
 
 private:
     std::shared_ptr<EncodeStreamTask> encodeTask_;
-    SDLViewer *viewer_;
+    SDLViewer* viewer_;
     int viewerIdx_;
     ViewerChannel channel_;
     std::shared_ptr<SensorFiles> sensorFiles_;
@@ -62,23 +63,22 @@ private:
 
 // DepthFrameConsumer: handles DEPTH frames — H264 encode + Y16 raw write +
 // viewer display (with depthScale/depthRange colormap) + count.
-class DepthFrameConsumer : public FrameConsumer {
+class DepthFrameConsumer : public FrameConsumer
+{
 public:
-    DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask,
-                       std::shared_ptr<DepthRawTask> rawTask,
-                       SDLViewer *viewer, int viewerIdx, ViewerChannel channel,
-                       std::shared_ptr<SensorFiles> sensorFiles,
-                       float depthScale, float depthMinM, float depthMaxM,
+    DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask, std::shared_ptr<DepthRawTask> rawTask,
+                       SDLViewer* viewer, int viewerIdx, ViewerChannel channel,
+                       std::shared_ptr<SensorFiles> sensorFiles, float depthScale, float depthMinM, float depthMaxM,
                        int depthW, int depthH);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
-    void setViewer(SDLViewer *viewer, int viewerIdx) override;
+    void setViewer(SDLViewer* viewer, int viewerIdx) override;
     void stopTask() override;
 
 private:
     std::shared_ptr<EncodeStreamTask> encodeTask_;
     std::shared_ptr<DepthRawTask> rawTask_;
-    SDLViewer *viewer_;
+    SDLViewer* viewer_;
     int viewerIdx_;
     ViewerChannel channel_;
     std::shared_ptr<SensorFiles> sensorFiles_;
@@ -92,37 +92,37 @@ private:
 
 // IRFrameConsumer: handles IR / IR-LEFT / IR-RIGHT frames — H264 encode +
 // viewer display + count. Shared by all three IR variants via frameType_/channel_ params.
-class IRFrameConsumer : public FrameConsumer {
+class IRFrameConsumer : public FrameConsumer
+{
 public:
-    IRFrameConsumer(NioFrameType frameType, std::shared_ptr<EncodeStreamTask> encodeTask,
-                    SDLViewer *viewer, int viewerIdx, ViewerChannel channel,
-                    std::shared_ptr<SensorFiles> sensorFiles);
+    IRFrameConsumer(NioFrameType frameType, std::shared_ptr<EncodeStreamTask> encodeTask, SDLViewer* viewer,
+                    int viewerIdx, ViewerChannel channel, std::shared_ptr<SensorFiles> sensorFiles);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
-    void setViewer(SDLViewer *viewer, int viewerIdx) override;
+    void setViewer(SDLViewer* viewer, int viewerIdx) override;
     void stopTask() override;
 
 private:
     NioFrameType frameType_;
     std::shared_ptr<EncodeStreamTask> encodeTask_;
-    SDLViewer *viewer_;
+    SDLViewer* viewer_;
     int viewerIdx_;
     ViewerChannel channel_;
     std::shared_ptr<SensorFiles> sensorFiles_;
 };
 
-class PointcloudFrameConsumer : public FrameConsumer {
+class PointcloudFrameConsumer : public FrameConsumer
+{
 public:
-    PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask,
-                            std::shared_ptr<SensorFiles> sensorFiles);
+    PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask, std::shared_ptr<SensorFiles> sensorFiles);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
-    void setViewer(SDLViewer *viewer, int viewerIdx) override;
+    void setViewer(SDLViewer* viewer, int viewerIdx) override;
     void stopTask() override;
 
 private:
     std::shared_ptr<PcdStreamTask> pcdTask_;
-    SDLViewer *viewer_ = nullptr;
+    SDLViewer* viewer_ = nullptr;
     int viewerIdx_ = -1;
     std::shared_ptr<SensorFiles> sensorFiles_;
 };

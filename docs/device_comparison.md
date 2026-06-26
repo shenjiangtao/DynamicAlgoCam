@@ -57,7 +57,7 @@
 | **Max Range** | ~5 m | ~5 m | ~5 m | **200 m** |
 | **Depth File** | `*_depth_raw_*.raw` + `*_depth_*.h264` | Same | Same | `*_depth_raw_*.raw` + `*_depth_*.h264` + `*_point_raw_*.raw` |
 
-- OB depth raw: `ORBBEC_DEPTH_RAW` binary container, 2 bytes/pixel.
+- OB depth raw: `NIO_DEPTH_RAW` binary container, 2 bytes/pixel.
 - AC1 depth raw: Same container format, but pixels are organized as 96×288 grid from lidar points.
 - AC1 additionally outputs `*_point_raw_*.raw`: `NIO_POINT_CLOUD_RAW` binary with 26B/point (float xyz + float intensity + uint16 ring + double timestamp).
 - OB depth granularity: 1 mm (depthScale=0.001) with 4 precision levels down to 0.1 mm.
@@ -148,7 +148,7 @@ Parse with: `python3 app/tools/parse_point_raw.py <file.raw> [--frame N|--all|--
 |---|---|---|---|---|---|
 | `*_color_*.h264` | Yes | Yes | Yes | Yes | H.264 encoded |
 | `*_depth_*.h264` | Yes | Yes | Yes | Yes | H.264 encoded |
-| `*_depth_raw_*.raw` | Yes | Yes | Yes | Yes | `ORBBEC_DEPTH_RAW` binary |
+| `*_depth_raw_*.raw` | Yes | Yes | Yes | Yes | `NIO_DEPTH_RAW` binary |
 | `*_ir_left_*.h264` | Yes | Yes | Yes | — | H.264 encoded |
 | `*_ir_right_*.h264` | Yes | Yes | Yes | — | H.264 encoded |
 | `*_imu_*.txt` | — | Yes | Yes | — | CSV (`host_ts_ms,type,...`) |
@@ -228,7 +228,7 @@ lsusb -v -d 3840:1010 | grep bcdUSB
 | Core dump on exit | AC1 | `stop()` called on uninitialized driver | Fixed: `running_=false` before thread joins (`app/driver/robosense/nio_rs_device.cpp:202`) |
 | Block artifacts in D2C | AC1 | 96×288 upsampled to 1920×1080 | Inherent limitation; accept or adjust alpha/depth range |
 | IR files empty | AC1 | AC1 has no IR sensors | Expected — IR file creation is skipped (`hasIR=false`) |
-| Depth raw magic mismatch | AC1 | Old 16B magic truncation in writer | Fixed: 20B magic `NIO_POINT_CLOUD_RAW\0` (`app/capture/nio_stream_io.cpp:153-154`) |
+| Depth raw magic mismatch | AC1 | Old 16B magic truncation in writer | Fixed: magic renamed to `NIO_DEPTH_RAW` (vendor-neutral); parsers accept both old `ORBBEC_DEPTH_RAW` and new `NIO_DEPTH_RAW` |
 | MJPEG format warnings | OB | `yuvj422p` deprecated pixel format | Harness auto-recreates sws context with correct range (`app/capture/nio_h264_encoder.cpp:326`) |
 
 ## 8. Typical Output Sizes (15 s capture)

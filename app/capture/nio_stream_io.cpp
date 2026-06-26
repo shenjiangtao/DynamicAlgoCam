@@ -5,7 +5,7 @@
 //
 // Sections:
 //   1. isH264KeyFrame / writeH264StartCode / writeH264Frame — native H.264 NAL handling
-//   2. writeDepthRawWithHeader — ORBBEC_DEPTH_RAW format writer
+//   2. writeDepthRawWithHeader — NIO_DEPTH_RAW format writer
 //   2b. writePcdFile — PCD v0.7 binary per-frame point cloud writer
 //   3. openBufferedFile — large-buffer ofstream factory
 //   4. createStreamEncoder / writeStreamFrame — encoder+file management
@@ -72,8 +72,8 @@ void writeH264Frame(std::ofstream& file, const uint8_t* data, uint32_t size, boo
     }
 }
 
-// === Section 2: Depth raw file writer with ORBBEC_DEPTH_RAW header ===
-// Header layout: "ORBBEC_DEPTH_RAW" (16B) | width (4B) | height (4B) |
+// === Section 2: Depth raw file writer with NIO_DEPTH_RAW header ===
+// Header layout: "NIO_DEPTH_RAW" (16B, null-padded) | width (4B) | height (4B) |
 // bpp (4B) | scale (4B float) | frameSize (4B) | timestamp (8B)
 // Subsequent frames are raw Y16 pixel data, each followed by flush.
 
@@ -84,7 +84,7 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
         return;
 
     if (frameIndex == 0) {
-        const char magic[] = "ORBBEC_DEPTH_RAW";
+        const char magic[] = "NIO_DEPTH_RAW";
         file.write(magic, 16);
 
         uint32_t w32 = static_cast<uint32_t>(width);
@@ -120,8 +120,8 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 // Output PCD fields: x y z intensity ring timestamp (F F F F U F)
 //   intensity is expanded from uint8 → float32 for standard PCD compatibility.
 
-void writePcdFile(const std::string& outputDir, const std::string& baseName, uint64_t frameIndex, const uint8_t* data,
-                  uint32_t size, std::mutex& mtx, uint64_t /*deviceTsUs*/) {
+void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
+                  std::mutex& mtx, uint64_t deviceTsUs) {
     if (size < sizeof(uint32_t))
         return;
 
@@ -134,7 +134,6 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, uin
     if (size - sizeof(uint32_t) < expectedSrcBytes)
         return;
 
-    std::string filepath;
     {
         std::lock_guard<std::mutex> lock(mtx);
         static bool dirCreated = false;
@@ -151,11 +150,10 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, uin
     }
 
     char fname[512];
-    std::snprintf(fname, sizeof(fname), "%s/%s_%06lu.pcd", outputDir.c_str(), baseName.c_str(),
-                  static_cast<unsigned long>(frameIndex));
-    filepath = fname;
+    std::snprintf(fname, sizeof(fname), "%s/%s_%lu.pcd", outputDir.c_str(), baseName.c_str(),
+                  static_cast<unsigned long>(deviceTsUs));
 
-    std::ofstream pcd(filepath, std::ios::binary);
+    std::ofstream pcd(fname, std::ios::binary);
     if (!pcd.is_open())
         return;
 
@@ -179,38 +177,21 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, uin
     std::vector<uint8_t> buf(static_cast<size_t>(pointCount) * dstPointSize);
     uint8_t* dst = buf.data();
 
-    const uint8_t* ptr = pointData;
+    const uint8_t* __restrict__ srcPtr = pointData;
+    uint8_t* __restrict__ dstPtr = dst;
     for (uint32_t i = 0; i < pointCount; ++i) {
-        float x, y, z;
-        uint8_t rawIntensity;
-        uint16_t ring;
-        double ptTs;
-        std::memcpy(&x, ptr, 4);
-        ptr += 4;
-        std::memcpy(&y, ptr, 4);
-        ptr += 4;
-        std::memcpy(&z, ptr, 4);
-        ptr += 4;
-        std::memcpy(&rawIntensity, ptr, 1);
-        ptr += 1;
-        std::memcpy(&ring, ptr, 2);
-        ptr += 2;
-        std::memcpy(&ptTs, ptr, 8);
-        ptr += 8;
+        std::memcpy(dstPtr, srcPtr, 12);
+        dstPtr += 12;
+        srcPtr += 12;
 
-        float intensity = static_cast<float>(rawIntensity);
-        std::memcpy(dst, &x, 4);
-        dst += 4;
-        std::memcpy(dst, &y, 4);
-        dst += 4;
-        std::memcpy(dst, &z, 4);
-        dst += 4;
-        std::memcpy(dst, &intensity, 4);
-        dst += 4;
-        std::memcpy(dst, &ring, 2);
-        dst += 2;
-        std::memcpy(dst, &ptTs, 8);
-        dst += 8;
+        float intensity = static_cast<float>(*srcPtr);
+        std::memcpy(dstPtr, &intensity, 4);
+        dstPtr += 4;
+        srcPtr += 1;
+
+        std::memcpy(dstPtr, srcPtr, 10);
+        dstPtr += 10;
+        srcPtr += 10;
     }
 
     pcd.write(reinterpret_cast<const char*>(buf.data()), buf.size());

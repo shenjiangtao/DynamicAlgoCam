@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stream ORBBEC .raw depth viewer with improved debug stats and auto max-depth suggestion.
+Stream NIO .raw depth viewer with improved debug stats and auto max-depth suggestion.
 
 Features:
  - Stream frames from .raw without loading whole file
@@ -25,7 +25,7 @@ def parse_header_from_file(f):
     if len(data) < 44:
         return {'has_header': False}
     magic = data[0:16].split(b'\x00')[0].decode('ascii', errors='ignore')
-    if magic.startswith('ORBBEC_DEPTH_RAW'):
+    if magic.startswith('NIO_DEPTH_RAW') or magic.startswith('ORBBEC_DEPTH_RAW'):
         width = struct.unpack_from('<I', data, 16)[0]
         height = struct.unpack_from('<I', data, 20)[0]
         bpp = struct.unpack_from('<I', data, 24)[0]
@@ -118,7 +118,7 @@ def run_viewer(path, fx, fy, cx, cy, max_depth_m, downsample, debug,
     with open(path, 'rb') as f:
         hdr = parse_header_from_file(f)
         if not hdr['has_header']:
-            raise RuntimeError("No ORBBEC header found. Use a file with ORBBEC header.")
+            raise RuntimeError("No NIO_DEPTH_RAW header found. Use a file with NIO_DEPTH_RAW or ORBBEC_DEPTH_RAW header.")
         w = hdr['width']; h = hdr['height']; scale = hdr['scale']
         frame_size = hdr['frame_size']; header_size = hdr['header_size']
         magic = hdr.get('magic', '')
@@ -266,7 +266,7 @@ def run_viewer(path, fx, fy, cx, cy, max_depth_m, downsample, debug,
         vis.destroy_window()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Stream ORBBEC .raw viewer (auto)')
+    parser = argparse.ArgumentParser(description='Stream NIO .raw viewer (auto)')
     parser.add_argument('file', help='Path to .raw file')
     parser.add_argument('--fx', type=float, required=True)
     parser.add_argument('--fy', type=float, required=True)

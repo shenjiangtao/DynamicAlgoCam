@@ -13,7 +13,8 @@
 
 namespace nio {
 
-struct ObD2CAlign : public NioD2CAlign {
+struct ObD2CAlign : public NioD2CAlign
+{
     std::shared_ptr<ob::Align> align_;
 
     explicit ObD2CAlign(std::shared_ptr<ob::Align> a) : align_(std::move(a)) {}

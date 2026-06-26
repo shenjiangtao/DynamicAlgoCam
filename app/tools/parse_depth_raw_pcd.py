@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Orbbec Depth Raw Data (.raw) Parser & Point Cloud Generator
+NIO Depth Raw Data (.raw) Parser & Point Cloud Generator
 
 Data structure of .raw file:
   Header (44 bytes):
-    [0:16]  Magic string: "ORBBEC_DEPTH_RAW"
+    [0:16]  Magic string: "NIO_DEPTH_RAW" (new) or "ORBBEC_DEPTH_RAW" (legacy)
     [16:20] Width       (uint32_t)
     [20:24] Height      (uint32_t)
     [24:28] BPP         (uint32_t) - bytes per pixel (2 for Y16)
@@ -81,7 +81,7 @@ def parse_header(data):
     else:
         magic_str = str(magic)
 
-    if magic_str.startswith('ORBBEC_DEPTH_RAW'):
+    if magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW'):
         header['has_header'] = True
         header['magic'] = magic_str
         header['width'] = struct.unpack_from('<I', data, 16)[0]
@@ -113,7 +113,7 @@ def parse_raw_file(filepath, width=640, height=480, scale=0.001, force_no_header
         sc = header['scale']
         frame_size = header['frame_size']
         header_size = 44
-        print(f"=== Orbbec Depth RAW File Header ===")
+        print(f"=== NIO Depth RAW File Header ===")
         print(f"  Magic:     {header['magic']}")
         print(f"  Width:     {w}")
         print(f"  Height:    {h}")
@@ -411,7 +411,7 @@ def view_pointcloud_open3d(points, colors=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Orbbec Depth RAW Parser & Point Cloud Generator')
+    parser = argparse.ArgumentParser(description='NIO Depth RAW Parser & Point Cloud Generator')
     parser.add_argument('file', help='Path to .raw file')
     parser.add_argument('--width', type=int, default=640, help='Image width')
     parser.add_argument('--height', type=int, default=480, help='Image height')

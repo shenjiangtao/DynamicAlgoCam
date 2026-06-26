@@ -53,7 +53,7 @@ inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
             }
         }
 
-        auto *data = frame->getData();
+        auto* data = frame->getData();
         auto size = frame->getDataSize();
         if (data && size > 0)
             nf.data.assign(data, data + size);
@@ -61,10 +61,10 @@ inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
         nioFs.setFrame(nioType, std::move(nf));
     };
 
-    extract(OB_FRAME_COLOR,    NioFrameType::COLOR);
-    extract(OB_FRAME_DEPTH,    NioFrameType::DEPTH);
-    extract(OB_FRAME_IR,       NioFrameType::IR);
-    extract(OB_FRAME_IR_LEFT,  NioFrameType::IR_LEFT);
+    extract(OB_FRAME_COLOR, NioFrameType::COLOR);
+    extract(OB_FRAME_DEPTH, NioFrameType::DEPTH);
+    extract(OB_FRAME_IR, NioFrameType::IR);
+    extract(OB_FRAME_IR_LEFT, NioFrameType::IR_LEFT);
     extract(OB_FRAME_IR_RIGHT, NioFrameType::IR_RIGHT);
 
     return nioFs;

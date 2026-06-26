@@ -15,7 +15,8 @@
 namespace nio {
 
 // ObDevice: wraps ob::Device as NioDevice.
-class ObDevice : public NioDevice {
+class ObDevice : public NioDevice
+{
 public:
     explicit ObDevice(std::shared_ptr<ob::Device> device);
 
@@ -28,7 +29,9 @@ public:
     bool hasIRSensor() const override;
     NioSensorInfo setupPipeline(NioPipeline& pipeline) override;
 
-    std::shared_ptr<ob::Device> obDevice() const { return obDevice_; }
+    std::shared_ptr<ob::Device> obDevice() const {
+        return obDevice_;
+    }
 
 private:
     std::shared_ptr<ob::Device> obDevice_;
@@ -37,41 +40,60 @@ private:
 };
 
 // ObPipeline: wraps ob::Pipeline as NioPipeline.
-class ObPipeline : public NioPipeline {
+class ObPipeline : public NioPipeline
+{
 public:
     explicit ObPipeline(std::shared_ptr<ob::Device> device);
 
-    void enableStream(const NioStreamConfig &cfg) override;
+    void enableStream(const NioStreamConfig& cfg) override;
     void disableStream(NioFrameType type) override;
     void setAggregateAllTypeFrameRequire(bool require) override;
     void setAlignMode(NioAlignMode mode) override;
-    bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt,
-                           int depthW, int depthH, NioFormat depthFmt, int depthFps) override;
+    bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt, int depthW, int depthH, NioFormat depthFmt,
+                           int depthFps) override;
     void enableFrameSync() override;
     bool start(NioVideoCallback callback) override;
     bool startImu(NioImuCallback callback) override;
     void stop() override;
     void stopImu() override;
     std::shared_ptr<NioDevice> getDevice() const override;
-    bool isPointCloudDepth() const override { return false; }
+    bool isPointCloudDepth() const override {
+        return false;
+    }
     NioAlignMode getAlignMode() const override;
     std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const override;
 
-    bool isHwD2CMode() const { return hwD2CMode_; }
+    bool isHwD2CMode() const {
+        return hwD2CMode_;
+    }
 
-    std::shared_ptr<ob::Align> getAlignFilter() const { return alignFilter_; }
+    std::shared_ptr<ob::Align> getAlignFilter() const {
+        return alignFilter_;
+    }
 
     // Expose raw ob pipeline for legacy code paths.
-    std::shared_ptr<ob::Pipeline> obPipeline() const { return obPipeline_; }
+    std::shared_ptr<ob::Pipeline> obPipeline() const {
+        return obPipeline_;
+    }
 
     // Expose ob::Config for sensor enumeration in ObDevice::setupPipeline.
-    std::shared_ptr<ob::Config> obConfig() const { return obConfig_; }
+    std::shared_ptr<ob::Config> obConfig() const {
+        return obConfig_;
+    }
 
     // Set selected profiles (called from ObDevice::setupPipeline).
-    void setColorProfile(std::shared_ptr<ob::VideoStreamProfile> p) { colorProfile_ = std::move(p); }
-    void setDepthProfile(std::shared_ptr<ob::VideoStreamProfile> p) { depthProfile_ = std::move(p); }
-    std::shared_ptr<ob::VideoStreamProfile> colorProfile() const { return colorProfile_; }
-    std::shared_ptr<ob::VideoStreamProfile> depthProfile() const { return depthProfile_; }
+    void setColorProfile(std::shared_ptr<ob::VideoStreamProfile> p) {
+        colorProfile_ = std::move(p);
+    }
+    void setDepthProfile(std::shared_ptr<ob::VideoStreamProfile> p) {
+        depthProfile_ = std::move(p);
+    }
+    std::shared_ptr<ob::VideoStreamProfile> colorProfile() const {
+        return colorProfile_;
+    }
+    std::shared_ptr<ob::VideoStreamProfile> depthProfile() const {
+        return depthProfile_;
+    }
 
 private:
     std::shared_ptr<ob::Pipeline> obPipeline_;
@@ -89,7 +111,8 @@ private:
 };
 
 // ObContext: wraps ob::Context as NioContext.
-class ObContext : public NioContext {
+class ObContext : public NioContext
+{
 public:
     ObContext();
 
@@ -97,7 +120,9 @@ public:
     std::shared_ptr<NioDevice> getDevice(uint32_t index) override;
 
     // Expose for legacy code that needs ob::Context.
-    ob::Context &obCtx() { return ctx_; }
+    ob::Context& obCtx() {
+        return ctx_;
+    }
 
 private:
     ob::Context ctx_;

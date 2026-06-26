@@ -18,17 +18,17 @@
 
 #pragma once
 
-#include <SDL2/SDL.h>
 #include "nio_types.hpp"
+#include <SDL2/SDL.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <condition_variable>
 #include <vector>
-#include <atomic>
-#include <chrono>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -40,9 +40,17 @@ extern "C" {
 
 namespace nio {
 
-enum class ViewerChannel { COLOR, DEPTH, IR, IR_LEFT, IR_RIGHT, POINT };
+enum class ViewerChannel {
+    COLOR,
+    DEPTH,
+    IR,
+    IR_LEFT,
+    IR_RIGHT,
+    POINT
+};
 
-struct ViewerSlot {
+struct ViewerSlot
+{
     std::string label;
     std::string formatStr;
     NioFormat format = NioFormat::UNKNOWN;
@@ -56,12 +64,12 @@ struct ViewerSlot {
     float depthMinM = 0.3f;
     float depthMaxM = 5.0f;
     std::mutex rawMtx;
-    std::atomic<bool> rawUpdated{false};
+    std::atomic<bool> rawUpdated{ false };
 
     // RGB render buffer (written by decodeThread, read by renderLoop)
     std::vector<uint8_t> renderBuf;
     std::mutex renderMtx;
-    std::atomic<bool> renderUpdated{false};
+    std::atomic<bool> renderUpdated{ false };
 
     // MJPG decoder
     std::shared_ptr<MjpgDecoderRes> mjpgRes;
@@ -73,7 +81,8 @@ struct ViewerSlot {
     bool yuyvSwsInit = false;
 };
 
-class SDLViewer {
+class SDLViewer
+{
 public:
     SDLViewer();
     ~SDLViewer();
@@ -81,14 +90,9 @@ public:
     bool init();
     void close();
 
-    int addDevice(const std::string& name,
-                  const std::string& cameraType,
-                  const std::string& serialNumber,
-                  bool hasColor, NioFormat colorFmt, int cw, int ch,
-                  bool hasDepth, NioFormat depthFmt, int dw, int dh,
-                  bool hasIR, int irw, int irh,
-                  bool hasIRLeft, int ilw, int ilh,
-                  bool hasIRRight, int irw2, int irh2,
+    int addDevice(const std::string& name, const std::string& cameraType, const std::string& serialNumber,
+                  bool hasColor, NioFormat colorFmt, int cw, int ch, bool hasDepth, NioFormat depthFmt, int dw, int dh,
+                  bool hasIR, int irw, int irh, bool hasIRLeft, int ilw, int ilh, bool hasIRRight, int irw2, int irh2,
                   bool hasPoint = false, int pw = 640, int ph = 480);
 
     int addViewerSlot(const std::string& label, NioFormat fmt, int w, int h);
@@ -96,12 +100,11 @@ public:
 
     bool createWindow();
 
-    void pushFrame(int devIdx, ViewerChannel ch,
-                   const uint8_t* data, uint32_t size,
-                   float depthScale = 1.0f,
+    void pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uint32_t size, float depthScale = 1.0f,
                    float depthMinM = 0.3f, float depthMaxM = 5.0f);
 
-    struct LabelTex {
+    struct LabelTex
+    {
         SDL_Texture* tex = nullptr;
         int w = 0;
         int h = 0;
@@ -127,10 +130,11 @@ private:
 
     void rebuildLabelTextures(int winW, int winH);
     void destroyLabelTextures();
-    void makeLabelTex(LabelTex& out, const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB,
-                      uint8_t bgR, uint8_t bgG, uint8_t bgB, int fscale);
+    void makeLabelTex(LabelTex& out, const std::string& text, uint8_t fgR, uint8_t fgG, uint8_t fgB, uint8_t bgR,
+                      uint8_t bgG, uint8_t bgB, int fscale);
 
-    struct DeviceRow {
+    struct DeviceRow
+    {
         std::string name;
         std::string cameraType;
         std::string serialNumber;
@@ -148,18 +152,18 @@ private:
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
-    std::vector<SDL_Texture*> textures_;      // video textures (per slot)
+    std::vector<SDL_Texture*> textures_; // video textures (per slot)
 
     // Cached label textures (rebuilt when window size changes)
-    std::vector<LabelTex> titleTexs_;         // per-device: "型号_序列号"
-    std::vector<LabelTex> formatTexs_;        // per-slot: "MJPG"/"Y16"/"Y8"
-    std::vector<LabelTex> channelTexs_;       // per-slot: "Color"/"Depth"/etc.
+    std::vector<LabelTex> titleTexs_;   // per-device: "型号_序列号"
+    std::vector<LabelTex> formatTexs_;  // per-slot: "MJPG"/"Y16"/"Y8"
+    std::vector<LabelTex> channelTexs_; // per-slot: "Color"/"Depth"/etc.
     int cachedWinW_ = 0;
     int cachedWinH_ = 0;
 
     std::thread decodeThread_;
     std::thread renderThread_;
-    std::atomic<bool> running_{false};
+    std::atomic<bool> running_{ false };
     bool initialized_ = false;
 
     int tileW_ = 0;
@@ -168,7 +172,7 @@ private:
 
     std::mutex decodeCvMtx_;
     std::condition_variable decodeCv_;
-    std::atomic<bool> decodeWakeup_{false};
+    std::atomic<bool> decodeWakeup_{ false };
 
     static const int RENDER_FPS = 30;
     static const int ROW_HEADER_H = 36;

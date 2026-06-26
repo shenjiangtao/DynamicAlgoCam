@@ -84,7 +84,7 @@ void writeH264StartCode(std::ofstream& f);
 // writeH264Frame: write H.264 NALs to file; skips frames until first keyframe
 void writeH264Frame(std::ofstream& file, const uint8_t* data, uint32_t size, bool& keyFrameWritten, std::mutex& mtx);
 
-// writeDepthRawWithHeader: write depth frame with ORBBEC_DEPTH_RAW header
+// writeDepthRawWithHeader: write depth frame with NIO_DEPTH_RAW header
 // (magic, width, height, bpp, scale, frameSize, timestamp) on frame 0
 void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size, int width, int height,
                              float scale, uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs = 0);
@@ -93,9 +93,9 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 // Reads wire-format point data: [4B pointCount] + pointCount * 23B
 //   (float x,y,z + uint8 intensity + uint16 ring + double timestamp per point).
 // Output PCD has fields: x y z intensity ring timestamp (F F F F U F).
-// File path = outputDir / baseName_<6-digit-frameIndex>.pcd
-void writePcdFile(const std::string& outputDir, const std::string& baseName, uint64_t frameIndex, const uint8_t* data,
-                  uint32_t size, std::mutex& mtx, uint64_t deviceTsUs = 0);
+// File path = outputDir / baseName_<deviceTsUs>.pcd
+void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
+                  std::mutex& mtx, uint64_t deviceTsUs = 0);
 
 // openBufferedFile: open ofstream with large user-space buffer for fast writes
 std::shared_ptr<std::ofstream> openBufferedFile(const std::string& path,
@@ -107,7 +107,7 @@ std::shared_ptr<std::ofstream> openBufferedFile(const std::string& path,
 // For native H.264/H.265: no encoder, just a file.  For MJPEG/YUYV/etc:
 // creates H264Encoder.  Falls back to raw file if encoder init fails.
 std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, NioFormat format, int w, int h, int fps,
-                                                   const char* seiUuid = "nio@orbbec-fusio", bool writeSEI = true);
+                                                   const char* seiUuid = "jiangtao.shen@ad", bool writeSEI = true);
 
 // writeStreamFrame: dispatch to native-H264 write or encode+write
 void writeStreamFrame(StreamEncoder* se, const uint8_t* data, uint32_t size, uint64_t deviceTsUs = 0);

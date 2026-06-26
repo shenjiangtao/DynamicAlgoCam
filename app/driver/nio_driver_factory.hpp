@@ -17,7 +17,8 @@
 
 namespace nio {
 
-struct DiscoveredDevice {
+struct DiscoveredDevice
+{
     std::shared_ptr<NioDevice> device;
     std::shared_ptr<NioPipeline> pipeline;
 };

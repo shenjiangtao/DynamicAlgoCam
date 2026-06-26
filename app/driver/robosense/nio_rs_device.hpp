@@ -14,10 +14,10 @@
 #include "nio_rs_frame_adapter.hpp"
 
 #include <rs_driver/api/lidar_driver.hpp>
-#include <rs_driver/msg/point_cloud_msg.hpp>
-#include <rs_driver/msg/imu_data_msg.hpp>
-#include <rs_driver/msg/image_data_msg.hpp>
 #include <rs_driver/driver/driver_param.hpp>
+#include <rs_driver/msg/image_data_msg.hpp>
+#include <rs_driver/msg/imu_data_msg.hpp>
+#include <rs_driver/msg/point_cloud_msg.hpp>
 #include <rs_driver/utility/sync_queue.hpp>
 
 #include <libusb.h>
@@ -31,14 +31,14 @@
 
 namespace nio {
 
-
 using RsPointCloudMsg = ::PointCloudT<::PointXYZIRT>;
 using RsLidarDriver = robosense::lidar::LidarDriver<RsPointCloudMsg>;
 template <typename T>
 using RsSyncQueue = robosense::lidar::SyncQueue<T>;
 
 // RsDevice: wraps RS-AC1 as NioDevice.
-class RsDevice : public NioDevice {
+class RsDevice : public NioDevice
+{
 public:
     explicit RsDevice(uint32_t deviceIndex, const std::string& deviceUuid = "");
 
@@ -48,11 +48,17 @@ public:
     void enableGlobalTimestamp(bool enable) override;
     NioSensorInfo getSensorInfo() const override;
     int32_t getIntProperty(int propertyId) override;
-    bool hasIRSensor() const override { return false; }
+    bool hasIRSensor() const override {
+        return false;
+    }
     NioSensorInfo setupPipeline(NioPipeline& pipeline) override;
 
-    uint32_t deviceIndex() const { return deviceIndex_; }
-    const std::string& deviceUuid() const { return deviceUuid_; }
+    uint32_t deviceIndex() const {
+        return deviceIndex_;
+    }
+    const std::string& deviceUuid() const {
+        return deviceUuid_;
+    }
 
 private:
     uint32_t deviceIndex_;
@@ -64,7 +70,8 @@ private:
 // RsPipeline: wraps LidarDriver as NioPipeline.
 // Manages dual get/put callback pairs and synthesizes NioFrameSet
 // from asynchronous PointCloudMsg + ImageData arrivals.
-class RsPipeline : public NioPipeline {
+class RsPipeline : public NioPipeline
+{
 public:
     explicit RsPipeline(std::shared_ptr<RsDevice> device);
 
@@ -72,16 +79,20 @@ public:
     void disableStream(NioFrameType type) override;
     void setAggregateAllTypeFrameRequire(bool require) override;
     void setAlignMode(NioAlignMode mode) override;
-    bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt,
-                           int depthW, int depthH, NioFormat depthFmt, int depthFps) override;
+    bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt, int depthW, int depthH, NioFormat depthFmt,
+                           int depthFps) override;
     void enableFrameSync() override;
     bool start(NioVideoCallback callback) override;
     bool startImu(NioImuCallback callback) override;
     void stop() override;
     void stopImu() override;
     std::shared_ptr<NioDevice> getDevice() const override;
-    bool isPointCloudDepth() const override { return true; }
-    NioAlignMode getAlignMode() const override { return NioAlignMode::HW; }
+    bool isPointCloudDepth() const override {
+        return true;
+    }
+    NioAlignMode getAlignMode() const override {
+        return NioAlignMode::HW;
+    }
 
 private:
     // Processing threads for rs_driver stuffed queues.
@@ -131,13 +142,14 @@ private:
     std::thread cloudThread_;
     std::thread imageThread_;
     std::thread imuThread_;
-    std::atomic<bool> running_{false};
+    std::atomic<bool> running_{ false };
     bool started_ = false;
     bool imuStarted_ = false;
 };
 
 // RsContext: discovers RS-AC1 devices via libusb (VID=0x3840, PID=0x1010).
-class RsContext : public NioContext {
+class RsContext : public NioContext
+{
 public:
     RsContext();
     ~RsContext();

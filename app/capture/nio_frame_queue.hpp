@@ -15,22 +15,23 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <memory>
 
 #include "nio_frame.hpp"
 
 namespace nio {
 
 template <typename T>
-class FrameQueue {
+class FrameQueue
+{
 public:
     explicit FrameQueue(size_t capacity);
     void push(T item);
-    bool pop(T &item, uint32_t timeoutMs = 100);
+    bool pop(T& item, uint32_t timeoutMs = 100);
     void shutdown();
     void wakeAll();
 
@@ -43,7 +44,7 @@ private:
     size_t head_ = 0;
     size_t tail_ = 0;
     size_t count_ = 0;
-    std::atomic<bool> shutdown_{false};
+    std::atomic<bool> shutdown_{ false };
 };
 
 // Video queue carries NioFrameSet (SDK-agnostic).

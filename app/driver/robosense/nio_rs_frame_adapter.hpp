@@ -12,15 +12,15 @@
 #include "nio_frame.hpp"
 #include "nio_rs_adapter.hpp"
 
-#include <rs_driver/msg/point_cloud_msg.hpp>
 #include <rs_driver/msg/image_data_msg.hpp>
+#include <rs_driver/msg/point_cloud_msg.hpp>
 
 #include <cmath>
 #include <cstring>
 
 namespace nio {
 // RS-AC1 depth grid dimensions (from decoder_RSAC1.hpp constants)
-static constexpr int RS_AC1_DEPTH_WIDTH  = 96;
+static constexpr int RS_AC1_DEPTH_WIDTH = 96;
 static constexpr int RS_AC1_DEPTH_HEIGHT = 288;
 // 5mm per uint16 unit (distance / 0.005)
 static constexpr float RS_AC1_DEPTH_SCALE = 5.0f;
@@ -66,7 +66,8 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
 
 // Convert RS-AC1 PointCloudMsg → NioFrame (raw POINT data for PCD recording).
 // Binary layout: [4 bytes: pointCount (uint32)] [pointCount * elementSize bytes: packed XYZIRT]
-// Each element: float x(4) + float y(4) + float z(4) + uint8 intensity(1) + uint16 ring(2) + double timestamp(8) = 23 bytes
+// Each element: float x(4) + float y(4) + float z(4) + uint8 intensity(1) + uint16 ring(2) + double timestamp(8) = 23
+// bytes
 inline NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     NioFrame f;
     f.type = NioFrameType::POINT;
@@ -84,12 +85,18 @@ inline NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
 
     for (uint32_t i = 0; i < nPts; ++i) {
         const auto& pt = cloud->points[i];
-        std::memcpy(dst, &pt.x, 4);         dst += 4;
-        std::memcpy(dst, &pt.y, 4);         dst += 4;
-        std::memcpy(dst, &pt.z, 4);         dst += 4;
-        std::memcpy(dst, &pt.intensity, 1); dst += 1;
-        std::memcpy(dst, &pt.ring, 2);      dst += 2;
-        std::memcpy(dst, &pt.timestamp, 8); dst += 8;
+        std::memcpy(dst, &pt.x, 4);
+        dst += 4;
+        std::memcpy(dst, &pt.y, 4);
+        dst += 4;
+        std::memcpy(dst, &pt.z, 4);
+        dst += 4;
+        std::memcpy(dst, &pt.intensity, 1);
+        dst += 1;
+        std::memcpy(dst, &pt.ring, 2);
+        dst += 2;
+        std::memcpy(dst, &pt.timestamp, 8);
+        dst += 8;
     }
 
     return f;

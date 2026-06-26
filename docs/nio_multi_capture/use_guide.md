@@ -92,7 +92,7 @@ cmake --build . -j$(nproc)
 <saveDir>/<sessionTimestamp>/<deviceName>/
 ├── <name>_color_<ts>.h264              # 彩色流 H.264
 ├── <name>_depth_<ts>.h264              # 深度流 H.264
-├── <name>_depth_raw_<ts>.raw           # 深度原始数据 (Y16, ORBBEC_DEPTH_RAW 格式)
+├── <name>_depth_raw_<ts>.raw           # 深度原始数据 (Y16, NIO_DEPTH_RAW 格式)
 ├── <name>_ir_left_<ts>.h264            # IR 左 (Orbbec 有 IR 的设备)
 ├── <name>_ir_right_<ts>.h264           # IR 右 (Orbbec 有 IR 的设备)
 ├── <name>_imu_<ts>.txt                 # IMU CSV (有 IMU 的设备)
@@ -134,7 +134,7 @@ cmake --build . -j$(nproc)
 
 | 偏移 | 大小 | 字段 | 类型 | 说明 |
 |------|------|------|------|------|
-| 0 | 16 | Magic | char[16] | `"ORBBEC_DEPTH_RAW"` |
+| 0 | 16 | Magic | char[16] | `"NIO_DEPTH_RAW"` |
 | 16 | 4 | Width | uint32_t | 图像宽度 |
 | 20 | 4 | Height | uint32_t | 图像高度 |
 | 24 | 4 | BPP | uint32_t | 每像素字节数 (=2) |

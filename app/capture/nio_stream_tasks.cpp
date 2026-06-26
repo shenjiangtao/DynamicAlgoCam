@@ -304,7 +304,7 @@ PcdStreamTask::PcdStreamTask(const std::string& name, const std::string& outputD
 : StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
 
 void PcdStreamTask::processFrame(const FrameBlob& blob) {
-    writePcdFile(outputDir_, baseName_, frameIdx_++, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
+    writePcdFile(outputDir_, baseName_, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
     frameCount++;
 }
 

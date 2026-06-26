@@ -19,60 +19,62 @@
 
 #include "nio_types.hpp"
 
+#include <cstdint>
 #include <fstream>
 #include <mutex>
-#include <cstdint>
 #include <string>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavutil/opt.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
 #include <libswscale/swscale.h>
 }
 
 namespace nio {
 // H264Encoder: wraps FFmpeg x264 encoder + optional MJPEG decoder.
 // Usage: init() → encode()* → close().  Thread-unsafe — one instance per stream.
-class H264Encoder {
+class H264Encoder
+{
 public:
     H264Encoder();
     ~H264Encoder();
 
     // init: create encoder + sws context for the given NioFormat.
     // For MJPEG, sws is deferred to first decodeMjpg() call.
-    bool init(int width, int height, int fps, NioFormat srcFormat,
-              int bitRate = 4000000, const char *seiUuid = "nio@orbbec-fusio");
+    bool init(int width, int height, int fps, NioFormat srcFormat, int bitRate = 4000000,
+              const char* seiUuid = "jiangtao.shen@ad");
 
     // initRGB / initBGR: convenience wrappers (no MJPEG decoder created)
-    bool initRGB(int width, int height, int fps,
-                 int bitRate = 4000000, const char *seiUuid = "nio@orbbec-fusio");
+    bool initRGB(int width, int height, int fps, int bitRate = 4000000, const char* seiUuid = "jiangtao.shen@ad");
 
-    bool initBGR(int width, int height, int fps,
-                 int bitRate = 4000000, const char *seiUuid = "nio@orbbec-fusio");
+    bool initBGR(int width, int height, int fps, int bitRate = 4000000, const char* seiUuid = "jiangtao.shen@ad");
 
     void close();
 
     // encode: convert raw frame data to H.264 and write NALs to outFile.
     // For MJPEG input, decodes JPEG first via decodeMjpg().
-    bool encode(const uint8_t *data, uint32_t size,
-                std::ofstream &outFile, std::mutex &mtx,
+    bool encode(const uint8_t* data, uint32_t size, std::ofstream& outFile, std::mutex& mtx,
                 uint64_t deviceTimestampUs = 0, bool writeSEI = true);
 
     // encodeRGB / encodeBGR: encode from packed RGB/BGR data
-    bool encodeRGB(const uint8_t *rgbData, std::ofstream &outFile, std::mutex &mtx,
-                   uint64_t deviceTimestampUs);
+    bool encodeRGB(const uint8_t* rgbData, std::ofstream& outFile, std::mutex& mtx, uint64_t deviceTimestampUs);
 
-    bool encodeBGR(const uint8_t *bgrData, std::ofstream &outFile, std::mutex &mtx,
-                   uint64_t deviceTimestampUs);
+    bool encodeBGR(const uint8_t* bgrData, std::ofstream& outFile, std::mutex& mtx, uint64_t deviceTimestampUs);
 
-    int getWidth() const { return width_; }
-    int getHeight() const { return height_; }
-    bool isInitialized() const { return initialized_; }
+    int getWidth() const {
+        return width_;
+    }
+    int getHeight() const {
+        return height_;
+    }
+    bool isInitialized() const {
+        return initialized_;
+    }
 
 private:
     // decodeMjpg: decode MJPEG bytes → YUV420P frame (lazy sws init)
-    AVFrame *decodeMjpg(const uint8_t *data, uint32_t size);
+    AVFrame* decodeMjpg(const uint8_t* data, uint32_t size);
     bool initMjpgSws(AVPixelFormat decFmt);
     bool initEncoder(int width, int height, int fps, int bitRate);
     bool initEncoderFrame(int width, int height);
@@ -80,31 +82,30 @@ private:
     bool initSws(AVPixelFormat srcFmt, int width, int height);
     AVPixelFormat mapNioFormatToAV(NioFormat srcFormat);
     void initMjpgDecoder(int width, int height);
-    bool writeFrame(std::ofstream &outFile, std::mutex &mtx,
-                    uint64_t deviceTimestampUs, bool writeSEI);
-    bool swsConvertFrame(const uint8_t *data, uint32_t size);
+    bool writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t deviceTimestampUs, bool writeSEI);
+    bool swsConvertFrame(const uint8_t* data, uint32_t size);
     void computeSrcStrides(int srcStride[4]);
-    void computeSrcSlices(const uint8_t *data, const uint8_t *srcSlice[4]);
+    void computeSrcSlices(const uint8_t* data, const uint8_t* srcSlice[4]);
 
     // --- H.264 encoder state ---
-    AVCodecContext *codecCtx_;      // x264 encoder context
-    AVFrame *frame_;                // reusable YUV420P frame for encoding
-    AVPacket *pkt_;                 // reusable packet for encoder output
-    SwsContext *swsCtx_;            // pixel format converter (src → YUV420P)
-    int64_t pts_;                   // monotonic presentation timestamp counter
+    AVCodecContext* codecCtx_; // x264 encoder context
+    AVFrame* frame_;           // reusable YUV420P frame for encoding
+    AVPacket* pkt_;            // reusable packet for encoder output
+    SwsContext* swsCtx_;       // pixel format converter (src → YUV420P)
+    int64_t pts_;              // monotonic presentation timestamp counter
     int width_, height_;
     NioFormat srcFormat_;
     bool initialized_;
-    bool seiWritten_;               // true after first copyright SEI is written
+    bool seiWritten_; // true after first copyright SEI is written
     std::string seiUuid_;
 
     // --- MJPEG decoder state (only used for NioFormat::MJPG/MJPEG) ---
-    const AVCodec *mjpgCodec_;          // MJPEG decoder codec
-    AVPixelFormat mjpgDecFmt_;          // actual decoder output format (lazy)
-    bool mjpgSwsInitialized_;           // true after first-frame sws creation
-    AVCodecContext *mjpgCtx_;           // MJPEG decoder context
-    AVPacket *mjpgPkt_;                 // reusable packet for MJPEG decode
-    AVFrame *mjpgDecFrame_;             // reusable frame for MJPEG decode output
+    const AVCodec* mjpgCodec_; // MJPEG decoder codec
+    AVPixelFormat mjpgDecFmt_; // actual decoder output format (lazy)
+    bool mjpgSwsInitialized_;  // true after first-frame sws creation
+    AVCodecContext* mjpgCtx_;  // MJPEG decoder context
+    AVPacket* mjpgPkt_;        // reusable packet for MJPEG decode
+    AVFrame* mjpgDecFrame_;    // reusable frame for MJPEG decode output
 };
 
 } // namespace nio

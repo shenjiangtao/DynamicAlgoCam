@@ -234,7 +234,7 @@ SDK 回调线程 (ob::Pipeline / rs_driver)
 
 | 偏移 | 大小 | 字段 | 类型 | 说明 |
 |------|------|------|------|------|
-| 0 | 16 | Magic | char[16] | `"ORBBEC_DEPTH_RAW"` |
+| 0 | 16 | Magic | char[16] | `"NIO_DEPTH_RAW"` |
 | 16 | 4 | Width | uint32_t | 图像宽度 |
 | 20 | 4 | Height | uint32_t | 图像高度 |
 | 24 | 4 | BPP | uint32_t | 每像素字节数 (=2) |

@@ -137,7 +137,7 @@ echo "options usbcore usbfs_memory_mb=256" | sudo tee /etc/modprobe.d/usbcore.co
 ### 现象：深度 `.raw` 文件无法解析
 
 **排查**：
-1. 确认文件包含 44 字节头部（魔数 `ORBBEC_DEPTH_RAW`）
+1. 确认文件包含 44 字节头部（魔数 `NIO_DEPTH_RAW`，旧文件为 `ORBBEC_DEPTH_RAW`）
 2. 使用解析工具：
    ```bash
    python3 app/tools/parse_depth_raw.py <file.raw> --stats
