@@ -6,15 +6,14 @@
 
 #pragma once
 
-#include <opencv2/opencv.hpp>
 #include "nio_frame.hpp"
 #include "nio_types.hpp"
+#include <opencv2/opencv.hpp>
 
 namespace nio {
 
 cv::Mat frameToBGR(const NioFrame& frame);
 
-cv::Mat colorizeDepth(const NioFrame& depthFrame,
-                       float depthMinM, float depthMaxM);
+cv::Mat colorizeDepth(const NioFrame& depthFrame, float depthMinM, float depthMaxM);
 
 } // namespace nio

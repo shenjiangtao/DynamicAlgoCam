@@ -20,12 +20,12 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
-#include <fstream>
-#include <mutex>
 #include <atomic>
 #include <cstdint>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <vector>
 
 namespace nio {
 
@@ -39,13 +39,13 @@ uint64_t getTimestampMsInt();
 
 std::string getTimestampIso();
 
-void mkdirp(const std::string &path);
+void mkdirp(const std::string& path);
 
-extern const char *SEI_COPYRIGHT;
+extern const char* SEI_COPYRIGHT;
 
-void writeSEINalUnit(std::ofstream &outFile, const std::string &payload,
-                     std::mutex &mtx, const char *uuid = "nio@orbbec-fusio");
+void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mutex& mtx,
+                     const char* uuid = "jiangtao.shen@ad");
 
-bool deviceMatches(const std::string &deviceName, const std::vector<std::string> &filter);
+bool deviceMatches(const std::string& deviceName, const std::vector<std::string>& filter);
 
 } // namespace nio

@@ -29,9 +29,10 @@
 
 namespace nio {
 
-void setThreadName(const std::string &name);
+void setThreadName(const std::string& name);
 
-struct FrameBlob {
+struct FrameBlob
+{
     std::vector<uint8_t> data;
     uint32_t size = 0;
     uint64_t timestampUs = 0;
@@ -40,21 +41,24 @@ struct FrameBlob {
     float depthMaxM = 5.0f;
 };
 
-class StreamTask {
+class StreamTask
+{
 public:
-    explicit StreamTask(const std::string &name, size_t queueCapacity = 2);
+    explicit StreamTask(const std::string& name, size_t queueCapacity = 2);
     virtual ~StreamTask();
 
     void start();
     void stop();
 
-    bool enqueue(const uint8_t *data, uint32_t size, uint64_t timestampUs,
-                 float depthScale = 1.0f, float depthMinM = 0.3f, float depthMaxM = 5.0f);
+    bool enqueue(const uint8_t* data, uint32_t size, uint64_t timestampUs, float depthScale = 1.0f,
+                 float depthMinM = 0.3f, float depthMaxM = 5.0f);
 
-    const std::string &name() const { return name_; }
+    const std::string& name() const {
+        return name_;
+    }
 
 protected:
-    virtual void processFrame(const FrameBlob &blob) = 0;
+    virtual void processFrame(const FrameBlob& blob) = 0;
     virtual void onIdle() {}
     void wakeup();
 
@@ -72,7 +76,7 @@ private:
     std::condition_variable cv_;
 
     std::thread thread_;
-    std::atomic<bool> running_{false};
+    std::atomic<bool> running_{ false };
 };
 
 } // namespace nio

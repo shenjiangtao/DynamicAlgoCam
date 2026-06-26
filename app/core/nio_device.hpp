@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "nio_types.hpp"
 #include "nio_frame.hpp"
+#include "nio_types.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -34,7 +34,8 @@ class NioFrameSet;
 struct NioD2CAlign;
 
 // Device info (SDK-agnostic).
-struct NioDeviceInfo {
+struct NioDeviceInfo
+{
     std::string name;
     std::string serialNumber;
     uint16_t vid = 0;
@@ -43,7 +44,8 @@ struct NioDeviceInfo {
 };
 
 // Stream configuration for one sensor.
-struct NioStreamConfig {
+struct NioStreamConfig
+{
     NioFrameType frameType = NioFrameType::COLOR;
     int width = 0;
     int height = 0;
@@ -53,7 +55,11 @@ struct NioStreamConfig {
 };
 
 // D2C alignment mode.
-enum class NioAlignMode { NONE, HW, SW };
+enum class NioAlignMode {
+    NONE,
+    HW,
+    SW
+};
 
 // Callback type: called when a new FrameSet arrives from the pipeline.
 using NioVideoCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
@@ -62,7 +68,8 @@ using NioVideoCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
 using NioImuCallback = std::function<void(const std::vector<NioImuSample>&)>;
 
 // NioDevice: abstract camera device.
-class NioDevice {
+class NioDevice
+{
 public:
     virtual ~NioDevice() = default;
 
@@ -86,12 +93,13 @@ public:
 };
 
 // NioPipeline: abstract capture pipeline.
-class NioPipeline {
+class NioPipeline
+{
 public:
     virtual ~NioPipeline() = default;
 
     // Configure which streams to enable.
-    virtual void enableStream(const NioStreamConfig &cfg) = 0;
+    virtual void enableStream(const NioStreamConfig& cfg) = 0;
     virtual void disableStream(NioFrameType type) = 0;
 
     // Set frame aggregation mode.
@@ -101,8 +109,8 @@ public:
     virtual void setAlignMode(NioAlignMode mode) = 0;
 
     // Check if HW D2C alignment is supported for the given profiles.
-    virtual bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt,
-                                   int depthW, int depthH, NioFormat depthFmt, int depthFps) = 0;
+    virtual bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt, int depthW, int depthH,
+                                   NioFormat depthFmt, int depthFps) = 0;
 
     // Enable frame sync.
     virtual void enableFrameSync() = 0;
@@ -124,21 +132,26 @@ public:
 
     // Whether this pipeline's depth sensor outputs 3D point cloud
     // (RS-AC1) instead of a 2D depth map (Orbbec).
-    virtual bool isPointCloudDepth() const { return false; }
+    virtual bool isPointCloudDepth() const {
+        return false;
+    }
 
     // Current D2C alignment mode (HW / SW / NONE).
     // RS-AC1 always returns HW; OB returns the mode set via setAlignMode().
     virtual NioAlignMode getAlignMode() const = 0;
 
     // Get D2C alignment filter (may be null if HW D2C or not applicable).
-    virtual std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const { return nullptr; }
+    virtual std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const {
+        return nullptr;
+    }
 };
 
 // NioD2CAlign: abstract D2C alignment filter.
 // Wraps SDK-specific alignment (e.g. ob::Align for Orbbec).
 // process() takes a type-erased native FrameSet, performs alignment,
 // and returns aligned pixel data + metadata via NioAlignedFrameSet.
-struct NioAlignedFrame {
+struct NioAlignedFrame
+{
     const uint8_t* colorData = nullptr;
     uint32_t colorSize = 0;
     uint64_t colorTs = 0;
@@ -148,13 +161,15 @@ struct NioAlignedFrame {
     float depthScale = 1.0f;
 };
 
-struct NioD2CAlign {
+struct NioD2CAlign
+{
     virtual ~NioD2CAlign() = default;
     virtual bool process(std::shared_ptr<void> nativeFrameSet, NioAlignedFrame& out) = 0;
 };
 
 // NioContext: abstract SDK context for device discovery.
-class NioContext {
+class NioContext
+{
 public:
     virtual ~NioContext() = default;
 

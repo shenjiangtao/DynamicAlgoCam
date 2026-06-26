@@ -44,17 +44,23 @@ enum class NioFormat {
 // Returns 0 for multi-plane or compressed formats (NV12/NV21/I420/MJPG/H264/POINT/UNKNOWN).
 inline int nioFormatBpp(NioFormat f) {
     switch (f) {
-    case NioFormat::Y8:    return 1;
-    case NioFormat::Y16:   return 2;
+    case NioFormat::Y8:
+        return 1;
+    case NioFormat::Y16:
+        return 2;
     case NioFormat::YUYV:
     case NioFormat::UYVY:
-    case NioFormat::YUY2:  return 2;
+    case NioFormat::YUY2:
+        return 2;
     case NioFormat::RGB:
     case NioFormat::BGR:
-    case NioFormat::RGB888: return 3;
+    case NioFormat::RGB888:
+        return 3;
     case NioFormat::RGBA:
-    case NioFormat::BGRA:  return 4;
-    default:               return 0;
+    case NioFormat::BGRA:
+        return 4;
+    default:
+        return 0;
     }
 }
 
@@ -63,20 +69,28 @@ inline int nioFormatBpp(NioFormat f) {
 // Returns 0 for MJPEG, H264, POINT, UNKNOWN (variable-size).
 inline size_t nioFormatRawSize(NioFormat f, int w, int h) {
     switch (f) {
-    case NioFormat::Y8:    return static_cast<size_t>(w * h);
-    case NioFormat::Y16:   return static_cast<size_t>(w * h * 2);
+    case NioFormat::Y8:
+        return static_cast<size_t>(w * h);
+    case NioFormat::Y16:
+        return static_cast<size_t>(w * h * 2);
     case NioFormat::YUYV:
     case NioFormat::UYVY:
-    case NioFormat::YUY2:  return static_cast<size_t>(w * h * 2);
+    case NioFormat::YUY2:
+        return static_cast<size_t>(w * h * 2);
     case NioFormat::RGB:
     case NioFormat::BGR:
-    case NioFormat::RGB888: return static_cast<size_t>(w * h * 3);
+    case NioFormat::RGB888:
+        return static_cast<size_t>(w * h * 3);
     case NioFormat::RGBA:
-    case NioFormat::BGRA:  return static_cast<size_t>(w * h * 4);
+    case NioFormat::BGRA:
+        return static_cast<size_t>(w * h * 4);
     case NioFormat::NV12:
-    case NioFormat::NV21:  return static_cast<size_t>(w * h * 3 / 2);
-    case NioFormat::I420:  return static_cast<size_t>(w * h * 3 / 2);
-    default:               return 0;
+    case NioFormat::NV21:
+        return static_cast<size_t>(w * h * 3 / 2);
+    case NioFormat::I420:
+        return static_cast<size_t>(w * h * 3 / 2);
+    default:
+        return 0;
     }
 }
 
@@ -97,7 +111,8 @@ enum class NioFrameType {
 };
 
 // Camera intrinsic parameters (3×3 pinhole model).
-struct NioIntrinsic {
+struct NioIntrinsic
+{
     float fx = 0.0f;
     float fy = 0.0f;
     float cx = 0.0f;
@@ -107,7 +122,8 @@ struct NioIntrinsic {
 };
 
 // Stream profile — resolution + fps + format for one sensor stream.
-struct NioStreamProfile {
+struct NioStreamProfile
+{
     int width = 0;
     int height = 0;
     int fps = 30;
@@ -116,7 +132,8 @@ struct NioStreamProfile {
 
 // Per-device sensor presence + profile summary.
 // Replaces SensorInfo (which used OBFormat / ob::VideoStreamProfile).
-struct NioSensorInfo {
+struct NioSensorInfo
+{
     bool hasColor = false;
     bool hasDepth = false;
     bool hasIR = false;
@@ -147,46 +164,78 @@ struct NioSensorInfo {
 using NioFrameCounts = std::map<NioFrameType, uint64_t>;
 
 // NioFormat → string (for logging / FPS reports).
-inline const char *nioFormatToStr(NioFormat f) {
+inline const char* nioFormatToStr(NioFormat f) {
     switch (f) {
-    case NioFormat::Y8:     return "Y8";
-    case NioFormat::Y16:    return "Y16";
-    case NioFormat::YUYV:   return "YUYV";
-    case NioFormat::UYVY:   return "UYVY";
-    case NioFormat::YUY2:   return "YUY2";
-    case NioFormat::MJPG:   return "MJPG";
-    case NioFormat::MJPEG:  return "MJPEG";
-    case NioFormat::NV12:   return "NV12";
-    case NioFormat::NV21:   return "NV21";
-    case NioFormat::I420:   return "I420";
-    case NioFormat::RGB:    return "RGB";
-    case NioFormat::BGR:    return "BGR";
-    case NioFormat::RGBA:   return "RGBA";
-    case NioFormat::BGRA:   return "BGRA";
-    case NioFormat::H264:   return "H264";
-    case NioFormat::H265:   return "H265";
-    case NioFormat::HEVC:   return "HEVC";
-    case NioFormat::POINT:  return "POINT";
-    case NioFormat::RGB888: return "RGB888";
-    default:                return "UNKNOWN";
+    case NioFormat::Y8:
+        return "Y8";
+    case NioFormat::Y16:
+        return "Y16";
+    case NioFormat::YUYV:
+        return "YUYV";
+    case NioFormat::UYVY:
+        return "UYVY";
+    case NioFormat::YUY2:
+        return "YUY2";
+    case NioFormat::MJPG:
+        return "MJPG";
+    case NioFormat::MJPEG:
+        return "MJPEG";
+    case NioFormat::NV12:
+        return "NV12";
+    case NioFormat::NV21:
+        return "NV21";
+    case NioFormat::I420:
+        return "I420";
+    case NioFormat::RGB:
+        return "RGB";
+    case NioFormat::BGR:
+        return "BGR";
+    case NioFormat::RGBA:
+        return "RGBA";
+    case NioFormat::BGRA:
+        return "BGRA";
+    case NioFormat::H264:
+        return "H264";
+    case NioFormat::H265:
+        return "H265";
+    case NioFormat::HEVC:
+        return "HEVC";
+    case NioFormat::POINT:
+        return "POINT";
+    case NioFormat::RGB888:
+        return "RGB888";
+    default:
+        return "UNKNOWN";
     }
 }
 
 // NioFrameType → string (for logging / FPS reports).
-inline const char *nioFrameTypeToStr(NioFrameType t) {
+inline const char* nioFrameTypeToStr(NioFrameType t) {
     switch (t) {
-    case NioFrameType::COLOR:       return "COLOR";
-    case NioFrameType::DEPTH:       return "DEPTH";
-    case NioFrameType::IR:          return "IR";
-    case NioFrameType::IR_LEFT:     return "IR_LEFT";
-    case NioFrameType::IR_RIGHT:    return "IR_RIGHT";
-    case NioFrameType::ACCEL:       return "ACCEL";
-    case NioFrameType::GYRO:        return "GYRO";
-    case NioFrameType::COLOR_LEFT:  return "COLOR_LEFT";
-    case NioFrameType::COLOR_RIGHT: return "COLOR_RIGHT";
-    case NioFrameType::CONFIDENCE:  return "CONFIDENCE";
-    case NioFrameType::POINT:       return "POINT";
-    default:                        return "UNKNOWN";
+    case NioFrameType::COLOR:
+        return "COLOR";
+    case NioFrameType::DEPTH:
+        return "DEPTH";
+    case NioFrameType::IR:
+        return "IR";
+    case NioFrameType::IR_LEFT:
+        return "IR_LEFT";
+    case NioFrameType::IR_RIGHT:
+        return "IR_RIGHT";
+    case NioFrameType::ACCEL:
+        return "ACCEL";
+    case NioFrameType::GYRO:
+        return "GYRO";
+    case NioFrameType::COLOR_LEFT:
+        return "COLOR_LEFT";
+    case NioFrameType::COLOR_RIGHT:
+        return "COLOR_RIGHT";
+    case NioFrameType::CONFIDENCE:
+        return "CONFIDENCE";
+    case NioFrameType::POINT:
+        return "POINT";
+    default:
+        return "UNKNOWN";
     }
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) Orbbec Inc. All Rights Reserved.
+// Copyright (c) NIO Inc. All Rights Reserved.
 // Licensed under the MIT License.
 
 #include "utils_opencv.hpp"
