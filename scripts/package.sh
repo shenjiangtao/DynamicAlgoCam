@@ -23,7 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
-BIN_DIR="${BUILD_DIR}/linux_x86_64/bin"
+BIN_DIR="${BUILD_DIR}/bin"
 LIB_DIR="${BUILD_DIR}/linux_x86_64/lib"
 
 DEFAULT_OUTPUT_DIR="${PROJECT_ROOT}/dist"
@@ -107,7 +107,7 @@ echo ""
 echo "[3/8] 复制 SDK extensions..."
 
 if [ "${HAVE_OB_SDK}" = true ]; then
-    EXT_SRC_DIR="${PROJECT_ROOT}/extensions"
+    EXT_SRC_DIR="${PROJECT_ROOT}/vendors/OrbbecSDK/extensions"
     if [ -d "${EXT_SRC_DIR}" ]; then
         for ext_subdir in "${EXT_SRC_DIR}"/*/; do
             [ -d "$ext_subdir" ] || continue
@@ -128,7 +128,7 @@ fi
 
 echo ""
 echo "[4/8] 复制 udev 规则..."
-UDEV_RULES_SRC="${PROJECT_ROOT}/scripts/env_setup/99-obsensor-libusb.rules"
+UDEV_RULES_SRC="${PROJECT_ROOT}/vendors/OrbbecSDK/scripts/env_setup/99-obsensor-libusb.rules"
 if [ -f "${UDEV_RULES_SRC}" ]; then
     cp -v "${UDEV_RULES_SRC}" "${STAGE_DIR}/rules/"
 else
