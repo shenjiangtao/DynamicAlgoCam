@@ -26,6 +26,25 @@ allowed in `app/driver/`. Everything else in `app/` is SDK-agnostic.
 
 Every vendor adapter must implement these three classes:
 
+### 2.0 Supporting Types & Callbacks
+
+| Type | Definition | Purpose |
+|------|------------|---------|
+| `NioStreamConfig` | `{frameType, width, height, fps, format, enabled}` | Per-stream configuration passed to `enableStream()` |
+| `NioAlignMode` | `NONE / HW / SW` | D2C alignment mode |
+| `NioVideoCallback` | `function<void(shared_ptr<NioFrameSet>)>` | Video frame callback type |
+| `NioImuCallback` | `function<void(const vector<NioImuSample>&)>` | IMU sample callback type |
+
+**Framework call order** (`app/capture/nio_capture_session.cpp:25-53`):
+
+```cpp
+// CaptureSession::setup() execution order:
+device_->timerSyncWithHost();                      // clock sync (exception = warning only)
+device_->enableGlobalTimestamp(true);              // if supported
+sensorInfo_ = device_->setupPipeline(*pipeline_);   // CORE: populates all sensor info
+// sensorInfo_ drives all subsequent encoder/file creation decisions
+```
+
 ### 2.1 NioDevice
 
 | Method | Return | Purpose |
@@ -81,6 +100,10 @@ Every vendor adapter must implement these three classes:
 UNKNOWN, Y8, Y16, YUYV, UYVY, YUY2, MJPG, MJPEG, NV12, NV21, I420,
 RGB, BGR, RGBA, BGRA, H264, H265, HEVC, POINT, RGB888
 ```
+
+Helper functions:
+- `nioFormatBpp(NioFormat)` → bytes per pixel (Y8=1, Y16=2, RGB=3, RGBA=4, others=0)
+- `nioFormatRawSize(NioFormat, w, h)` → raw buffer size in bytes
 
 ### NioFrameType
 
@@ -413,6 +436,16 @@ extend the condition to `if(ENABLE_ORBBEC OR ENABLE_RS_AC1 OR ENABLE_XYZ)`).
 
 **Important:** `nativeFrameSet` is a transitional escape valve. It exists because `NioD2CAlign::process()` needs the original SDK frame to perform vendor-specific alignment. If your vendor's alignment can work on raw pixel data alone, you can implement `NioD2CAlign::process()` to work without `nativeFrameSet` (pass `nullptr`, operate on `NioFrame::data` directly).
 
+**Fusion decision flow** (`app/capture/nio_capture_session.cpp:164-208`):
+
+```cpp
+canFuse_ = cfg_.enableFusion && sensorInfo_.hasColor && sensorInfo_.hasDepth;
+hwD2CMode_ = (pipeline_->getAlignMode() == NioAlignMode::HW);
+if (!hwD2CMode_) {
+    alignFilter = pipeline_->getD2CAlignFilter();  // SW mode: get alignment filter
+}
+```
+
 ---
 
 ## 7. Data Flow Diagram
@@ -436,8 +469,20 @@ VideoFrameQueue (bounded SPSC, capacity 8)
   ├──► ColorFrameConsumer → H264 encoder + viewer
   ├──► DepthFrameConsumer → jet colormap H264 + raw file + viewer
   ├──► IRFrameConsumer → H264 + viewer
-  └──► PointCloudConsumer → PCD file
+   └──► PointCloudConsumer → PCD file
 ```
+
+File creation gating conditions (`app/capture/nio_capture_session.cpp:59-158`):
+
+| File | Gate condition |
+|------|---------------|
+| `*_color_*.h264` | `hasColor && colorFormat != UNKNOWN` |
+| `*_depth_*.h264` + `*_depth_raw_*.raw` | `hasDepth && depthFormat != UNKNOWN` |
+| `*_ir_left_*.h264` | `hasIRLeft` |
+| `*_ir_right_*.h264` | `hasIRRight` |
+| `*_imu_*.txt` | `hasAccel && hasGyro` |
+| `*_point_raw_*.raw` | `pipeline->isPointCloudDepth()` |
+| `*_d2c_fused_*.h264` | `canFuse` (= hasColor && hasDepth) |
 
 ---
 
@@ -453,6 +498,7 @@ VideoFrameQueue (bounded SPSC, capacity 8)
 | Pipeline start fails silently | Exception swallowed in `start()` | Check `NIO_LOG_ERROR_S` output; verify vendor config is complete before calling vendor start |
 | `setupPipeline()` returns all-zero `NioSensorInfo` | Downcast to concrete pipeline failed | Ensure factory creates correct `XyzPipeline` type paired with `XyzDevice` |
 | USB memory error with multi-device | `usbfs_memory_mb` too low | `echo 256 \| sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb` |
+| `discoverDevices()` link error | Driver factory not compiled | Ensure `app/driver/CMakeLists.txt:94` condition includes new vendor macro |
 
 ---
 
