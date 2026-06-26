@@ -44,8 +44,7 @@ void ColorFrameConsumer::setViewer(SDLViewer* viewer, int viewerIdx) {
 DepthFrameConsumer::DepthFrameConsumer(std::shared_ptr<EncodeStreamTask> encodeTask,
                                        std::shared_ptr<DepthRawTask> rawTask, SDLViewer* viewer, int viewerIdx,
                                        ViewerChannel channel, std::shared_ptr<SensorFiles> sensorFiles,
-                                       float depthScale, float depthMinM, float depthMaxM,
-                                       int depthW, int depthH)
+                                       float depthScale, float depthMinM, float depthMaxM, int depthW, int depthH)
 : encodeTask_(std::move(encodeTask))
 , rawTask_(std::move(rawTask))
 , viewer_(viewer)
@@ -156,7 +155,7 @@ void IRFrameConsumer::setViewer(SDLViewer* viewer, int viewerIdx) {
 // === PointcloudFrameConsumer ===
 
 PointcloudFrameConsumer::PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask,
-                                                   std::shared_ptr<SensorFiles> sensorFiles)
+                                                 std::shared_ptr<SensorFiles> sensorFiles)
 : pcdTask_(std::move(pcdTask)), sensorFiles_(std::move(sensorFiles)) {}
 
 void PointcloudFrameConsumer::consume(std::shared_ptr<NioFrameSet> frameSet) {

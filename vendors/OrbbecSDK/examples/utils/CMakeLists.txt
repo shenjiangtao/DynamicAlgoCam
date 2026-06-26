@@ -1,9 +1,5 @@
 # Copyright (c) Orbbec Inc. All Rights Reserved.
 # Licensed under the MIT License.
-#
-# ob_examples_utils — Original example utilities (uses OrbbecSDK directly).
-# This is the original monolithic utils library for examples/.
-# The app/ layered architecture uses nio::core / nio::drivers / nio::capture instead.
 
 cmake_minimum_required(VERSION 3.10)
 project(ob_examples_utils)

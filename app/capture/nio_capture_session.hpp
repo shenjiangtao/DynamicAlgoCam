@@ -45,25 +45,31 @@
 
 namespace nio {
 
-class CaptureSession {
+class CaptureSession
+{
 public:
-    CaptureSession(std::shared_ptr<NioDevice> device,
-                   std::shared_ptr<NioPipeline> pipeline,
-                   const std::string &safeName,
-                   const std::string &deviceOutputDir,
-                   const CaptureConfig &cfg);
+    CaptureSession(std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
+                   const std::string& safeName, const std::string& deviceOutputDir, const CaptureConfig& cfg);
 
     bool setup();
 
-    void startVideoPipeline(SDLViewer &viewer, bool noShow);
+    void startVideoPipeline(SDLViewer& viewer, bool noShow);
     void startImuPipeline();
     void stop();
     void reportFps(uint64_t reportDurationMs);
 
-    const std::string &deviceName() const { return safeName_; }
-    bool hasIMU() const { return sensorInfo_.hasAccel && sensorInfo_.hasGyro; }
-    bool canFuse() const { return canFuse_; }
-    bool hasVideoPipeline() const { return pipeline_ != nullptr; }
+    const std::string& deviceName() const {
+        return safeName_;
+    }
+    bool hasIMU() const {
+        return sensorInfo_.hasAccel && sensorInfo_.hasGyro;
+    }
+    bool canFuse() const {
+        return canFuse_;
+    }
+    bool hasVideoPipeline() const {
+        return pipeline_ != nullptr;
+    }
     uint64_t getAndResetFrameCount(NioFrameType type);
     uint64_t getAndResetFusionCount();
 
@@ -71,14 +77,14 @@ private:
     void createEncodersAndTasks();
     void createColorEncoder();
     void createDepthEncoder();
-    void createIREncoder(NioFrameType type, const std::string &suffix, NioFormat fmt,
-                         int w, int h, int fps, ViewerChannel ch);
+    void createIREncoder(NioFrameType type, const std::string& suffix, NioFormat fmt, int w, int h, int fps,
+                         ViewerChannel ch);
     void createImuTask();
     void createPcdTask();
 
     void setupFusion();
     void writeIntrinsicJson();
-    void setupViewerSlot(SDLViewer &viewer);
+    void setupViewerSlot(SDLViewer& viewer);
 
     void videoConsumerLoop();
     void imuConsumerLoop();
@@ -110,13 +116,13 @@ private:
 
     std::string devId_;
 
-    VideoFrameQueue videoQueue_{8};
-    ImuFrameQueue imuQueue_{32};
+    VideoFrameQueue videoQueue_{ 8 };
+    ImuFrameQueue imuQueue_{ 32 };
     std::thread videoConsumerThread_;
     std::thread imuConsumerThread_;
-    std::atomic<bool> consumersRunning_{false};
+    std::atomic<bool> consumersRunning_{ false };
 
-    SDLViewer *viewer_ = nullptr;
+    SDLViewer* viewer_ = nullptr;
 };
 
 } // namespace nio

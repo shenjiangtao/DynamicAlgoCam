@@ -18,7 +18,6 @@ target_link_libraries(nio_drivers PUBLIC
 
 if(ENABLE_ORBBEC)
     target_include_directories(nio_drivers PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/orbbec
     )
 
@@ -28,8 +27,6 @@ if(ENABLE_ORBBEC)
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_d2c_align.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.cpp
     )
 
     target_compile_definitions(nio_drivers PUBLIC
@@ -45,7 +42,6 @@ endif()
 
 if(ENABLE_RS_AC1)
     target_include_directories(nio_drivers PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/robosense
     )
 
@@ -58,16 +54,6 @@ if(ENABLE_RS_AC1)
 
     target_compile_definitions(nio_drivers PUBLIC
         ENABLE_RS_AC1
-    )
-
-    set(RS_DRIVER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../vendors/RoboSense")
-
-    set(DISABLE_PCAP_PARSE ON CACHE BOOL "Disable PCAP file parse" FORCE)
-    set(COMPILE_DEMOS OFF CACHE BOOL "Build rs_driver demos" FORCE)
-    set(COMPILE_TOOLS OFF CACHE BOOL "Build rs_driver tools" FORCE)
-    set(ENABLE_USB ON CACHE BOOL "Enable USB interface in rs_driver" FORCE)
-
-    target_compile_definitions(nio_drivers PUBLIC
         DISABLE_PCAP_PARSE
         ENABLE_USB
         ENABLE_IMU_PARSE
@@ -78,15 +64,10 @@ if(ENABLE_RS_AC1)
 
     target_include_directories(nio_drivers PUBLIC
         ${RS_DRIVER_ROOT}/src
+        ${RS_DRIVER_ROOT}/thirdparty/libusb/libusb
+        ${RS_DRIVER_ROOT}/thirdparty/libuvc/include
+        ${CMAKE_BINARY_DIR}/rs_driver/thirdparty/libuvc
     )
-
-    set(_SAVED_CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-    set(_SAVED_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    string(REPLACE "-pedantic" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
-    string(REPLACE "-pedantic" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    add_subdirectory(${RS_DRIVER_ROOT} ${CMAKE_BINARY_DIR}/rs_driver)
-    set(CMAKE_C_FLAGS "${_SAVED_CMAKE_C_FLAGS}")
-    set(CMAKE_CXX_FLAGS "${_SAVED_CMAKE_CXX_FLAGS}")
 
     function(_rs_remove_werror TARGET)
         if(TARGET ${TARGET})
@@ -105,14 +86,20 @@ if(ENABLE_RS_AC1)
     target_sources(nio_drivers PRIVATE
         ${RS_DRIVER_ROOT}/src/rs_driver/driver/input/input_usb.cpp
     )
-    target_include_directories(nio_drivers PUBLIC
-        ${RS_DRIVER_ROOT}/thirdparty/libusb/libusb
-        ${RS_DRIVER_ROOT}/thirdparty/libuvc/include
-        ${CMAKE_BINARY_DIR}/rs_driver/thirdparty/libuvc
-    )
     target_link_libraries(nio_drivers PUBLIC usb-ac-static uvc-ac-static pthread)
 
     message(STATUS "RS-AC1 support enabled (rs_driver root: ${RS_DRIVER_ROOT})")
+endif()
+
+if(ENABLE_ORBBEC OR ENABLE_RS_AC1)
+    target_include_directories(nio_drivers PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_sources(nio_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.cpp
+    )
 endif()
 
 if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)
