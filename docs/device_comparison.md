@@ -20,14 +20,14 @@
 | **Color (RGB)** | Yes | Yes | Yes | Yes |
 | **Depth** | Yes | Yes | Yes | Yes (point-cloud derived) |
 | **IR** | Yes (IR_LEFT + IR_RIGHT) | Yes (IR_LEFT + IR_RIGHT) | Yes (IR_LEFT + IR_RIGHT) | No |
-| **IMU (Accel+Gyro)** | **No** | Yes (~200 Hz) | Yes (~200 Hz) | **No** (HID exists but inactive) |
+| **IMU (Accel+Gyro)** | **No** | Yes (~200 Hz) | Yes (~200 Hz) | **Yes** (~100 Hz, via rs_driver HID) |
 | **Point Cloud** | No (depth map only) | No (depth map only) | No (depth map only) | **Yes** (27,648 pts/frame) |
 
 ### Key Implications
 
 - **Gemini 305** has no IMU — no `*_imu_*.txt` output file is created.
 - **Gemini 335L/336L** have IMU — accel and gyro at ~200 Hz → `*_imu_*.txt` with full CSV data.
-- **RoboX AC1** HID IMU interface is present in hardware but does not deliver data in the current firmware/driver configuration. The capture app reports `hasAccel=false, hasGyro=false` and correctly skips IMU file creation.
+- **RoboX AC1** IMU delivers ~100 Hz accel + gyro data via rs_driver HID callback. Temperature field is 0.0 (rs_driver does not expose temperature). IMU data quality: gyro noise ~0.01 rad/s (vs 335L ~0.002 rad/s).
 - **RoboX AC1** has no IR sensors — no `*_ir_*.h264` / `*_ir_left_*.h264` / `*_ir_right_*.h264` files are created.
 - **RoboX AC1** is the only device that outputs point cloud data → `*_point_raw_*.raw` file.
 
@@ -79,17 +79,18 @@
 
 | | Gemini 305 | Gemini 335L | Gemini 336L | RoboX AC1 |
 |---|---|---|---|---|
-| **Accelerometer** | No | Yes | Yes | No (HID present, no data) |
-| **Gyroscope** | No | Yes | Yes | No (HID present, no data) |
-| **Sample Rate** | — | ~200 Hz | ~200 Hz | — |
-| **Full Scale (Accel)** | — | 2g / 8g | 2g / 8g | — |
-| **Full Scale (Gyro)** | — | 250 dps | 250 dps | — |
-| **Output** | — | `*_imu_*.txt` | `*_imu_*.txt` | — |
+| **Accelerometer** | No | Yes | Yes | Yes (~100 Hz) |
+| **Gyroscope** | No | Yes | Yes | Yes (~100 Hz) |
+| **Sample Rate** | — | ~200 Hz | ~200 Hz | ~100 Hz |
+| **Full Scale (Accel)** | — | 2g / 8g | 2g / 8g | Fixed |
+| **Full Scale (Gyro)** | — | 250 dps | 250 dps | Fixed |
+| **Temperature** | — | Yes (~30°C) | Yes (~30°C) | No (0.0) |
+| **Output** | — | `*_imu_*.txt` | `*_imu_*.txt` | `*_imu_*.txt` |
 
 - IMU CSV format: `# host_ts_ms,type,device_ts_us,x,y,z,temperature`
 - Type field: `ACCEL` or `GYRO`
 - OB IMU source: `SOURCE_PORT_USB_HID` (G330Device.cpp:641-694)
-- AC1 IMU is not active — rs_driver HID callback registered but no samples delivered at 100/200 Hz
+- AC1 IMU is active via rs_driver HID — ~100 Hz accel+gyro. Temperature field is always 0.0.
 
 ### 3.5 Point Cloud (AC1 only)
 
@@ -151,7 +152,7 @@ Parse with: `python3 app/tools/parse_point_raw.py <file.raw> [--frame N|--all|--
 | `*_depth_raw_*.raw` | Yes | Yes | Yes | Yes | `NIO_DEPTH_RAW` binary |
 | `*_ir_left_*.h264` | Yes | Yes | Yes | — | H.264 encoded |
 | `*_ir_right_*.h264` | Yes | Yes | Yes | — | H.264 encoded |
-| `*_imu_*.txt` | — | Yes | Yes | — | CSV (`host_ts_ms,type,...`) |
+| `*_imu_*.txt` | — | Yes | Yes | Yes | CSV (`host_ts_ms,type,...`) |
 | `*_d2c_fused_*.h264` | Yes | Yes | Yes | Yes | H.264 encoded |
 | `*_point_raw_*.raw` | — | — | — | Yes | `NIO_POINT_CLOUD_RAW` binary |
 | `*_depth_intrinsic_*.json` | Yes | Yes | Yes | Yes | JSON (depth+color+lidar) |
@@ -224,7 +225,7 @@ lsusb -v -d 3840:1010 | grep bcdUSB
 | "Device is not found, please check!" | AC1 | USB permissions (`crw-rw-r-- root root`) | Add udev rule with `MODE="0666"` |
 | "Wrong Input Type 4" | AC1 | `ENABLE_USB` not defined at compile time | Ensure `-DENABLE_USB` in compile definitions (`app/driver/CMakeLists.txt:44`) |
 | All AC1 output files 0-byte | AC1 | Pipeline init failed (above errors) | Fix above issues first |
-| Empty IMU file (header only) | AC1 | IMU HID present in hardware but inactive | Expected — no fix needed, no IMU file is created |
+| IMU temperature=0.0 | AC1 | rs_driver does not expose temperature data | Expected — temperature field always 0.0 |
 | Core dump on exit | AC1 | `stop()` called on uninitialized driver | Fixed: `running_=false` before thread joins (`app/driver/robosense/nio_rs_device.cpp:202`) |
 | Block artifacts in D2C | AC1 | 96×288 upsampled to 1920×1080 | Inherent limitation; accept or adjust alpha/depth range |
 | IR files empty | AC1 | AC1 has no IR sensors | Expected — IR file creation is skipped (`hasIR=false`) |

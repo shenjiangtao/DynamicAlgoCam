@@ -284,4 +284,4 @@ SDK 回调 (OrbbecSDK / rs_driver 线程)
 - **uvcvideo 必须解绑**：RS-AC1 使用自定义 libuvc 驱动，需先 unbind 内核 uvcvideo
 - **点云数据**：RS-AC1 是唯一输出点云的设备（96×288 = 27,648 点/帧, 10fps）
 - **D2C 融合**：RS-AC1 D2C 始终为硬件（工厂校准），深度从 96×288 上采样到 1920×1080，近距离有明显块效应
-- **IMU**：RS-AC1 硬件有 HID IMU 接口但当前固件/驱动不产出数据，程序自动跳过 IMU 文件创建
+- **IMU**：RS-AC1 通过 rs_driver HID 输出 ~100Hz accel+gyro 数据，温度字段为 0（驱动未暴露）

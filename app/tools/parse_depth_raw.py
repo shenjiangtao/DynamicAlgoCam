@@ -8,7 +8,7 @@ Data structure of .raw file:
     [16:20] Width       (uint32_t)
     [20:24] Height      (uint32_t)
     [24:28] BPP         (uint32_t) - bytes per pixel (2 for Y16)
-    [28:32] Scale       (float32)  - depth unit scale (e.g. 0.001 = 1mm)
+    [28:32] Scale       (float32)  - depth unit scale (Orbbec: m/unit e.g. 0.001; RS-AC1: mm/unit e.g. 5.0)
     [32:36] FrameSize   (uint32_t) - bytes per frame (w*h*bpp)
     [36:44] StartTS     (uint64_t) - session start timestamp (ms)
   Frame data (repeating):
@@ -66,6 +66,13 @@ import json
 import glob as _glob
 import numpy as np
 
+def scale_to_mm_per_unit(scale):
+    if scale < 1.0:
+        return scale * 1000.0
+    else:
+        return scale
+
+
 def parse_header(data):
     header = {}
     magic = data[0:16]
@@ -111,7 +118,7 @@ def parse_raw_file(filepath, width=640, height=480, scale=0.001, force_no_header
         print(f"  Width:     {w}")
         print(f"  Height:    {h}")
         print(f"  BPP:       {bpp}")
-        print(f"  Scale:     {sc} ({1.0/sc:.1f} units/meter)")
+        print(f"  Scale:     {sc} ({'m/unit' if sc < 1.0 else 'mm/unit'})")
         print(f"  FrameSize: {frame_size} bytes")
         print(f"  StartTS:   {header['start_ts']} ms")
         print(f"  File size: {file_size} bytes")
@@ -182,7 +189,8 @@ def load_intrinsic_json(raw_path):
 
 def print_ascii_depth(depth, w_out=80, h_out=24, scale=0.001):
     h, w = depth.shape
-    depth_mm = depth.astype(np.float32) * scale * 1000.0
+    mm_per_unit = scale_to_mm_per_unit(scale)
+    depth_mm = depth.astype(np.float32) * mm_per_unit
     depth_mm[depth == 0] = -1
 
     chars = " .:-=+*#%@"
@@ -207,7 +215,8 @@ def print_ascii_depth(depth, w_out=80, h_out=24, scale=0.001):
 
 
 def print_stats(depth, frame_idx, scale=0.001):
-    depth_mm = depth.astype(np.float64) * scale * 1000.0
+    mm_per_unit = scale_to_mm_per_unit(scale)
+    depth_mm = depth.astype(np.float64) * mm_per_unit
     valid = depth_mm[depth > 0]
     print(f"  Frame {frame_idx}:")
     print(f"    Total pixels:  {depth.size}")
@@ -236,7 +245,8 @@ def save_colorized(depth, filepath, scale=0.001, colormap='jet',
         print("ERROR: matplotlib required for image output. Install: pip3 install matplotlib")
         return
 
-    depth_mm = depth.astype(np.float32) * scale * 1000.0
+    mm_per_unit = scale_to_mm_per_unit(scale)
+    depth_mm = depth.astype(np.float32) * mm_per_unit
     depth_vis = depth_mm.copy()
     depth_vis[depth == 0] = np.nan
 
@@ -292,7 +302,8 @@ def save_histogram(depth, filepath, scale=0.001):
         print("ERROR: matplotlib required")
         return
 
-    depth_mm = depth.astype(np.float32) * scale * 1000.0
+    mm_per_unit = scale_to_mm_per_unit(scale)
+    depth_mm = depth.astype(np.float32) * mm_per_unit
     valid = depth_mm[depth > 0]
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -314,7 +325,10 @@ def save_histogram(depth, filepath, scale=0.001):
 
 def depth_to_pointcloud(depth, scale, fx, fy, cx, cy, max_depth_m=10.0):
     h, w = depth.shape
-    z = depth.astype(np.float64) * scale
+    if scale < 1.0:
+        z = depth.astype(np.float64) * scale
+    else:
+        z = depth.astype(np.float64) * scale / 1000.0
     valid = (depth > 0) & (z <= max_depth_m)
     u = np.tile(np.arange(w, dtype=np.float64), (h, 1))
     v = np.tile(np.arange(h, dtype=np.float64).reshape(-1, 1), (1, w))

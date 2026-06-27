@@ -205,11 +205,11 @@ echo "options usbcore usbfs_memory_mb=256" | sudo tee /etc/modprobe.d/usbcore.co
 
 **排查**：按上述 "设备未被发现" 步骤逐一检查。
 
-### 现象：RS-AC1 IMU 文件不存在
+### 现象：RS-AC1 IMU 温度字段为 0
 
-**原因**：RS-AC1 硬件 HID IMU 接口存在但当前不产出数据。
+**原因**：rs_driver 未暴露 IMU 温度数据，温度字段始终为 0.0。
 
-**说明**：这是已知限制，不属于 bug。程序不会为 RS-AC1 创建 IMU 文件。
+**说明**：这是已知限制。IMU 数据本身（accel+gyro ~100Hz）正常工作。
 
 ---
 
