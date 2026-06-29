@@ -10,6 +10,9 @@ Analyzes captured data from Orbbec 335L/336L and RoboSense AC1 devices:
   - Capture log: FPS, D2C mode, stream start/stop timing
   - Multi-device temporal alignment: clock drift, frame/IMU timestamp consistency
   - Cross-device depth comparison: distribution differences from mounting positions
+  - H.264 video streams: frame count, bitrate, resolution, per-stream quality metrics
+  - Color stream: sharpness, entropy, brightness, exposure quality assessment
+  - D2C fusion: SSIM/PSNR vs color, 8x8 block artifact analysis, SW vs HW comparison
   - Comparison against published specs with pass/fail criteria
 
 Usage:
@@ -25,6 +28,10 @@ Usage:
 Options:
   --output FILE    Output evaluation document path (default: evaluation_report.md)
   --full           Include per-frame depth stats (verbose)
+
+Dependencies:
+  - ffprobe (ffmpeg): required for H.264 stream probe
+  - opencv-python (cv2): optional, for frame-level quality/D2C analysis
 """
 
 import sys
@@ -34,6 +41,7 @@ import json
 import re
 import math
 import argparse
+import subprocess
 import numpy as np
 from datetime import datetime, timezone
 
@@ -76,8 +84,11 @@ def discover_devices(data_root):
     return devices, log_file
 
 
+H264_STREAM_TYPES = ["color", "depth", "d2c_fused", "ir_left", "ir_right"]
+
+
 def find_files(data_root):
-    result = {"raw": None, "imu": None, "intrinsic": None, "log": None, "pcd_dir": None, "h264_files": []}
+    result = {"raw": None, "imu": None, "intrinsic": None, "log": None, "pcd_dir": None, "h264_files": [], "h264_by_type": {}, "imu_path": None, "pcd_dir_path": None}
     for dirpath, dirnames, filenames in os.walk(data_root):
         for fn in filenames:
             fp = os.path.join(dirpath, fn)
@@ -87,6 +98,7 @@ def find_files(data_root):
             if "_imu_" in fn and fn.endswith(".txt"):
                 if result["imu"] is None:
                     result["imu"] = fp
+                    result["imu_path"] = fp
             if "_depth_intrinsic_" in fn and fn.endswith(".json"):
                 if result["intrinsic"] is None:
                     result["intrinsic"] = fp
@@ -95,44 +107,55 @@ def find_files(data_root):
                     result["log"] = fp
             if fn.endswith(".h264"):
                 result["h264_files"].append(fp)
+                for st in H264_STREAM_TYPES:
+                    if f"_{st}_" in fn:
+                        if st not in result["h264_by_type"]:
+                            result["h264_by_type"][st] = fp
+                        break
         for dn in dirnames:
             dp = os.path.join(dirpath, dn)
             if "_pcd_" in dn and os.path.isdir(dp):
                 if result["pcd_dir"] is None:
                     result["pcd_dir"] = dp
+                    result["pcd_dir_path"] = dp
+
+    if result["log"] is None:
+        parent = os.path.dirname(data_root.rstrip("/"))
+        if parent and os.path.isdir(parent):
+            for fn in os.listdir(parent):
+                if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+                    result["log"] = os.path.join(parent, fn)
+                    break
     return result
 
 
+import mmap
+
 def parse_depth_raw(filepath):
+    file_size = os.path.getsize(filepath)
     with open(filepath, "rb") as f:
-        data = f.read()
-    file_size = len(data)
-    magic = data[0:16]
-    if isinstance(magic, bytes):
-        magic_str = magic.split(b'\x00')[0].decode('ascii', errors='replace')
-    else:
-        magic_str = str(magic)
-
-    if magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW'):
-        w = struct.unpack_from('<I', data, 16)[0]
-        h = struct.unpack_from('<I', data, 20)[0]
-        bpp = struct.unpack_from('<I', data, 24)[0]
-        scale = struct.unpack_from('<f', data, 28)[0]
-        frame_size = struct.unpack_from('<I', data, 32)[0]
-        start_ts = struct.unpack_from('<Q', data, 36)[0]
-    else:
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            magic = mm[0:16]
+            magic_str = magic.split(b'\x00')[0].decode('ascii', errors='replace') if isinstance(magic, bytes) else str(magic)
+            if not (magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW')):
+                return None
+            w = struct.unpack_from('<I', mm, 16)[0]
+            h = struct.unpack_from('<I', mm, 20)[0]
+            bpp = struct.unpack_from('<I', mm, 24)[0]
+            scale = struct.unpack_from('<f', mm, 28)[0]
+            frame_size = struct.unpack_from('<I', mm, 32)[0]
+            start_ts = struct.unpack_from('<Q', mm, 36)[0]
+    if frame_size == 0:
         return None
-
     remaining = file_size - HEADER_SIZE
-    num_frames = remaining // frame_size if frame_size > 0 else 0
-
+    num_frames = remaining // frame_size
     frames = []
-    for i in range(num_frames):
-        offset = HEADER_SIZE + i * frame_size
-        frame_data = data[offset:offset + frame_size]
-        depth_arr = np.frombuffer(frame_data, dtype=np.uint16).reshape((h, w))
-        frames.append(depth_arr)
-
+    with open(filepath, "rb") as f:
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            for i in range(num_frames):
+                offset = HEADER_SIZE + i * frame_size
+                depth_arr = np.frombuffer(mm, dtype=np.uint16, count=w * h, offset=offset).reshape((h, w))
+                frames.append(depth_arr)
     return {
         "magic": magic_str,
         "width": w,
@@ -155,34 +178,30 @@ def analyze_depth(depth_info, device_name, max_sample_frames=30):
     scale = depth_info["scale"]
     w, h = depth_info["width"], depth_info["height"]
     scale_is_meters = scale < 1.0
+    convert = scale * 1000.0 if scale_is_meters else scale
 
-    all_valid_ratios = []
+    step = max(1, n // max_sample_frames)
+    sampled_indices = list(range(0, n, step))
+
+    all_valid_ratios = np.empty(len(sampled_indices))
     all_means_mm = []
     all_stds_mm = []
     all_mins_mm = []
     all_maxs_mm = []
     per_frame_valid_mm = []
 
-    step = max(1, n // max_sample_frames)
-    sampled_indices = list(range(0, n, step))
-
-    for i in sampled_indices:
+    for si, i in enumerate(sampled_indices):
         depth = frames[i]
-        if scale_is_meters:
-            depth_mm = depth.astype(np.float64) * scale * 1000.0
-        else:
-            depth_mm = depth.astype(np.float64) * scale
         valid_mask = depth > 0
-        valid = depth_mm[valid_mask]
-        total_px = depth.size
-        valid_ratio = len(valid) / total_px if total_px > 0 else 0.0
-        all_valid_ratios.append(valid_ratio)
-        if len(valid) > 0:
-            all_means_mm.append(valid.mean())
-            all_stds_mm.append(valid.std())
-            all_mins_mm.append(valid.min())
-            all_maxs_mm.append(valid.max())
-            per_frame_valid_mm.append(valid)
+        valid_count = int(np.count_nonzero(valid_mask))
+        all_valid_ratios[si] = valid_count / depth.size if depth.size > 0 else 0.0
+        if valid_count > 0:
+            depth_mm = depth[valid_mask].astype(np.float64) * convert
+            all_means_mm.append(float(depth_mm.mean()))
+            all_stds_mm.append(float(depth_mm.std()))
+            all_mins_mm.append(float(depth_mm.min()))
+            all_maxs_mm.append(float(depth_mm.max()))
+            per_frame_valid_mm.append(depth_mm)
 
     result = {
         "device": device_name,
@@ -196,48 +215,47 @@ def analyze_depth(depth_info, device_name, max_sample_frames=30):
         "start_ts_us": depth_info["start_ts"],
     }
 
-    if all_valid_ratios:
-        result["avg_valid_ratio"] = np.mean(all_valid_ratios)
-        result["min_valid_ratio"] = np.min(all_valid_ratios)
-        result["max_valid_ratio"] = np.max(all_valid_ratios)
+    if len(all_valid_ratios) > 0:
+        result["avg_valid_ratio"] = float(np.mean(all_valid_ratios))
+        result["min_valid_ratio"] = float(np.min(all_valid_ratios))
+        result["max_valid_ratio"] = float(np.max(all_valid_ratios))
     if all_means_mm:
-        result["avg_mean_depth_mm"] = np.mean(all_means_mm)
-        result["avg_std_depth_mm"] = np.mean(all_stds_mm)
+        means_arr = np.array(all_means_mm)
+        result["avg_mean_depth_mm"] = float(means_arr.mean())
+        result["avg_std_depth_mm"] = float(np.mean(all_stds_mm))
         result["min_depth_mm"] = min(all_mins_mm)
         result["max_depth_mm"] = max(all_maxs_mm)
-        result["depth_temporal_std_mm"] = np.std(all_means_mm)
+        result["depth_temporal_std_mm"] = float(means_arr.std())
 
     all_valid_flat = np.concatenate(per_frame_valid_mm) if per_frame_valid_mm else np.array([])
     if len(all_valid_flat) > 0:
-        result["global_mean_mm"] = np.mean(all_valid_flat)
-        result["global_median_mm"] = np.median(all_valid_flat)
-        result["global_std_mm"] = np.std(all_valid_flat)
-        result["global_mean_m"] = np.mean(all_valid_flat) / 1000.0
-        result["global_median_m"] = np.median(all_valid_flat) / 1000.0
-        result["global_std_m"] = np.std(all_valid_flat) / 1000.0
+        result["global_mean_mm"] = float(np.mean(all_valid_flat))
+        result["global_median_mm"] = float(np.median(all_valid_flat))
+        result["global_std_mm"] = float(np.std(all_valid_flat))
+        result["global_mean_m"] = result["global_mean_mm"] / 1000.0
+        result["global_median_m"] = result["global_median_mm"] / 1000.0
+        result["global_std_m"] = result["global_std_mm"] / 1000.0
         pcts = [5, 10, 25, 50, 75, 90, 95, 99]
         vals = np.percentile(all_valid_flat, pcts)
-        result["percentiles_mm"] = {f"p{p}": v for p, v in zip(pcts, vals)}
-        result["percentiles_m"] = {f"p{p}": v / 1000.0 for p, v in zip(pcts, vals)}
+        result["percentiles_mm"] = {f"p{p}": float(v) for p, v in zip(pcts, vals)}
+        result["percentiles_m"] = {f"p{p}": float(v) / 1000.0 for p, v in zip(pcts, vals)}
 
     if n >= 2:
-        if scale_is_meters:
-            first_mm = frames[0].astype(np.float64) * scale * 1000.0
-            last_mm = frames[-1].astype(np.float64) * scale * 1000.0
-        else:
-            first_mm = frames[0].astype(np.float64) * scale
-            last_mm = frames[-1].astype(np.float64) * scale
+        first_mm = frames[0][frames[0] > 0].astype(np.float64) * convert if np.any(frames[0] > 0) else None
+        last_mm = frames[-1][frames[-1] > 0].astype(np.float64) * convert if np.any(frames[-1] > 0) else None
         valid_both = (frames[0] > 0) & (frames[-1] > 0)
         if np.any(valid_both):
-            diff = np.abs(first_mm[valid_both] - last_mm[valid_both])
-            result["temporal_drift_mm"] = np.mean(diff)
-            result["temporal_drift_max_mm"] = np.max(diff)
+            first_full = frames[0].astype(np.float64) * convert
+            last_full = frames[-1].astype(np.float64) * convert
+            diff = np.abs(first_full[valid_both] - last_full[valid_both])
+            result["temporal_drift_mm"] = float(np.mean(diff))
+            result["temporal_drift_max_mm"] = float(np.max(diff))
 
     return result
 
 
 def parse_imu(filepath):
-    records = []
+    raw_lines = []
     with open(filepath, 'r') as f:
         for line in f:
             line = line.strip()
@@ -247,18 +265,14 @@ def parse_imu(filepath):
             if len(parts) < 7:
                 continue
             try:
-                rec = {
-                    "host_ts_ms": int(parts[0]),
-                    "type": parts[1].strip(),
-                    "device_ts_us": int(parts[2]),
-                    "x": float(parts[3]),
-                    "y": float(parts[4]),
-                    "z": float(parts[5]),
-                    "temperature": float(parts[6]),
-                }
-                records.append(rec)
+                rec = (int(parts[0]), parts[1].strip(), int(parts[2]),
+                       float(parts[3]), float(parts[4]), float(parts[5]),
+                       float(parts[6]))
+                raw_lines.append(rec)
             except (ValueError, IndexError):
                 continue
+    records = [{"host_ts_ms": r[0], "type": r[1], "device_ts_us": r[2],
+                "x": r[3], "y": r[4], "z": r[5], "temperature": r[6]} for r in raw_lines]
     return records
 
 
@@ -276,60 +290,63 @@ def analyze_imu(records, device_name):
     result["gyro_samples"] = len(gyro)
 
     if accel:
-        ts_first = accel[0]["host_ts_ms"]
-        ts_last = accel[-1]["host_ts_ms"]
-        duration_s = (ts_last - ts_first) / 1000.0 if ts_last > ts_first else 0.001
-        result["accel_rate_hz"] = len(accel) / duration_s
-        result["accel_duration_s"] = duration_s
         ax = np.array([r["x"] for r in accel])
         ay = np.array([r["y"] for r in accel])
         az = np.array([r["z"] for r in accel])
+        a_host_ts = np.array([r["host_ts_ms"] for r in accel], dtype=np.int64)
+        a_dev_ts = np.array([r["device_ts_us"] for r in accel], dtype=np.int64)
+        accel_mag = np.sqrt(ax**2 + ay**2 + az**2)
+        ts_first = int(a_host_ts[0])
+        ts_last = int(a_host_ts[-1])
+        duration_s = (ts_last - ts_first) / 1000.0 if ts_last > ts_first else 0.001
+        result["accel_rate_hz"] = len(accel) / duration_s
+        result["accel_duration_s"] = duration_s
         result["accel_mean"] = [float(ax.mean()), float(ay.mean()), float(az.mean())]
         result["accel_std"] = [float(ax.std()), float(ay.std()), float(az.std())]
-        result["accel_mag_mean"] = float(np.sqrt(ax**2 + ay**2 + az**2).mean())
-        result["accel_mag_std"] = float(np.sqrt(ax**2 + ay**2 + az**2).std())
+        result["accel_mag_mean"] = float(accel_mag.mean())
+        result["accel_mag_std"] = float(accel_mag.std())
         result["accel_host_ts_first"] = ts_first
         result["accel_host_ts_last"] = ts_last
+        if len(accel) >= 2:
+            intervals = np.diff(a_host_ts)
+            result["accel_interval_mean_ms"] = float(np.mean(intervals))
+            result["accel_interval_std_ms"] = float(np.std(intervals))
+            result["accel_jitter_ms"] = float(np.std(intervals))
 
     if gyro:
-        ts_first = gyro[0]["host_ts_ms"]
-        ts_last = gyro[-1]["host_ts_ms"]
-        duration_s = (ts_last - ts_first) / 1000.0 if ts_last > ts_first else 0.001
-        result["gyro_rate_hz"] = len(gyro) / duration_s
-        result["gyro_duration_s"] = duration_s
         gx = np.array([r["x"] for r in gyro])
         gy = np.array([r["y"] for r in gyro])
         gz = np.array([r["z"] for r in gyro])
+        g_host_ts = np.array([r["host_ts_ms"] for r in gyro], dtype=np.int64)
+        ts_first = int(g_host_ts[0])
+        ts_last = int(g_host_ts[-1])
+        duration_s = (ts_last - ts_first) / 1000.0 if ts_last > ts_first else 0.001
+        result["gyro_rate_hz"] = len(gyro) / duration_s
+        result["gyro_duration_s"] = duration_s
         result["gyro_mean"] = [float(gx.mean()), float(gy.mean()), float(gz.mean())]
         result["gyro_std"] = [float(gx.std()), float(gy.std()), float(gz.std())]
         result["gyro_noise_rms"] = float(np.sqrt(gx**2 + gy**2 + gz**2).mean())
         result["gyro_host_ts_first"] = ts_first
         result["gyro_host_ts_last"] = ts_last
+        if len(gyro) >= 2:
+            intervals = np.diff(g_host_ts)
+            result["gyro_interval_mean_ms"] = float(np.mean(intervals))
+            result["gyro_interval_std_ms"] = float(np.std(intervals))
+            result["gyro_jitter_ms"] = float(np.std(intervals))
 
     temps = [r["temperature"] for r in records if r["temperature"] != 0.0]
     if temps:
-        result["temp_mean"] = float(np.mean(temps))
-        result["temp_min"] = float(np.min(temps))
-        result["temp_max"] = float(np.max(temps))
+        t = np.array(temps)
+        result["temp_mean"] = float(t.mean())
+        result["temp_min"] = float(t.min())
+        result["temp_max"] = float(t.max())
         result["temp_available"] = True
     else:
         result["temp_available"] = False
 
-    if len(accel) >= 2:
-        intervals = np.diff([r["host_ts_ms"] for r in accel])
-        result["accel_interval_mean_ms"] = float(np.mean(intervals))
-        result["accel_interval_std_ms"] = float(np.std(intervals))
-        result["accel_jitter_ms"] = float(np.std(intervals))
-
-    if len(gyro) >= 2:
-        intervals = np.diff([r["host_ts_ms"] for r in gyro])
-        result["gyro_interval_mean_ms"] = float(np.mean(intervals))
-        result["gyro_interval_std_ms"] = float(np.std(intervals))
-        result["gyro_jitter_ms"] = float(np.std(intervals))
-
-    host_ts_all = [r["host_ts_ms"] for r in records]
-    dev_ts_all = [r["device_ts_us"] for r in records]
-    if host_ts_all and dev_ts_all and len(host_ts_all) >= 2:
+    if len(records) >= 2:
+        host_ts_all = np.array([r["host_ts_ms"] for r in records], dtype=np.int64)
+        dev_ts_all = np.array([r["device_ts_us"] for r in records], dtype=np.int64)
         host_durations = np.diff(host_ts_all) / 1000.0
         dev_durations = np.diff(dev_ts_all) / 1e6
         valid = (host_durations > 0) & (dev_durations > 0)
@@ -500,6 +517,660 @@ def analyze_pcd_dir(pcd_dir, device_name, max_files=20):
                 result["pcd_duration_s"] = duration_s
 
     return result
+
+
+def _scan_h264_nals(data):
+    sep3 = np.frombuffer(b'\x00\x00\x01', dtype=np.uint8)
+    sep4 = np.frombuffer(b'\x00\x00\x00\x01', dtype=np.uint8)
+    arr = np.frombuffer(data, dtype=np.uint8)
+    n = len(arr)
+    if n < 4:
+        return 0, 0, {}
+    matches4 = np.ones(n - 3, dtype=bool)
+    for k in range(4):
+        matches4 &= (arr[k:n - 3 + k] == sep4[k])
+    match4_idx = np.where(matches4)[0]
+    encoding = np.zeros(n, dtype=np.uint8)
+    for idx in match4_idx:
+        encoding[idx] = 4
+    sep3_m = np.ones(n - 2, dtype=bool)
+    for k in range(3):
+        sep3_m &= (arr[k:n - 2 + k] == sep3[k])
+    for idx in np.where(sep3_m)[0]:
+        if encoding[idx] == 0:
+            encoding[idx] = 3
+    nal_types = {}
+    vcl_count = 0
+    i = 0
+    while i < n:
+        if encoding[i] == 4 and i + 5 <= n:
+            nt = data[i + 4] & 0x1F
+            nal_types[nt] = nal_types.get(nt, 0) + 1
+            if nt in (1, 5):
+                vcl_count += 1
+            i += 4
+        elif encoding[i] == 3 and i + 4 <= n:
+            nt = data[i + 3] & 0x1F
+            nal_types[nt] = nal_types.get(nt, 0) + 1
+            if nt in (1, 5):
+                vcl_count += 1
+            i += 3
+        else:
+            i += 1
+    return vcl_count, len(match4_idx) + int(np.sum(sep3_m)) - len(match4_idx), nal_types
+
+
+_h264_probe_cache = {}
+
+def probe_h264_stream(path):
+    if path in _h264_probe_cache:
+        return _h264_probe_cache[path]
+    result = {"path": path, "available": True}
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-show_format", path],
+            capture_output=True, text=True, timeout=10
+        )
+        if r.returncode != 0:
+            return {"path": path, "available": False}
+        import json as _json
+        d = _json.loads(r.stdout)
+        s = d.get("streams", [{}])[0]
+        fmt = d.get("format", {})
+        result["width"] = s.get("width")
+        result["height"] = s.get("height")
+        rfr = s.get("r_frame_rate", "")
+        if "/" in str(rfr):
+            num, den = rfr.split("/")
+            result["r_frame_rate"] = float(num) / float(den) if float(den) > 0 else 0
+        else:
+            result["r_frame_rate"] = float(rfr) if rfr else 0
+        result["profile"] = s.get("profile", "")
+        result["level"] = s.get("level")
+        result["pix_fmt"] = s.get("pix_fmt", "")
+        result["color_range"] = s.get("color_range", "")
+        result["color_space"] = s.get("color_space", "")
+        result["color_primaries"] = s.get("color_primaries", "")
+        result["color_transfer"] = s.get("color_transfer", "")
+        result["refs"] = s.get("refs")
+        result["has_b_frames"] = s.get("has_b_frames")
+        result["bit_rate"] = int(fmt.get("bit_rate", 0))
+        result["duration_s"] = float(fmt.get("duration", 0))
+        result["format_size"] = int(fmt.get("size", 0))
+    except Exception:
+        pass
+
+    result["file_size"] = os.path.getsize(path) if os.path.exists(path) else 0
+    with open(path, 'rb') as f:
+        h264_data = f.read()
+    vcl_count, _, nal_types = _scan_h264_nals(h264_data)
+    result["nal_frame_count"] = vcl_count
+
+    if vcl_count > 0 and result["file_size"] > 0:
+        result["avg_frame_bytes"] = result["file_size"] / vcl_count
+        result["avg_bitrate_kbps"] = result["avg_frame_bytes"] * result.get("r_frame_rate", 30) * 8 / 1000
+    result["_nal_types"] = nal_types
+    _h264_probe_cache[path] = result
+    return result
+
+
+def analyze_h264_streams(h264_by_type, device_name, device_type):
+    result = {"device": device_name, "streams": {}, "available": bool(h264_by_type)}
+    if not h264_by_type:
+        return result
+
+    for stream_type, path in h264_by_type.items():
+        if not path or not os.path.exists(path):
+            continue
+        info = probe_h264_stream(path)
+        result["streams"][stream_type] = info
+
+    return result
+
+
+NAL_TYPE_NAMES = {1: "non-IDR", 5: "IDR", 6: "SEI", 7: "SPS", 8: "PPS", 9: "AUD"}
+
+
+def _nal_distribution_from_probe(probe):
+    nal_types = probe.get("_nal_types", {})
+    idr_count = nal_types.get(5, 0)
+    non_idr_count = nal_types.get(1, 0)
+    if idr_count > 0 and non_idr_count > 0:
+        avg_gop_size = (non_idr_count / idr_count) + 1
+    elif idr_count > 0:
+        avg_gop_size = 1
+    else:
+        avg_gop_size = 0
+    return {
+        "nal_types": nal_types,
+        "idr_count": idr_count,
+        "non_idr_count": non_idr_count,
+        "avg_gop_size": round(avg_gop_size, 1),
+    }
+
+
+def analyze_h264_encoding(h264_by_type, device_name):
+    result = {"device": device_name, "streams": {}}
+    for stream_type, path in h264_by_type.items():
+        if not path or not os.path.exists(path):
+            continue
+        probe = probe_h264_stream(path)
+        nal = _nal_distribution_from_probe(probe)
+        diag = {
+            "profile": probe.get("profile", ""),
+            "level": probe.get("level"),
+            "pix_fmt": probe.get("pix_fmt", ""),
+            "color_range": probe.get("color_range", ""),
+            "color_space": probe.get("color_space", ""),
+            "color_primaries": probe.get("color_primaries", ""),
+            "color_transfer": probe.get("color_transfer", ""),
+            "refs": probe.get("refs"),
+            "has_b_frames": probe.get("has_b_frames"),
+            "resolution": f"{probe.get('width', '?')}x{probe.get('height', '?')}",
+            "nal_frame_count": probe.get("nal_frame_count", 0),
+            "file_size_kb": round(probe.get("file_size", 0) / 1024),
+            "avg_bitrate_kbps": round(probe.get("avg_bitrate_kbps", 0)),
+            "avg_frame_bytes": round(probe.get("avg_frame_bytes", 0)),
+            "nal_types": nal["nal_types"],
+            "idr_count": nal["idr_count"],
+            "non_idr_count": nal["non_idr_count"],
+            "avg_gop_size": nal["avg_gop_size"],
+        }
+        result["streams"][stream_type] = diag
+    return result
+
+
+def assess_h264_encoding(enc_info, device_type):
+    checks = []
+    for stream_type, diag in enc_info.get("streams", {}).items():
+        if stream_type not in ("color", "d2c_fused"):
+            continue
+        prefix = f"H.264 {stream_type}"
+        profile = diag.get("profile", "")
+        if profile:
+            checks.append((f"{prefix} profile", profile, "Constrained Baseline+",
+                           profile in ("Constrained Baseline", "Baseline", "Main", "High")))
+        level = diag.get("level")
+        if level is not None:
+            level_ok = level >= 30
+            checks.append((f"{prefix} level", str(level), ">=30", level_ok))
+        pix_fmt = diag.get("pix_fmt", "")
+        if pix_fmt:
+            checks.append((f"{prefix} pix_fmt", pix_fmt, "yuvj420p/yuv420p",
+                           pix_fmt in ("yuvj420p", "yuv420p")))
+        idr = diag.get("idr_count", 0)
+        checks.append((f"{prefix} IDR keyframes", str(idr), ">0", idr > 0))
+        gop = diag.get("avg_gop_size", 0)
+        if gop > 0:
+            checks.append((f"{prefix} avg GOP size", f"{gop:.1f}", "1-120", 1 <= gop <= 120))
+        bframes = diag.get("has_b_frames")
+        if bframes is not None:
+            checks.append((f"{prefix} B-frames", str(bframes), "0 (realtime encode)", bframes == 0))
+    return checks
+
+
+def extract_h264_sample_frames(h264_path, frame_indices, tmp_dir):
+    import subprocess
+    frames = {}
+    if not h264_path or not os.path.exists(h264_path):
+        return frames
+    os.makedirs(tmp_dir, exist_ok=True)
+    probe = probe_h264_stream(h264_path)
+    fps = probe.get("r_frame_rate", 30) or 30
+    total = probe.get("nal_frame_count", 0)
+    for idx in frame_indices:
+        if total > 0 and idx >= total:
+            continue
+        out_path = os.path.join(tmp_dir, f"frame_{idx}.png")
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            try:
+                import cv2
+                img = cv2.imread(out_path)
+                if img is not None:
+                    frames[idx] = img
+                    continue
+            except ImportError:
+                pass
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-fflags", "+genpts", "-r", str(int(fps)),
+             "-i", h264_path, "-vf", f"select=eq(n\\,{idx})", "-frames:v", "1",
+             "-q:v", "2", out_path],
+            capture_output=True, text=True, timeout=15
+        )
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            try:
+                import cv2
+                img = cv2.imread(out_path)
+                if img is not None:
+                    frames[idx] = img
+            except ImportError:
+                pass
+    return frames
+
+
+def compute_image_quality(img):
+    import cv2
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+    hist = np.histogram(gray.flatten(), bins=256, range=(0, 256))[0].astype(float)
+    hist = hist / hist.sum()
+    hist = hist[hist > 0]
+    entropy = -np.sum(hist * np.log2(hist))
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hue_std = float(hsv[:, :, 0].std())
+    sat_mean = float(hsv[:, :, 1].mean())
+    val_mean = float(hsv[:, :, 2].mean())
+    nonzero_ratio = float(np.count_nonzero(gray)) / gray.size
+    return {
+        "sharpness": round(sharpness, 2),
+        "entropy": round(entropy, 2),
+        "hue_std": round(hue_std, 1),
+        "sat_mean": round(sat_mean, 1),
+        "val_mean": round(val_mean, 1),
+        "brightness_mean": round(float(gray.mean()), 1),
+        "brightness_std": round(float(gray.std()), 1),
+        "nonzero_ratio": round(nonzero_ratio, 4),
+        "width": w,
+        "height": h,
+    }
+
+
+def compute_blockiness(gray):
+    h, w = gray.shape
+    boundary_scores = []
+    block_vars = []
+    for y in range(0, h - 8, 8):
+        for x in range(0, w - 8, 8):
+            block = gray[y:y+8, x:x+8].astype(float)
+            block_vars.append(float(block.var()))
+            if x > 0 and x + 8 < w:
+                left = gray[y:y+8, x-1].astype(float)
+                right = gray[y:y+8, x].astype(float)
+                boundary_scores.append(float(np.mean(np.abs(left - right))))
+            if y > 0 and y + 8 < h:
+                top = gray[y-1, x:x+8].astype(float)
+                bot = gray[y, x:x+8].astype(float)
+                boundary_scores.append(float(np.mean(np.abs(top - bot))))
+    if not boundary_scores:
+        return {}
+    arr = np.array(boundary_scores)
+    bv_arr = np.array(block_vars)
+    return {
+        "boundary_mean": round(float(arr.mean()), 2),
+        "boundary_p95": round(float(np.percentile(arr, 95)), 2),
+        "boundary_max": round(float(arr.max()), 0),
+        "block_var_mean": round(float(bv_arr.mean()), 1),
+        "block_var_median": round(float(np.median(bv_arr)), 1),
+        "very_smooth_block_pct": round(100.0 * np.sum(bv_arr < 5) / len(bv_arr), 1) if len(bv_arr) > 0 else 0,
+    }
+
+
+def compute_ssim_psnr(img1, img2):
+    import cv2
+    if img1.shape[:2] != img2.shape[:2]:
+        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
+    mse = np.mean((img1.astype(float) - img2.astype(float)) ** 2)
+    psnr = 10 * np.log10(255**2 / mse) if mse > 0 else float('inf')
+    C1, C2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    ssim_per_ch = []
+    for ch in range(3):
+        c1 = img1[:, :, ch].astype(np.float64)
+        c2 = img2[:, :, ch].astype(np.float64)
+        mu1 = cv2.GaussianBlur(c1, (11, 11), 1.5)
+        mu2 = cv2.GaussianBlur(c2, (11, 11), 1.5)
+        s1 = np.sqrt(np.maximum(cv2.GaussianBlur(c1**2, (11, 11), 1.5) - mu1**2, 0))
+        s2 = np.sqrt(np.maximum(cv2.GaussianBlur(c2**2, (11, 11), 1.5) - mu2**2, 0))
+        s12 = cv2.GaussianBlur(c1 * c2, (11, 11), 1.5) - mu1 * mu2
+        ssim_map = ((2 * mu1 * mu2 + C1) * (2 * s12 + C2)) / ((mu1**2 + mu2**2 + C1) * (s1**2 + s2**2 + C2))
+        ssim_per_ch.append(float(ssim_map.mean()))
+    return {
+        "psnr_db": round(psnr, 2),
+        "ssim": round(float(np.mean(ssim_per_ch)), 4),
+        "ssim_per_channel": [round(s, 4) for s in ssim_per_ch],
+    }
+
+
+def analyze_color_sensor_quality(frames, color_source="unknown"):
+    import cv2
+    result = {"color_source": color_source}
+    sorted_indices = sorted(frames.keys())
+    n = len(sorted_indices)
+    if n == 0:
+        result["error"] = "no frames"
+        return result
+
+    first_frame = frames[sorted_indices[0]]
+    gray_first = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+    h, w = gray_first.shape
+
+    if color_source.upper() in ("MJPG", "MJPEG") or "335" in color_source:
+        result["source_type"] = "MJPEG"
+        result["noise_attribution"] = "MJPEG解压块效应 + yuvj422p→yuv420p sws转换伪影，非原始传感器噪声"
+    elif color_source.upper() in ("NV12", "RAW") or "AC1" in color_source.upper():
+        result["source_type"] = "NV12"
+        result["noise_attribution"] = "原始传感器噪声（NV12直出），无MJPEG中间解压"
+    else:
+        result["source_type"] = "unknown"
+        result["noise_attribution"] = "无法确定噪声来源格式"
+
+    ssim_adjacent = []
+    ssim_spread = []
+    psnr_adjacent = []
+    psnr_spread = []
+    for i in range(1, n):
+        idx_prev = sorted_indices[i - 1]
+        idx_cur = sorted_indices[i]
+        if idx_prev in frames and idx_cur in frames:
+            sp = compute_ssim_psnr(frames[idx_prev], frames[idx_cur])
+            if idx_cur - idx_prev <= 2:
+                ssim_adjacent.append(sp["ssim"])
+                psnr_adjacent.append(sp["psnr_db"])
+            else:
+                ssim_spread.append(sp["ssim"])
+                psnr_spread.append(sp["psnr_db"])
+    all_ssim = ssim_adjacent + ssim_spread
+    all_psnr = psnr_adjacent + psnr_spread
+    if ssim_adjacent:
+        result["inter_frame_ssim_adjacent_mean"] = round(float(np.mean(ssim_adjacent)), 4)
+        result["inter_frame_ssim_adjacent_min"] = round(float(np.min(ssim_adjacent)), 4)
+    if ssim_spread:
+        result["inter_frame_ssim_spread_mean"] = round(float(np.mean(ssim_spread)), 4)
+        result["inter_frame_ssim_spread_min"] = round(float(np.min(ssim_spread)), 4)
+    if all_ssim:
+        result["inter_frame_ssim_mean"] = round(float(np.mean(all_ssim)), 4)
+        result["inter_frame_ssim_min"] = round(float(np.min(all_ssim)), 4)
+        result["inter_frame_ssim_std"] = round(float(np.std(all_ssim)), 4)
+    if all_psnr:
+        result["inter_frame_psnr_mean"] = round(float(np.mean(all_psnr)), 2)
+        result["inter_frame_psnr_min"] = round(float(np.min(all_psnr)), 2)
+
+    lap = cv2.Laplacian(gray_first, cv2.CV_64F)
+    smooth_mask = cv2.GaussianBlur(gray_first, (31, 31), 5)
+    smooth_std = cv2.Laplacian(smooth_mask, cv2.CV_64F).var()
+    result["laplacian_var_full"] = round(float(lap.var()), 2)
+    result["laplacian_var_smooth_region"] = round(float(smooth_std), 4)
+
+    kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
+    high_freq = cv2.filter2D(gray_first.astype(np.float32), -1, kernel.astype(np.float32))
+    signal_power = float(np.mean(gray_first.astype(float) ** 2))
+    noise_power = float(np.mean(high_freq ** 2))
+    result["noise_laplacian_std"] = round(float(lap.std()), 2)
+    result["snr_proxy_db"] = round(10 * np.log10(signal_power / noise_power), 2) if noise_power > 0 else 0
+
+    dark_mask = gray_first < 30
+    dark_pixel_count = int(np.sum(dark_mask))
+    dark_pixel_pct = round(100.0 * dark_pixel_count / gray_first.size, 1)
+    result["dark_pixel_pct"] = dark_pixel_pct
+    if dark_pixel_count > 100:
+        dark_region = gray_first[dark_mask].astype(float)
+        result["dark_region_noise_std"] = round(float(dark_region.std()), 2)
+        result["dark_region_mean"] = round(float(dark_region.mean()), 2)
+    else:
+        result["dark_region_noise_std"] = 0
+        result["dark_region_mean"] = 0
+
+    hsv = cv2.cvtColor(first_frame, cv2.COLOR_BGR2HSV)
+    sat_channel = hsv[:, :, 1].astype(float)
+    result["chroma_snr_db"] = round(10 * np.log10(sat_channel.mean() ** 2 / (sat_channel.std() ** 2 + 1e-10)), 2)
+
+    hist = np.histogram(gray_first.flatten(), bins=256, range=(0, 256))[0].astype(float)
+    total_px = gray_first.size
+    clip_lo_pct = round(100.0 * hist[0] / total_px, 1)
+    clip_hi_pct = round(100.0 * hist[255] / total_px, 1)
+    result["hist_clip_lo_pct"] = clip_lo_pct
+    result["hist_clip_hi_pct"] = clip_hi_pct
+
+    grays = {}
+    for idx in sorted_indices:
+        g = gray_first if idx == sorted_indices[0] else cv2.cvtColor(frames[idx], cv2.COLOR_BGR2GRAY)
+        grays[idx] = g
+        sharpness_values.append(float(cv2.Laplacian(g, cv2.CV_64F).var()))
+    result["sharpness_mean"] = round(float(np.mean(sharpness_values)), 2)
+    result["sharpness_std"] = round(float(np.std(sharpness_values)), 2) if len(sharpness_values) > 1 else 0
+    result["sharpness_temporal_stability"] = round(float(np.std(sharpness_values)) / (float(np.mean(sharpness_values)) + 1e-10), 4) if sharpness_values else 0
+
+    gray_blur = cv2.GaussianBlur(gray_first.astype(float), (5, 5), 0)
+    edge_resp = np.abs(gray_first.astype(float) - gray_blur)
+    result["edge_preservation"] = round(float(np.mean(edge_resp)), 2)
+
+    return result
+
+
+def analyze_d2c_fusion(h264_by_type, device_name, device_type, log_info):
+    result = {"device": device_name, "d2c_mode": log_info.get("d2c_mode", "unknown"), "alpha": log_info.get("alpha")}
+    color_path = h264_by_type.get("color")
+    fused_path = h264_by_type.get("d2c_fused")
+    depth_path = h264_by_type.get("depth")
+
+    if not fused_path or not os.path.exists(fused_path):
+        result["fused_available"] = False
+        return result
+    result["fused_available"] = True
+
+    color_probe = probe_h264_stream(color_path) if color_path and os.path.exists(color_path) else {}
+    fused_probe = probe_h264_stream(fused_path)
+    depth_probe = probe_h264_stream(depth_path) if depth_path and os.path.exists(depth_path) else {}
+
+    result["fused_resolution"] = f"{fused_probe.get('width', '?')}x{fused_probe.get('height', '?')}"
+    result["fused_frame_count"] = fused_probe.get("nal_frame_count", 0)
+    result["fused_avg_bitrate_kbps"] = fused_probe.get("avg_bitrate_kbps", 0)
+    result["fused_file_size_kb"] = fused_probe.get("file_size", 0) / 1024
+
+    try:
+        import cv2
+        tmp_dir = os.path.join("/tmp", f"nio_eval_d2c_{device_name}")
+        color_frames = extract_h264_sample_frames(color_path, [0, 50], tmp_dir + "_color") if color_path else {}
+        fused_frames = extract_h264_sample_frames(fused_path, [0, 50], tmp_dir + "_fused")
+
+        if fused_frames:
+            sample_idx = list(fused_frames.keys())[0]
+            fused_img = fused_frames[sample_idx]
+            fused_gray = cv2.cvtColor(fused_img, cv2.COLOR_BGR2GRAY)
+            fused_quality = compute_image_quality(fused_img)
+            fused_block = compute_blockiness(fused_gray)
+            result["fused_quality"] = fused_quality
+            result["fused_blockiness"] = fused_block
+
+        if color_frames and fused_frames:
+            sample_idx = min(list(color_frames.keys())[0], list(fused_frames.keys())[0])
+            if sample_idx in color_frames and sample_idx in fused_frames:
+                sim = compute_ssim_psnr(color_frames[sample_idx], fused_frames[sample_idx])
+                result["color_vs_fused_ssim"] = sim["ssim"]
+                result["color_vs_fused_psnr_db"] = sim["psnr_db"]
+                result["color_vs_fused_detail"] = sim
+
+    except ImportError:
+        result["image_quality_note"] = "cv2 not available, skipping frame-level analysis"
+
+    d2c_mode = log_info.get("d2c_mode", "unknown")
+    result["d2c_mode"] = d2c_mode
+    result["fusion_method_note"] = (
+        "SW D2C: depth 1280x800→color 1280x720 software reprojection"
+        if d2c_mode == "SW" or device_type in ("335L", "336L")
+        else "HW D2C: depth 96x288→color 1920x1080 hardware upsampling (block artifacts expected)"
+        if d2c_mode == "HW" or device_type == "AC1"
+        else f"D2C mode={d2c_mode}"
+    )
+
+    color_frame_count = color_probe.get("nal_frame_count", 0)
+    fused_frame_count = fused_probe.get("nal_frame_count", 0)
+    result["color_to_fused_frame_ratio"] = round(color_frame_count / fused_frame_count, 2) if fused_frame_count > 0 else 0
+    result["color_frame_count"] = color_frame_count
+    result["depth_frame_count"] = depth_probe.get("nal_frame_count", 0)
+
+    return result
+
+
+def analyze_color_streams(h264_by_type, device_name, device_type, depth_stats):
+    result = {"device": device_name}
+    color_path = h264_by_type.get("color")
+    if not color_path or not os.path.exists(color_path):
+        result["color_available"] = False
+        return result
+    result["color_available"] = True
+
+    color_probe = probe_h264_stream(color_path)
+    result["color_resolution"] = f"{color_probe.get('width', '?')}x{color_probe.get('height', '?')}"
+    result["color_frame_count"] = color_probe.get("nal_frame_count", 0)
+    result["color_avg_bitrate_kbps"] = color_probe.get("avg_bitrate_kbps", 0)
+    result["color_file_size_kb"] = color_probe.get("file_size", 0) / 1024
+    result["color_fps"] = color_probe.get("r_frame_rate", 0)
+
+    try:
+        import cv2
+        tmp_dir = os.path.join("/tmp", f"nio_eval_color_{device_name}")
+        total_frames = color_probe.get("nal_frame_count", 0)
+        if total_frames > 10:
+            sensor_indices = [0]
+            for base in [10, 50, 100, 200, 500, 1000]:
+                if base + 1 < total_frames:
+                    sensor_indices.extend([base, base + 1])
+            if total_frames > 20:
+                step = total_frames // 10
+                for k in range(1, 10):
+                    idx = step * k
+                    if idx < total_frames and idx not in sensor_indices:
+                        sensor_indices.append(idx)
+            sensor_indices = sorted(set(sensor_indices))
+        else:
+            sensor_indices = [0, min(1, total_frames - 1)] if total_frames > 1 else [0]
+        frames = extract_h264_sample_frames(color_path, sensor_indices, tmp_dir)
+        if frames:
+            sample_idx = list(frames.keys())[0]
+            quality = compute_image_quality(frames[sample_idx])
+            result["color_quality"] = quality
+
+            if quality["brightness_mean"] < 15 and quality["nonzero_ratio"] < 0.5:
+                result["color_issue"] = "SEVERE_UNDEREXPOSURE"
+                result["color_issue_note"] = f"Color frame near-black (mean={quality['brightness_mean']:.1f}, nonzero={quality['nonzero_ratio']*100:.1f}%), possible HW exposure/trigger issue"
+            elif quality["brightness_mean"] < 30:
+                result["color_issue"] = "DARK"
+                result["color_issue_note"] = f"Color frame dark (mean={quality['brightness_mean']:.1f}), verify lighting/exposure settings"
+
+            if len(frames) >= 2:
+                color_source = device_type if device_type in ("335L", "336L", "AC1") else "unknown"
+                result["sensor_quality"] = analyze_color_sensor_quality(frames, color_source)
+    except ImportError:
+        result["image_quality_note"] = "cv2 not available"
+
+    depth_raw_frames = depth_stats.get("num_frames", 0) if depth_stats else 0
+    if result["color_frame_count"] > 0 and depth_raw_frames > 0:
+        result["color_depth_frame_ratio"] = round(result["color_frame_count"] / depth_raw_frames, 2)
+    result["depth_raw_frames"] = depth_raw_frames
+
+    ir_paths = []
+    for st in ["ir_left", "ir_right"]:
+        p = h264_by_type.get(st)
+        if p and os.path.exists(p):
+            ir_paths.append((st, p))
+    result["ir_streams_available"] = [st for st, _ in ir_paths]
+    for st, p in ir_paths:
+        probe = probe_h264_stream(p)
+        result[f"{st}_frame_count"] = probe.get("nal_frame_count", 0)
+        result[f"{st}_resolution"] = f"{probe.get('width', '?')}x{probe.get('height', '?')}"
+
+    return result
+
+
+def assess_color(color_info, device_type):
+    checks = []
+    if not color_info.get("color_available", False):
+        checks.append(("Color stream", "NOT AVAILABLE", "PRESENT", False))
+        return checks
+    checks.append(("Color stream present", "YES", "YES", True))
+    q = color_info.get("color_quality", {})
+    if q:
+        if device_type == "335L":
+            checks.append(("Color resolution", color_info.get("color_resolution", "?"), "1280x720", color_info.get("color_resolution") == "1280x720"))
+        elif device_type == "AC1":
+            checks.append(("Color resolution", color_info.get("color_resolution", "?"), "1920x1080", color_info.get("color_resolution") == "1920x1080"))
+        if color_info.get("color_issue") == "SEVERE_UNDEREXPOSURE":
+            checks.append(("Color brightness", f"mean={q.get('brightness_mean',0):.1f}", ">15", False))
+        elif q.get("brightness_mean", 0) > 5:
+            checks.append(("Color brightness", f"mean={q.get('brightness_mean',0):.1f}", ">5", True))
+    checks.append(("Color frame count", str(color_info.get("color_frame_count", 0)), ">0", color_info.get("color_frame_count", 0) > 0))
+    return checks
+
+
+def assess_d2c_fusion(d2c_info):
+    checks = []
+    if not d2c_info.get("fused_available", False):
+        checks.append(("D2C Fusion stream", "NOT AVAILABLE", "PRESENT", False))
+        return checks
+    checks.append(("D2C Fusion present", "YES", "YES", True))
+    if d2c_info.get("d2c_mode"):
+        checks.append(("D2C mode", d2c_info["d2c_mode"], "SW or HW", d2c_info["d2c_mode"] in ("SW", "HW")))
+    if d2c_info.get("fused_frame_count", 0) > 0:
+        checks.append(("D2C Fusion frame count", str(d2c_info["fused_frame_count"]), ">0", True))
+    q = d2c_info.get("fused_quality", {})
+    if q:
+        checks.append(("Fused image sharpness", f"{q.get('sharpness', 0):.1f}", ">0", q.get("sharpness", 0) > 0))
+        checks.append(("Fused image entropy", f"{q.get('entropy', 0):.2f}", ">2.0", q.get("entropy", 0) > 2.0))
+    blk = d2c_info.get("fused_blockiness", {})
+    if blk:
+        checks.append(("8x8 block boundary score", f"p95={blk.get('boundary_p95', 0):.1f}", "<50 (H.264 normal)", blk.get("boundary_p95", 999) < 50))
+    return checks
+
+
+def assess_color_sensor(sensor_info, device_type):
+    checks = []
+    sq = sensor_info.get("sensor_quality", {})
+    if not sq:
+        return checks
+    src = sq.get("source_type", "unknown")
+    checks.append(("Color source format", src, "MJPEG or NV12", src in ("MJPEG", "NV12")))
+
+    if "inter_frame_ssim_adjacent_mean" in sq:
+        ssim_m = sq["inter_frame_ssim_adjacent_mean"]
+        if src == "MJPEG":
+            threshold = 0.84
+        else:
+            threshold = 0.92
+        checks.append(("Inter-frame SSIM (adjacent)", f"{ssim_m:.4f}", f">={threshold} (source={src})", ssim_m >= threshold))
+
+    if "inter_frame_ssim_adjacent_min" in sq:
+        ssim_min = sq["inter_frame_ssim_adjacent_min"]
+        lo = 0.75 if src == "MJPEG" else 0.85
+        checks.append(("Inter-frame SSIM min (adjacent)", f"{ssim_min:.4f}", f">={lo}", ssim_min >= lo))
+
+    if "inter_frame_ssim_spread_mean" in sq:
+        ssim_sp = sq["inter_frame_ssim_spread_mean"]
+        lo_sp = 0.60 if src == "MJPEG" else 0.70
+        checks.append(("Inter-frame SSIM (spread)", f"{ssim_sp:.4f}", f">={lo_sp} (source={src})", ssim_sp >= lo_sp))
+
+    if "noise_laplacian_std" in sq:
+        nl = sq["noise_laplacian_std"]
+        if src == "MJPEG":
+            hi = 100
+        else:
+            hi = 60
+        checks.append(("Noise level (Laplacian std)", f"{nl:.1f}", f"<{hi} (source={src})", nl < hi))
+
+    if "dark_region_noise_std" in sq and sq["dark_region_noise_std"] > 0:
+        dr = sq["dark_region_noise_std"]
+        checks.append(("Dark region noise", f"{dr:.2f}", "<20.0", dr < 20.0))
+
+    if "chroma_snr_db" in sq:
+        csnr = sq["chroma_snr_db"]
+        lo_db = -5.0
+        checks.append(("Chroma SNR", f"{csnr:.2f} dB", f">={lo_db} dB", csnr >= lo_db))
+
+    if "hist_clip_hi_pct" in sq:
+        clip_hi = sq["hist_clip_hi_pct"]
+        checks.append(("Highlight clipping", f"{clip_hi:.1f}%", "<5.0%", clip_hi < 5.0))
+
+    if "hist_clip_lo_pct" in sq:
+        clip_lo = sq["hist_clip_lo_pct"]
+        checks.append(("Shadow clipping", f"{clip_lo:.1f}%", "<30.0%", clip_lo < 30.0))
+
+    if "sharpness_temporal_stability" in sq:
+        ts = sq["sharpness_temporal_stability"]
+        checks.append(("Temporal sharpness stability (CV)", f"{ts:.4f}", "<0.5", ts < 0.5))
+
+    return checks
 
 
 def parse_pcd_header(filepath):
@@ -714,6 +1385,9 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
     lines.append("11. 不同距离精度评估 (待补充)")
     lines.append("12. 关键发现与建议")
     lines.append("13. 附录：原始数据路径")
+    lines.append("14. 彩色与红外视频流分析")
+    lines.append("15. D2C 深度-彩色融合分析")
+    lines.append("16. 跨设备融合方法对比")
     lines.append("")
 
     lines.append("## 1. 采集会话概览")
@@ -965,7 +1639,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     imu_sizes = {}
     for dt in dev_types:
-        imu_path = _find_imu_path(devices_data[dt]["path"])
+        imu_path = devices_data[dt].get("_files", {}).get("imu_path")
         imu_sizes[dt] = os.path.getsize(imu_path) / (1024*1024) if imu_path and os.path.exists(imu_path) else 0
     row = "| IMU txt |"
     for dt in dev_types:
@@ -983,7 +1657,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         row = "| PCD 点云 |"
         for dt in dev_types:
             if dt in pcd_devs_with_data:
-                pcd_dir = _find_pcd_dir(devices_data[dt]["path"])
+                pcd_dir = devices_data[dt].get("_files", {}).get("pcd_dir_path")
                 pcd_size = _dir_size_mb(pcd_dir) if pcd_dir else 0
                 row += f" {pcd_size:.1f} MB |"
             else:
@@ -991,6 +1665,25 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         if len(dev_types) >= 2:
             row += " - |"
         lines.append(row)
+
+    h264_types_for_table = ["color", "depth", "d2c_fused", "ir_left", "ir_right"]
+    h264_labels = {"color": "Color H.264", "depth": "Depth H.264", "d2c_fused": "D2C Fused H.264", "ir_left": "IR-Left H.264", "ir_right": "IR-Right H.264"}
+    for ht in h264_types_for_table:
+        sizes = {}
+        for dt in dev_types:
+            h264 = devices_data[dt].get("h264_stats", {}).get("streams", {}).get(ht, {})
+            sizes[dt] = h264.get("file_size", 0) / (1024 * 1024) if h264.get("file_size") else 0
+        if any(sizes.values()):
+            row = f"| {h264_labels.get(ht, ht)} |"
+            for dt in dev_types:
+                row += f" {sizes[dt]:.2f} MB |" if sizes[dt] > 0 else " N/A |"
+            if len(dev_types) >= 2:
+                non_zero = [v for v in sizes.values() if v > 0]
+                if len(non_zero) >= 2:
+                    row += f" {max(non_zero)/min(non_zero):.1f}x |"
+                else:
+                    row += " - |"
+            lines.append(row)
     lines.append("")
 
     lines.append("## 7. 多设备时间同步对齐分析")
@@ -1056,11 +1749,23 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         ds = devices_data[dt].get("depth_stats")
         imu = devices_data[dt].get("imu_stats", {})
         pcd = devices_data[dt].get("pcd_stats", {})
+        color = devices_data[dt].get("color_stats", {})
+        d2c = devices_data[dt].get("d2c_fusion", {})
         if ds:
             all_checks.append((f"{dev_labels.get(dt, dt)} 深度", assess_depth(ds, dt)))
         all_checks.append((f"{dev_labels.get(dt, dt)} IMU", assess_imu(imu, dt)))
         if dt == "AC1" and pcd:
             all_checks.append((f"{dev_labels.get(dt, dt)} 点云", assess_pcd(pcd)))
+        if color:
+            all_checks.append((f"{dev_labels.get(dt, dt)} 彩色流", assess_color(color, dt)))
+        if d2c:
+            all_checks.append((f"{dev_labels.get(dt, dt)} D2C融合", assess_d2c_fusion(d2c)))
+        enc = devices_data[dt].get("h264_encoding", {})
+        if enc.get("streams"):
+            all_checks.append((f"{dev_labels.get(dt, dt)} H.264编码", assess_h264_encoding(enc, dt)))
+        sensor = devices_data[dt].get("color_stats", {})
+        if sensor.get("sensor_quality"):
+            all_checks.append((f"{dev_labels.get(dt, dt)} 传感器成像", assess_color_sensor(sensor, dt)))
 
     if alignment:
         ta_checks = assess_temporal_alignment(alignment)
@@ -1189,6 +1894,30 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
     if "336L" not in dev_types or not depth_data.get("336L"):
         findings.append("336L（长距版 335L）暂无物理设备，评估需等待设备接入后补充测试（含不同距离精度评估）")
 
+    for dt in dev_types:
+        cs = devices_data[dt].get("color_stats", {})
+        if cs.get("color_issue") == "SEVERE_UNDEREXPOSURE":
+            findings.append(f"{dt} 彩色流严重欠曝光（亮度均值={cs.get('color_quality',{}).get('brightness_mean',0):.1f}），60%以上像素为零，疑似硬件曝光控制或触发时序问题")
+
+    for dt in dev_types:
+        d2c = devices_data[dt].get("d2c_fusion", {})
+        blk = d2c.get("fused_blockiness", {})
+        if blk and blk.get("very_smooth_block_pct", 0) > 30:
+            findings.append(f"{dt} D2C 融合有 {blk['very_smooth_block_pct']:.1f}% 极平滑8x8块（var<5），可能源于低分辨率深度上采样")
+
+    d2c_devs = [dt for dt in dev_types if devices_data[dt].get("d2c_fusion", {}).get("fused_available")]
+    sw_devs = [dt for dt in d2c_devs if devices_data[dt].get("d2c_fusion", {}).get("d2c_mode") == "SW"]
+    hw_devs = [dt for dt in d2c_devs if devices_data[dt].get("d2c_fusion", {}).get("d2c_mode") == "HW"]
+    if sw_devs and hw_devs:
+        findings.append(f"设备间 D2C 模式不同：{'/'.join(sw_devs)}=SW(软件重投影), {'/'.join(hw_devs)}=HW(硬件上采样)，融合视觉效果不可直接比较")
+
+    color_335l = devices_data.get("335L", {}).get("color_stats", {})
+    color_ac1 = devices_data.get("AC1", {}).get("color_stats", {})
+    if color_335l.get("color_quality") and color_ac1.get("color_quality"):
+        q3 = color_335l["color_quality"]
+        qa = color_ac1["color_quality"]
+        findings.append(f"彩色流质量：335L 锐度={q3.get('sharpness',0):.1f}、亮度={q3.get('brightness_mean',0):.1f}；AC1 锐度={qa.get('sharpness',0):.1f}、亮度={qa.get('brightness_mean',0):.1f}")
+
     for i, f in enumerate(findings, 1):
         lines.append(f"{i}. {f}")
     lines.append("")
@@ -1199,6 +1928,275 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         lines.append(f"- {dev_labels.get(dt, dt)}: `{devices_data[dt]['path']}`")
     lines.append("")
 
+    lines.append("## 14. 彩色与红外视频流分析")
+    lines.append("")
+    for dt in dev_types:
+        cs = devices_data[dt].get("color_stats", {})
+        if not cs:
+            continue
+        lines.append(f"### 14.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append("")
+        lines.append("| 指标 | 值 |")
+        lines.append("|------|-----|")
+        lines.append(f"| 彩色流可用 | {'是' if cs.get('color_available') else '否'} |")
+        if cs.get("color_available"):
+            lines.append(f"| 彩色分辨率 | {cs.get('color_resolution', 'N/A')} |")
+            lines.append(f"| 彩色帧数 | {cs.get('color_frame_count', 0)} |")
+            lines.append(f"| 彩色帧率 (H.264) | {cs.get('color_fps', 0):.0f} fps |")
+            lines.append(f"| 彩色文件大小 | {cs.get('color_file_size_kb', 0):.0f} KB |")
+            lines.append(f"| 彩色平均码率 | {cs.get('color_avg_bitrate_kbps', 0):.0f} kbps |")
+            q = cs.get("color_quality", {})
+            if q:
+                lines.append(f"| 锐度 (Laplacian var) | {q.get('sharpness', 0):.1f} |")
+                lines.append(f"| 信息熵 (bits) | {q.get('entropy', 0):.2f} |")
+                lines.append(f"| 平均亮度 | {q.get('brightness_mean', 0):.1f} |")
+                lines.append(f"| 亮度标准差 | {q.get('brightness_std', 0):.1f} |")
+                lines.append(f"| 色相标准差 | {q.get('hue_std', 0):.1f} |")
+                lines.append(f"| 饱和度均值 | {q.get('sat_mean', 0):.1f} |")
+                lines.append(f"| 亮度均值 | {q.get('val_mean', 0):.1f} |")
+                lines.append(f"| 非零像素比 | {q.get('nonzero_ratio', 0)*100:.1f}% |")
+            if cs.get("color_issue"):
+                lines.append(f"| **问题** | **{cs['color_issue']}**: {cs.get('color_issue_note', '')} |")
+            if cs.get("color_depth_frame_ratio"):
+                lines.append(f"| 彩色/深度_raw 帧数比 | {cs['color_depth_frame_ratio']:.2f} |")
+            ir_list = cs.get("ir_streams_available", [])
+            if ir_list:
+                lines.append(f"| 红外流 | {', '.join(ir_list)} |")
+                for ist in ir_list:
+                    fc = cs.get(f"{ist}_frame_count", 0)
+                    res = cs.get(f"{ist}_resolution", "N/A")
+                    lines.append(f"| {ist} 帧数/分辨率 | {fc} / {res} |")
+        lines.append("")
+
+    enc_sub_idx = sum(1 for dt in dev_types if devices_data[dt].get("color_stats"))
+    lines.append(f"### 14.{enc_sub_idx + 1} H.264 编码参数诊断")
+    lines.append("")
+    lines.append("本节从 H.264 Annex-B 码流层面分析编码配置与 NAL 单元分布，诊断编码质量相关问题。")
+    lines.append("")
+    for dt in dev_types:
+        enc = devices_data[dt].get("h264_encoding", {})
+        if not enc or not enc.get("streams"):
+            continue
+        lines.append(f"#### {dev_labels.get(dt, dt)}")
+        lines.append("")
+        for st, diag in enc["streams"].items():
+            lines.append(f"**{st}**")
+            lines.append("")
+            lines.append("| 编码参数 | 值 | 诊断说明 |")
+            lines.append("|----------|-----|----------|")
+            lines.append(f"| Profile | {diag.get('profile', 'N/A')} | {'实时采集常用，无B帧，低延迟' if 'Baseline' in str(diag.get('profile','')) else '支持B帧/CABAC'} |")
+            level = diag.get("level")
+            level_note = ""
+            if level is not None:
+                if level <= 10:
+                    level_note = "仅支持QVGA"
+                elif level <= 21:
+                    level_note = "支持SD"
+                elif level <= 31:
+                    level_note = "支持720p/1080p@30"
+                elif level <= 40:
+                    level_note = "支持1080p@30/60"
+                else:
+                    level_note = "支持高分辨率/帧率"
+            lines.append(f"| Level | {level if level is not None else 'N/A'} | {level_note} |")
+            lines.append(f"| 分辨率 | {diag.get('resolution', 'N/A')} | |")
+            lines.append(f"| 帧数 (VCL NAL) | {diag.get('nal_frame_count', 0)} | IDR+non-IDR 帧数 |")
+            lines.append(f"| pix_fmt | {diag.get('pix_fmt', 'N/A')} | {'JPEG色彩范围(full)，H.264编码器默认' if 'j420' in str(diag.get('pix_fmt','')) else '标准范围'} |")
+            lines.append(f"| color_range | {diag.get('color_range', 'N/A')} | {'pc=full range (0-255)' if diag.get('color_range') == 'pc' else 'tv=limited range (16-235)'} |")
+            lines.append(f"| color_space | {diag.get('color_space', 'N/A')} | {'BT.709 (HD标准)' if diag.get('color_space') == 'bt709' else ''} |")
+            lines.append(f"| color_primaries | {diag.get('color_primaries', 'N/A')} | |")
+            lines.append(f"| color_transfer | {diag.get('color_transfer', 'N/A')} | |")
+            refs = diag.get("refs")
+            lines.append(f"| 参考帧数 | {refs if refs is not None else 'N/A'} | {'1=仅前向参考(Baseline)' if refs == 1 else ''} |")
+            bframes = diag.get("has_b_frames")
+            lines.append(f"| B-frames | {bframes if bframes is not None else 'N/A'} | {'0=无B帧(实时采集)' if bframes == 0 else '含B帧(非实时，增加延迟)'} |")
+            lines.append(f"| 平均码率 | {diag.get('avg_bitrate_kbps', 0)} kbps | 按文件大小/帧数估算 |")
+            lines.append(f"| 平均帧大小 | {diag.get('avg_frame_bytes', 0)} bytes |")
+            lines.append(f"| 文件大小 | {diag.get('file_size_kb', 0)} KB | |")
+
+            nal = diag.get("nal_types", {})
+            nal_desc = ", ".join([f"{NAL_TYPE_NAMES.get(k, f'type{k}')}={v}" for k, v in sorted(nal.items())])
+            lines.append(f"| NAL 单元分布 | {nal_desc} | SPS/PPS/SEI 为控制信息，IDR/non-IDR 为视频帧 |")
+
+            idr = diag.get("idr_count", 0)
+            non_idr = diag.get("non_idr_count", 0)
+            gop = diag.get("avg_gop_size", 0)
+            gop_note = ""
+            if gop > 0:
+                if gop <= 2:
+                    gop_note = "全帧/近全帧IDR，码率较高但随机访问最佳"
+                elif gop <= 30:
+                    gop_note = f"约每{gop:.0f}帧一个关键帧，平衡码率与随机访问"
+                elif gop <= 120:
+                    gop_note = f"GOP较大({gop:.0f}帧)，码率低但seek/跳帧恢复慢"
+                else:
+                    gop_note = f"GOP过大({gop:.0f}帧)，seek延迟高，可能影响播放体验"
+            lines.append(f"| IDR 关键帧数 / GOP大小 | {idr} / {gop:.1f} 帧 | {gop_note} |")
+            lines.append("")
+
+    sq_sub_idx = enc_sub_idx + 2
+    lines.append(f"### 14.{sq_sub_idx} 彩色传感器成像质量分析")
+    lines.append("")
+    lines.append("本节从传感器物理成像层面分析彩色流图像质量，区分 MJPEG 解压伪影与原始传感器噪声。")
+    lines.append("335L 彩色源为 MJPEG（经 yuvj422p→yuv420p sws 转换），AC1 为 NV12 直出，噪声来源不同。")
+    lines.append("")
+    for dt in dev_types:
+        cs = devices_data[dt].get("color_stats", {})
+        sq = cs.get("sensor_quality", {})
+        if not sq:
+            continue
+        lines.append(f"#### {dev_labels.get(dt, dt)}")
+        lines.append("")
+        lines.append(f"- **彩色源类型**: {sq.get('source_type', 'unknown')}")
+        lines.append(f"- **噪声归因**: {sq.get('noise_attribution', '')}")
+        lines.append("")
+        lines.append("| 成像质量指标 | 值 | 说明 |")
+        lines.append("|--------------|-----|------|")
+        if "inter_frame_ssim_adjacent_mean" in sq:
+            lines.append(f"| 帧间 SSIM 均值 (相邻帧) | {sq['inter_frame_ssim_adjacent_mean']:.4f} | 1帧间隔，反映传感器+编码稳定性 |")
+        if "inter_frame_ssim_adjacent_min" in sq:
+            lines.append(f"| 帧间 SSIM 最低 (相邻帧) | {sq['inter_frame_ssim_adjacent_min']:.4f} | 最差相邻帧对 |")
+        if "inter_frame_ssim_spread_mean" in sq:
+            lines.append(f"| 帧间 SSIM 均值 (间隔帧) | {sq['inter_frame_ssim_spread_mean']:.4f} | 远间隔帧，反映场景变化+长期稳定性 |")
+        if "inter_frame_ssim_mean" in sq:
+            lines.append(f"| 帧间 SSIM 均值 (全部) | {sq['inter_frame_ssim_mean']:.4f} | 所有帧对综合 |")
+        if "inter_frame_ssim_std" in sq:
+            lines.append(f"| 帧间 SSIM 标准差 | {sq['inter_frame_ssim_std']:.4f} | 波动越小越稳定 |")
+        if "inter_frame_psnr_mean" in sq:
+            lines.append(f"| 帧间 PSNR 均值 | {sq['inter_frame_psnr_mean']:.2f} dB | 时间域信噪比 |")
+        if "noise_laplacian_std" in sq:
+            lines.append(f"| Laplacian 噪声估计 | {sq['noise_laplacian_std']:.1f} | 高频纹理/噪声强度 |")
+        if "snr_proxy_db" in sq:
+            lines.append(f"| SNR 代理 (dB) | {sq['snr_proxy_db']:.2f} | 信号/噪声功率比 (高频估计) |")
+        if "dark_pixel_pct" in sq:
+            lines.append(f"| 暗区像素占比 | {sq['dark_pixel_pct']:.1f}% | 亮度<30 像素 |")
+        if "dark_region_noise_std" in sq and sq["dark_region_noise_std"] > 0:
+            lines.append(f"| 暗区噪声标准差 | {sq['dark_region_noise_std']:.2f} | 暗区 (gray<30) 内噪声 |")
+            lines.append(f"| 暗区均值 | {sq['dark_region_mean']:.2f} | 暗区平均亮度 |")
+        if "chroma_snr_db" in sq:
+            lines.append(f"| 色度信噪比 | {sq['chroma_snr_db']:.2f} dB | HSV S通道 SNR |")
+        if "hist_clip_lo_pct" in sq:
+            lines.append(f"| 阴影裁切 (gray=0) | {sq['hist_clip_lo_pct']:.1f}% | 灰度直方图低端裁切 |")
+        if "hist_clip_hi_pct" in sq:
+            lines.append(f"| 高光裁切 (gray=255) | {sq['hist_clip_hi_pct']:.1f}% | 灰度直方图高端裁切 |")
+        if "sharpness_mean" in sq:
+            lines.append(f"| 锐度均值 (Laplacian var) | {sq['sharpness_mean']:.2f} | 多帧锐度平均 |")
+        if "sharpness_std" in sq:
+            lines.append(f"| 锐度标准差 | {sq['sharpness_std']:.2f} | 帧间锐度波动 |")
+        if "sharpness_temporal_stability" in sq:
+            lines.append(f"| 锐度时间稳定性 (CV) | {sq['sharpness_temporal_stability']:.4f} | 变异系数，<0.5为稳定 |")
+        if "edge_preservation" in sq:
+            lines.append(f"| 边缘保留强度 | {sq['edge_preservation']:.2f} | 原始-模糊 差分均值 |")
+        lines.append("")
+
+    lines.append("## 15. D2C 深度-彩色融合分析")
+    lines.append("")
+    for dt in dev_types:
+        d2c = devices_data[dt].get("d2c_fusion", {})
+        if not d2c:
+            continue
+        lines.append(f"### 15.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append("")
+        lines.append("| 指标 | 值 |")
+        lines.append("|------|-----|")
+        lines.append(f"| 融合流可用 | {'是' if d2c.get('fused_available') else '否'} |")
+        if d2c.get("fused_available"):
+            lines.append(f"| D2C 模式 | {d2c.get('d2c_mode', 'N/A')} |")
+            lines.append(f"| Alpha 融合系数 | {d2c.get('alpha', 'N/A')} |")
+            lines.append(f"| 融合方法说明 | {d2c.get('fusion_method_note', '')} |")
+            lines.append(f"| 融合输出分辨率 | {d2c.get('fused_resolution', 'N/A')} |")
+            lines.append(f"| 融合帧数 | {d2c.get('fused_frame_count', 0)} |")
+            lines.append(f"| 融合文件大小 | {d2c.get('fused_file_size_kb', 0):.0f} KB |")
+            lines.append(f"| 融合平均码率 | {d2c.get('fused_avg_bitrate_kbps', 0):.0f} kbps |")
+            lines.append(f"| 彩色帧数 | {d2c.get('color_frame_count', 0)} |")
+            lines.append(f"| 深度帧数 | {d2c.get('depth_frame_count', 0)} |")
+            lines.append(f"| 彩色/融合 帧数比 | {d2c.get('color_to_fused_frame_ratio', 0):.2f} |")
+            fq = d2c.get("fused_quality", {})
+            if fq:
+                lines.append(f"| 融合锐度 | {fq.get('sharpness', 0):.1f} |")
+                lines.append(f"| 融合信息熵 | {fq.get('entropy', 0):.2f} |")
+                lines.append(f"| 融合亮度均值 | {fq.get('brightness_mean', 0):.1f} |")
+                lines.append(f"| 融合色相标准差 | {fq.get('hue_std', 0):.1f} |")
+            blk = d2c.get("fused_blockiness", {})
+            if blk:
+                lines.append(f"| 8x8块边界均值 | {blk.get('boundary_mean', 0):.2f} |")
+                lines.append(f"| 8x8块边界 P95 | {blk.get('boundary_p95', 0):.2f} |")
+                lines.append(f"| 8x8块边界最大值 | {blk.get('boundary_max', 0):.0f} |")
+                lines.append(f"| 块内方差均值 | {blk.get('block_var_mean', 0):.1f} |")
+                lines.append(f"| 极平滑块占比 (var<5) | {blk.get('very_smooth_block_pct', 0):.1f}% |")
+            if "color_vs_fused_ssim" in d2c:
+                lines.append(f"| Color vs Fused SSIM | {d2c['color_vs_fused_ssim']:.4f} |")
+                lines.append(f"| Color vs Fused PSNR | {d2c['color_vs_fused_psnr_db']:.2f} dB |")
+                detail = d2c.get("color_vs_fused_detail", {})
+                if detail.get("ssim_per_channel"):
+                    lines.append(f"| SSIM 逐通道 (B/G/R) | {detail['ssim_per_channel']} |")
+        lines.append("")
+
+    lines.append("## 16. 跨设备融合方法对比")
+    lines.append("")
+    d2c_devs = [dt for dt in dev_types if devices_data[dt].get("d2c_fusion", {}).get("fused_available")]
+    if len(d2c_devs) >= 2:
+        lines.append("以下对比不同设备 D2C 融合方式的差异：")
+        lines.append("")
+        header = "| 对比项 |" + "|".join([f" {dev_labels.get(dt, dt)} " for dt in d2c_devs]) + "|"
+        sep = "|--------|" + "|".join(["------" for _ in d2c_devs]) + "|"
+        lines.append(header)
+        lines.append(sep)
+        for row_key, row_label in [
+            ("d2c_mode", "D2C 模式"),
+            ("fused_resolution", "融合分辨率"),
+            ("fused_frame_count", "融合帧数"),
+            ("fusion_method_note", "融合方法"),
+        ]:
+            row = f"| {row_label} |"
+            for dt in d2c_devs:
+                v = devices_data[dt]["d2c_fusion"].get(row_key, "N/A")
+                row += f" {v} |"
+            lines.append(row)
+        for row_key, row_label in [
+            ("sharpness", "锐度"),
+            ("entropy", "信息熵"),
+            ("brightness_mean", "亮度均值"),
+            ("hue_std", "色相标准差"),
+        ]:
+            row = f"| {row_label} |"
+            for dt in d2c_devs:
+                q = devices_data[dt]["d2c_fusion"].get("fused_quality", {})
+                v = f"{q.get(row_key, 'N/A')}" if row_key in q else "N/A"
+                row += f" {v} |"
+            lines.append(row)
+        for row_key, row_label in [
+            ("boundary_mean", "块边界均值"),
+            ("boundary_p95", "块边界P95"),
+            ("very_smooth_block_pct", "极平滑块占比%"),
+        ]:
+            row = f"| {row_label} |"
+            for dt in d2c_devs:
+                blk = devices_data[dt]["d2c_fusion"].get("fused_blockiness", {})
+                v = f"{blk.get(row_key, 'N/A')}" if row_key in blk else "N/A"
+                row += f" {v} |"
+            lines.append(row)
+        lines.append("")
+
+        lines.append("### 16.1 SW D2C vs HW D2C 分析")
+        lines.append("")
+        lines.append("- **SW D2C（335L/336L）**：深度帧 1280x800 通过软件重投影对齐到彩色 1280x720，")
+        lines.append("  深度像素被插值到彩色平面，融合图保持高空间分辨率，边缘可能出现轻微对齐偏差。")
+        lines.append("  Alpha-blend 融合公式：`fused = (1-alpha)*color + alpha*jetmap(depth)`。")
+        lines.append("- **HW D2C（AC1）**：深度 96x288 通过硬件上采样到彩色 1920x1080 分辨率，")
+        lines.append("  上采样比例极高（~20x），导致明显的块状伪影。深度信息在 8x8 块内均匀填充，")
+        lines.append("  块边界处出现颜色/亮度跳变。D2C 融合帧率受制于深度帧率（~10fps vs 彩色 ~30fps）。")
+        lines.append("")
+        lines.append("_注：AC1 的 HW D2C 块状伪影是 96x288→1920x1080 上采样的固有特征，不代表深度原始数据质量问题。")
+        lines.append("使用原始 depth_raw 或 PCD 数据可避免此伪影。_")
+        lines.append("")
+    elif len(d2c_devs) == 1:
+        lines.append(f"_仅 {dev_labels.get(d2c_devs[0], d2c_devs[0])} 有 D2C 融合数据，无法进行跨设备对比_")
+        lines.append("")
+    else:
+        lines.append("_无 D2C 融合数据可用_")
+        lines.append("")
+
     report = "\n".join(lines)
     with open(output_path, 'w') as f:
         f.write(report)
@@ -1207,18 +2205,10 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
 
 def _find_imu_path(data_root):
-    for dirpath, dirnames, filenames in os.walk(data_root):
-        for fn in filenames:
-            if "_imu_" in fn and fn.endswith(".txt"):
-                return os.path.join(dirpath, fn)
     return None
 
 
 def _find_pcd_dir(data_root):
-    for dirpath, dirnames, filenames in os.walk(data_root):
-        for dn in dirnames:
-            if "_pcd_" in dn:
-                return os.path.join(dirpath, dn)
     return None
 
 
@@ -1232,8 +2222,10 @@ def _dir_size_mb(path):
     return total / (1024 * 1024)
 
 
-def evaluate_device(dev_path, dev_type):
-    result = {"path": dev_path, "depth_stats": {}, "imu_stats": {}, "pcd_stats": {}, "intrinsic": None, "log_info": {}}
+def evaluate_device(dev_path, dev_type, session_log=None):
+    result = {"path": dev_path, "depth_stats": {}, "imu_stats": {}, "pcd_stats": {}, "intrinsic": None, "log_info": {}, "h264_stats": {}, "d2c_fusion": {}, "color_stats": {}, "h264_encoding": {}}
+    files = find_files(dev_path)
+    result["_files"] = files
     files = find_files(dev_path)
 
     if files["raw"]:
@@ -1259,7 +2251,21 @@ def evaluate_device(dev_path, dev_type):
         print(f"    {pcd.get('total_pcd_files', 0)} PCD files, avg points={pcd.get('avg_points', 0):.0f}")
 
     result["intrinsic"] = load_intrinsic(files["intrinsic"])
-    result["log_info"] = parse_capture_log(files["log"])
+    log_path = files["log"] or session_log
+    result["log_info"] = parse_capture_log(log_path)
+
+    if files["h264_by_type"]:
+        print(f"  Analyzing H.264 streams: {list(files['h264_by_type'].keys())}")
+        result["h264_stats"] = analyze_h264_streams(files["h264_by_type"], dev_type, dev_type)
+        print(f"  Analyzing H.264 encoding diagnostics...")
+        result["h264_encoding"] = analyze_h264_encoding(files["h264_by_type"], dev_type)
+        print(f"  Analyzing color stream quality...")
+        result["color_stats"] = analyze_color_streams(files["h264_by_type"], dev_type, dev_type, result["depth_stats"])
+        cs = result["color_stats"]
+        if cs.get("color_issue"):
+            print(f"    WARNING: Color issue={cs['color_issue']} ({cs.get('color_issue_note', '')})")
+        print(f"  Analyzing D2C fusion...")
+        result["d2c_fusion"] = analyze_d2c_fusion(files["h264_by_type"], dev_type, dev_type, result["log_info"])
 
     return result
 
@@ -1283,7 +2289,7 @@ def main():
                 print(f"  {dt}: {info['path']}")
             for dt, info in discovered.items():
                 print(f"\n=== Evaluating {dt} ===")
-                devices_data[dt] = evaluate_device(info["path"], dt)
+                devices_data[dt] = evaluate_device(info["path"], dt, session_log=log_file)
             if log_file:
                 print(f"\nSession log: {log_file}")
         else:
@@ -1294,11 +2300,11 @@ def main():
             if not os.path.isdir(d):
                 print(f"Warning: {d} is not a directory, skipping")
                 continue
-            discovered, _ = discover_devices(d)
+            discovered, session_log = discover_devices(d)
             if discovered:
                 for dt, info in discovered.items():
                     print(f"\n=== Evaluating {dt} (from {d}) ===")
-                    devices_data[dt] = evaluate_device(info["path"], dt)
+                    devices_data[dt] = evaluate_device(info["path"], dt, session_log=session_log)
             else:
                 dt = "335L" if i == 0 else ("AC1" if i == 1 else f"unknown_{i}")
                 print(f"\n=== Evaluating {dt} (legacy mode: {d}) ===")
