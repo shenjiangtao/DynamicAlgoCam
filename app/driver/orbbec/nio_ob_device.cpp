@@ -95,7 +95,8 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
     auto pid = devInfo->getPid();
     auto vid = devInfo->getVid();
     bool is305 = nio::isGemini305Device(vid, pid);
-    NioFormat colorPreferredFmt = is305 ? NioFormat::YUYV : NioFormat::MJPG;
+    bool is335L336L = nio::isGemini335L336LDevice(vid, pid);
+    NioFormat colorPreferredFmt = (is305 || is335L336L) ? NioFormat::YUYV : NioFormat::MJPG;
 
     NioSensorInfo si;
     auto sensorList = obDevice_->getSensorList();
@@ -432,7 +433,19 @@ std::shared_ptr<NioD2CAlign> ObPipeline::getD2CAlignFilter() const {
 
 // === ObContext ===
 
-ObContext::ObContext() {}
+bool ObContext::sdkInitialized_ = false;
+
+void ObContext::initSDK(const std::string& extensionsDir) {
+    if (sdkInitialized_)
+        return;
+    if (!extensionsDir.empty()) {
+        ob::Context::setExtensionsDirectory(extensionsDir.c_str());
+        std::cout << "ObContext::initSDK: extensions directory set to " << extensionsDir << std::endl;
+    }
+    sdkInitialized_ = true;
+}
+
+ObContext::ObContext(const std::string& configPath) : ctx_(configPath.c_str()) {}
 
 uint32_t ObContext::getDeviceCount() {
     return ctx_.queryDeviceList()->getCount();

@@ -5,6 +5,8 @@
 #include "utils_c.h"
 
 #include <chrono>
+#include <linux/limits.h>
+#include <unistd.h>
 
 namespace nio {
 char waitForKeyPressed(uint32_t timeout_ms) {
@@ -29,6 +31,19 @@ bool supportAnsiEscape() {
         return false;
     }
     return true;
+}
+
+std::string getExeDir() {
+    char buf[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len <= 0)
+        return ".";
+    buf[len] = '\0';
+    std::string path(buf);
+    auto pos = path.rfind('/');
+    if (pos == std::string::npos)
+        return ".";
+    return path.substr(0, pos);
 }
 
 } // namespace nio

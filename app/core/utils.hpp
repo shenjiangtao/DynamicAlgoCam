@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include <sstream>
+#include <string>
 
 namespace nio {
 char waitForKeyPressed(uint32_t timeout_ms = 0);
@@ -13,6 +14,8 @@ char waitForKeyPressed(uint32_t timeout_ms = 0);
 uint64_t getNowTimesMs();
 
 int getInputOption();
+
+std::string getExeDir();
 
 template <typename T>
 std::string toString(const T a_value, const int n = 6) {

@@ -114,18 +114,20 @@ private:
 class ObContext : public NioContext
 {
 public:
-    ObContext();
+    explicit ObContext(const std::string& configPath = "");
 
     uint32_t getDeviceCount() override;
     std::shared_ptr<NioDevice> getDevice(uint32_t index) override;
 
-    // Expose for legacy code that needs ob::Context.
     ob::Context& obCtx() {
         return ctx_;
     }
 
+    static void initSDK(const std::string& extensionsDir);
+
 private:
     ob::Context ctx_;
+    static bool sdkInitialized_;
 };
 
 } // namespace nio

@@ -205,8 +205,9 @@ inline OBCameraIntrinsic nioIntrinsicToOb(const NioIntrinsic& n) {
 }
 
 // selectBestProfile: scoring-based stream profile selector.
-// Prefers the requested format (+1000), then favors 640w (+100) /
-// 848w (+90) / 1280w (+120), and 30fps (+50) / 25fps (+45) / 15fps (+30).
+// Prefers the requested format (+1000), then favors 1280w (+120) /
+// 640w (+100) / 848w (+90), 800h (+110) / 720h (+100) / 480h (+80),
+// and 30fps (+50) / 25fps (+45) / 15fps (+30).
 // Falls back to first profile if no match.
 inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
                                                                  OBFormat preferredFormat) {
@@ -231,6 +232,12 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
                 score += 100;
             else if (vsp->getWidth() == 848)
                 score += 90;
+            if (vsp->getHeight() == 800)
+                score += 110;
+            else if (vsp->getHeight() == 720)
+                score += 100;
+            else if (vsp->getHeight() == 480)
+                score += 80;
             if (vsp->getFps() == 30)
                 score += 50;
             else if (vsp->getFps() == 25)
@@ -270,6 +277,10 @@ inline bool isGemini305gDevice(int vid, int pid, const char* connectionType) {
 
 inline bool isAstraMiniDevice(int vid, int pid) {
     return vid == OB_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e);
+}
+
+inline bool isGemini335L336LDevice(int vid, int pid) {
+    return vid == OB_DEVICE_VID && (pid == 0x0804 || pid == 0x0807);
 }
 
 inline bool isLiDARDevice(std::shared_ptr<ob::Device> device) {

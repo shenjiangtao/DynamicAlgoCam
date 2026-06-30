@@ -154,7 +154,7 @@ def parse_depth_raw(filepath):
         with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
             for i in range(num_frames):
                 offset = HEADER_SIZE + i * frame_size
-                depth_arr = np.frombuffer(mm, dtype=np.uint16, count=w * h, offset=offset).reshape((h, w))
+                depth_arr = np.frombuffer(mm, dtype=np.uint16, count=w * h, offset=offset).reshape((h, w)).copy()
                 frames.append(depth_arr)
     return {
         "magic": magic_str,
@@ -924,6 +924,7 @@ def analyze_color_sensor_quality(frames, color_source="unknown"):
     result["hist_clip_hi_pct"] = clip_hi_pct
 
     grays = {}
+    sharpness_values = []
     for idx in sorted_indices:
         g = gray_first if idx == sorted_indices[0] else cv2.cvtColor(frames[idx], cv2.COLOR_BGR2GRAY)
         grays[idx] = g
@@ -986,9 +987,11 @@ def analyze_d2c_fusion(h264_by_type, device_name, device_type, log_info):
         result["image_quality_note"] = "cv2 not available, skipping frame-level analysis"
 
     d2c_mode = log_info.get("d2c_mode", "unknown")
+    if d2c_mode == "unknown" and device_type in ("335L", "336L"):
+        d2c_mode = "SW"
     result["d2c_mode"] = d2c_mode
     result["fusion_method_note"] = (
-        "SW D2C: depth 1280x800→color 1280x720 software reprojection"
+        "SW D2C: depth 1280x800→color 1280x800 software reprojection"
         if d2c_mode == "SW" or device_type in ("335L", "336L")
         else "HW D2C: depth 96x288→color 1920x1080 hardware upsampling (block artifacts expected)"
         if d2c_mode == "HW" or device_type == "AC1"
@@ -1084,7 +1087,7 @@ def assess_color(color_info, device_type):
     q = color_info.get("color_quality", {})
     if q:
         if device_type == "335L":
-            checks.append(("Color resolution", color_info.get("color_resolution", "?"), "1280x720", color_info.get("color_resolution") == "1280x720"))
+            checks.append(("Color resolution", color_info.get("color_resolution", "?"), "1280x800", color_info.get("color_resolution") == "1280x800"))
         elif device_type == "AC1":
             checks.append(("Color resolution", color_info.get("color_resolution", "?"), "1920x1080", color_info.get("color_resolution") == "1920x1080"))
         if color_info.get("color_issue") == "SEVERE_UNDEREXPOSURE":
@@ -1882,7 +1885,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         vac1 = depth_data["AC1"].get("avg_valid_ratio", 0)
         findings.append(f"335L 有效像素比 {v335l*100:.1f}% 低于 AC1 {vac1*100:.1f}%，主要因为335L超量程范围(depthMax=5m)的像素为0")
 
-    findings.append("335L 使用 SW D2C（深度→彩色对齐），1280x800→1280x720 需软件重投影；AC1 使用 HW D2C，但 96x288→1920x1080 上采样产生块状伪影")
+    findings.append("335L 使用 SW D2C（深度→彩色对齐），1280x800→1280x800 软件重投影；AC1 使用 HW D2C，但 96x288→1920x1080 上采样产生块状伪影")
 
     if alignment and alignment.get("imu_start_offset_ms") is not None:
         offset = alignment["imu_start_offset_ms"]
@@ -2180,7 +2183,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
         lines.append("### 16.1 SW D2C vs HW D2C 分析")
         lines.append("")
-        lines.append("- **SW D2C（335L/336L）**：深度帧 1280x800 通过软件重投影对齐到彩色 1280x720，")
+        lines.append("- **SW D2C（335L/336L）**：深度帧 1280x800 通过软件重投影对齐到彩色 1280x800，")
         lines.append("  深度像素被插值到彩色平面，融合图保持高空间分辨率，边缘可能出现轻微对齐偏差。")
         lines.append("  Alpha-blend 融合公式：`fused = (1-alpha)*color + alpha*jetmap(depth)`。")
         lines.append("- **HW D2C（AC1）**：深度 96x288 通过硬件上采样到彩色 1920x1080 分辨率，")
