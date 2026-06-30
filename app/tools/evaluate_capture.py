@@ -469,7 +469,55 @@ def analyze_cross_device_depth(all_device_data):
             comp["d1_temporal_std_mm"] = float(s1["depth_temporal_std_mm"])
             comp["d2_temporal_std_mm"] = float(s2["depth_temporal_std_mm"])
 
+        if "percentiles_mm" in s1 and "percentiles_mm" in s2:
+            p1, p2 = s1["percentiles_mm"], s2["percentiles_mm"]
+            pct_keys = sorted(set(p1.keys()) & set(p2.keys()))
+            pct_comp = {}
+            for k in pct_keys:
+                pct_comp[k] = {
+                    "d1_mm": float(p1[k]),
+                    "d2_mm": float(p2[k]),
+                    "diff_mm": float(abs(p1[k] - p2[k])),
+                }
+            comp["percentile_diff"] = pct_comp
+
+        if "global_median_mm" in s1 and "global_median_mm" in s2:
+            comp["median_diff_mm"] = float(abs(s1["global_median_mm"] - s2["global_median_mm"]))
+            comp["d1_global_median_mm"] = float(s1["global_median_mm"])
+            comp["d2_global_median_mm"] = float(s2["global_median_mm"])
+
+        if "global_std_mm" in s1 and "global_std_mm" in s2:
+            comp["d1_global_std_mm"] = float(s1["global_std_mm"])
+            comp["d2_global_std_mm"] = float(s2["global_std_mm"])
+
         result["comparison"][f"{d1}_vs_{d2}"] = comp
+
+    result["per_device_summary"] = {}
+    for dev, s in depth_stats.items():
+        li = all_device_data[dev].get("log_info", {})
+        imu = all_device_data[dev].get("imu_stats", {})
+        color = all_device_data[dev].get("color_stats", {})
+        d2c = all_device_data[dev].get("d2c_fusion", {})
+        summary = {"depth_resolution": s.get("resolution", "N/A"),
+                    "depth_format": s.get("depth_format", "N/A"),
+                    "color_resolution": color.get("color_resolution", li.get("d2c_resolution", "N/A")),
+                    "color_format": li.get("color_format", "N/A"),
+                    "d2c_mode": li.get("d2c_mode", "N/A"),
+                    "depth_scale": s.get("depth_scale", "N/A"),
+                    "depth_mean_mm": s.get("global_mean_mm", "N/A"),
+                    "depth_median_mm": s.get("global_median_mm", "N/A"),
+                    "depth_std_mm": s.get("global_std_mm", "N/A"),
+                    "valid_ratio": s.get("avg_valid_ratio", "N/A"),
+                    "temporal_std_mm": s.get("depth_temporal_std_mm", "N/A"),
+                    "num_frames": s.get("num_frames", "N/A"),
+                    "imu_accel_hz": imu.get("accel_rate_hz", "N/A"),
+                    "imu_gyro_hz": imu.get("gyro_rate_hz", "N/A"),
+                    "imu_total_samples": imu.get("total_samples", "N/A")}
+        if isinstance(summary["valid_ratio"], float):
+            summary["valid_ratio"] = f"{summary['valid_ratio']*100:.1f}%"
+        if isinstance(summary["depth_scale"], float):
+            summary["depth_scale"] = f"{summary['depth_scale']:.4f}"
+        result["per_device_summary"][dev] = summary
 
     return result
 
@@ -1723,9 +1771,45 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         lines.append("因安装位置差异，各设备观测视角不同，深度分布不可直接等同对比。")
         lines.append("以下分析展示各设备深度分布差异，用于确认设备间是否存在系统性偏差。")
         lines.append("")
+
+        if cross_depth.get("per_device_summary"):
+            lines.append("### 8.1 设备关键参数对比总表")
+            lines.append("")
+            summary_devs = list(cross_depth["per_device_summary"].keys())
+            header = "| 参数 |" + "|".join([f" {dev_labels.get(d, d)} " for d in summary_devs]) + "|"
+            sep = "|------|" + "|".join(["------" for _ in summary_devs]) + "|"
+            lines.append(header)
+            lines.append(sep)
+            row_keys = [
+                ("depth_resolution", "深度分辨率"),
+                ("depth_format", "深度格式"),
+                ("depth_scale", "depthScale"),
+                ("depth_mean_mm", "深度均值 (mm)"),
+                ("depth_median_mm", "深度中位数 (mm)"),
+                ("depth_std_mm", "深度标准差 (mm)"),
+                ("valid_ratio", "有效像素比"),
+                ("temporal_std_mm", "时间稳定性-std (mm)"),
+                ("num_frames", "总帧数"),
+                ("color_resolution", "彩色分辨率"),
+                ("color_format", "彩色格式"),
+                ("d2c_mode", "D2C 模式"),
+                ("imu_accel_hz", "IMU 加速度计 (Hz)"),
+                ("imu_gyro_hz", "IMU 陀螺仪 (Hz)"),
+                ("imu_total_samples", "IMU 总采样数"),
+            ]
+            for rk, rl in row_keys:
+                row = f"| {rl} |"
+                for d in summary_devs:
+                    v = cross_depth["per_device_summary"][d].get(rk, "N/A")
+                    if isinstance(v, float):
+                        v = f"{v:.1f}" if rk in ("depth_mean_mm", "depth_median_mm", "depth_std_mm", "temporal_std_mm", "imu_accel_hz", "imu_gyro_hz") else str(v)
+                    row += f" {v} |"
+                lines.append(row)
+            lines.append("")
+
         for pair_key, comp in cross_depth["comparison"].items():
             d1, d2 = pair_key.split("_vs_")
-            lines.append(f"### {dev_labels.get(d1, d1)} vs {dev_labels.get(d2, d2)}")
+            lines.append(f"### 8.{2+list(cross_depth['comparison'].keys()).index(pair_key)} {dev_labels.get(d1, d1)} vs {dev_labels.get(d2, d2)}")
             lines.append("")
             if "resolution_diff" in comp:
                 lines.append(f"- 分辨率差异：{comp['resolution_diff']}")
@@ -1733,11 +1817,30 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                 lines.append(f"- 全局均值差：**{comp['mean_diff_mm']:.1f} mm ({comp['mean_diff_m']:.3f} m)**")
                 lines.append(f"  - {d1}: {comp['d1_global_mean_mm']:.1f} mm")
                 lines.append(f"  - {d2}: {comp['d2_global_mean_mm']:.1f} mm")
+            if "median_diff_mm" in comp:
+                lines.append(f"- 全局中位数差：**{comp['median_diff_mm']:.1f} mm**")
+                lines.append(f"  - {d1}: {comp['d1_global_median_mm']:.1f} mm")
+                lines.append(f"  - {d2}: {comp['d2_global_median_mm']:.1f} mm")
             if "valid_ratio_diff" in comp:
                 lines.append(f"- 有效像素比差异：{comp['valid_ratio_diff']*100:.1f}%")
             if "d1_temporal_std_mm" in comp:
                 lines.append(f"- 时间稳定性对比：{d1}={comp['d1_temporal_std_mm']:.1f} mm, {d2}={comp['d2_temporal_std_mm']:.1f} mm")
             lines.append("")
+
+            if comp.get("percentile_diff"):
+                lines.append(f"#### 深度百分位对比")
+                lines.append("")
+                pct = comp["percentile_diff"]
+                header = "| 百分位 |" + f" {dev_labels.get(d1, d1)} (mm) | {dev_labels.get(d2, d2)} (mm) | 差值 (mm) |"
+                sep = "|--------|" + "------|------|------|"
+                lines.append(header)
+                lines.append(sep)
+                for k in sorted(pct.keys()):
+                    v = pct[k]
+                    pct_label = k[1:] if k.startswith("p") else k
+                    lines.append(f"| {pct_label}% | {v['d1_mm']:.0f} | {v['d2_mm']:.0f} | {v['diff_mm']:.0f} |")
+                lines.append("")
+
             lines.append("_注：均值差异主要来源于安装位置和视角差异，不直接代表测距精度差异。_")
             lines.append("")
     else:
