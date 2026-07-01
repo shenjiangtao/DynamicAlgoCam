@@ -120,11 +120,14 @@ def find_files(data_root):
                     result["pcd_dir_path"] = dp
 
     if result["log"] is None:
-        parent = os.path.dirname(data_root.rstrip("/"))
-        if parent and os.path.isdir(parent):
-            for fn in os.listdir(parent):
-                if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
-                    result["log"] = os.path.join(parent, fn)
+        for _dir in [os.path.dirname(data_root.rstrip("/")),
+                     os.path.dirname(os.path.dirname(data_root.rstrip("/")))]:
+            if _dir and os.path.isdir(_dir):
+                for fn in os.listdir(_dir):
+                    if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+                        result["log"] = os.path.join(_dir, fn)
+                        break
+                if result["log"]:
                     break
     return result
 
@@ -206,6 +209,7 @@ def analyze_depth(depth_info, device_name, max_sample_frames=30):
     result = {
         "device": device_name,
         "resolution": f"{w}x{h}",
+        "depth_format": f"Y16 (scale={scale:.4f}, {'m/unit' if scale_is_meters else 'mm/unit'})",
         "num_frames": n,
         "depth_scale": scale,
         "file_size_mb": depth_info["file_size"] / (1024 * 1024),
@@ -1248,7 +1252,7 @@ def parse_pcd_header(filepath):
         return None
 
 
-def parse_capture_log(log_path):
+def parse_capture_log(log_path, device_path=None):
     result = {}
     if not log_path or not os.path.exists(log_path):
         return result
@@ -1268,10 +1272,30 @@ def parse_capture_log(log_path):
     if git_match:
         result["git_commit"] = git_match.group(1)
 
-    fusion_match = re.search(r'D2C Fusion enabled:\s+(\S+).*?mode=(\w+)', content)
-    if fusion_match:
-        result["d2c_resolution"] = fusion_match.group(1)
-        result["d2c_mode"] = fusion_match.group(2)
+    if device_path:
+        dev_name = os.path.basename(device_path.rstrip('/'))
+    else:
+        dev_name = None
+
+    if dev_name:
+        pat_fusion = re.compile(r'D2C Fusion enabled:\s+(\S+).*?mode=(\w+).*?output=\S*' + re.escape(dev_name))
+        m = pat_fusion.search(content)
+        if m:
+            result["d2c_resolution"] = m.group(1)
+            result["d2c_mode"] = m.group(2)
+        pat_color = re.compile(r'Color output:.*?' + re.escape(dev_name) + r'.*?fmt=(\S+)')
+        m = pat_color.search(content)
+        if m:
+            result["color_format"] = m.group(1)
+    if "d2c_mode" not in result:
+        fusion_match = re.search(r'D2C Fusion enabled:\s+(\S+).*?mode=(\w+)', content)
+        if fusion_match:
+            result["d2c_resolution"] = fusion_match.group(1)
+            result["d2c_mode"] = fusion_match.group(2)
+    if "color_format" not in result:
+        color_fmt_match = re.search(r'Color output:.*?fmt=(\S+)', content)
+        if color_fmt_match:
+            result["color_format"] = color_fmt_match.group(1)
 
     alpha_match = re.search(r'alpha=([\d.]+)', content)
     if alpha_match:
@@ -1281,10 +1305,6 @@ def parse_capture_log(log_path):
     if depth_range_match:
         result["depth_min_m"] = float(depth_range_match.group(1))
         result["depth_max_m"] = float(depth_range_match.group(2))
-
-    color_fmt_match = re.search(r'Color output:.*?fmt=(\S+)', content)
-    if color_fmt_match:
-        result["color_format"] = color_fmt_match.group(1)
 
     timestamps = []
     for m in re.finditer(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)', content, re.MULTILINE):
@@ -2358,7 +2378,7 @@ def evaluate_device(dev_path, dev_type, session_log=None):
 
     result["intrinsic"] = load_intrinsic(files["intrinsic"])
     log_path = files["log"] or session_log
-    result["log_info"] = parse_capture_log(log_path)
+    result["log_info"] = parse_capture_log(log_path, device_path=dev_path)
 
     if files["h264_by_type"]:
         print(f"  Analyzing H.264 streams: {list(files['h264_by_type'].keys())}")
@@ -2389,6 +2409,13 @@ def main():
     if len(args.data_dirs) == 1 and os.path.isdir(args.data_dirs[0]):
         root = args.data_dirs[0]
         discovered, log_file = discover_devices(root)
+        if not log_file:
+            parent = os.path.dirname(root.rstrip("/"))
+            if parent and os.path.isdir(parent):
+                for fn in os.listdir(parent):
+                    if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+                        log_file = os.path.join(parent, fn)
+                        break
         if discovered:
             print(f"=== Auto-discovered {len(discovered)} device(s) in {root} ===")
             for dt, info in discovered.items():

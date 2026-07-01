@@ -338,7 +338,7 @@ fi
 
 # ---- 检查当前用户是否在 video 组 (udev 规则指定的 GROUP) ----
 UDEV_GROUP="video"
-if ! id -nG 2>/dev/null | grep -qw "${UDEV_GROUP}"; then
+if ! ( (id -nG 2>/dev/null || true) | { grep -qw "${UDEV_GROUP}" || true; } ); then
     echo "========================================="
     echo " 用户组检查"
     echo "========================================="
@@ -362,8 +362,8 @@ fi
 USBFS_PER_DEV="${NIO_USBFS_PER_DEV:-256}"
 
 # 检测 Orbbec USB 设备数量 (VID=2bc5) + RoboSense RS-AC1 设备数量 (VID=3244)
-OB_COUNT=$(lsusb 2>/dev/null | grep -i -E '2bc5|orbbec' | wc -l)
-RS_COUNT=$(lsusb 2>/dev/null | grep -i '3244' | wc -l)
+OB_COUNT=$( (lsusb 2>/dev/null || true) | { grep -i -E '2bc5|orbbec' || true; } | wc -l)
+RS_COUNT=$( (lsusb 2>/dev/null || true) | { grep -i '3244' || true; } | wc -l)
 DEVICE_COUNT=$((OB_COUNT + RS_COUNT))
 [ "${DEVICE_COUNT}" -eq 0 ] && DEVICE_COUNT=1
 
@@ -405,7 +405,7 @@ if [ "${CURRENT_USBFS}" -lt "${USBFS_MB}" ] 2>/dev/null; then
     fi
 
     # 提示永久配置
-    if [ ! -f /etc/modprobe.d/usbcore.conf ] || ! grep -q "usbfs_memory_mb" /etc/modprobe.d/usbcore.conf 2>/dev/null; then
+    if [ ! -f /etc/modprobe.d/usbcore.conf ] || ! { grep -q "usbfs_memory_mb" /etc/modprobe.d/usbcore.conf 2>/dev/null || true; }; then
         echo ""
         echo "提示: 当前修改仅临时生效, 重启后将失效。永久生效请执行:"
         echo "  echo 'options usbcore usbfs_memory_mb=${USBFS_MB}' | sudo tee /etc/modprobe.d/usbcore.conf"
