@@ -65,9 +65,12 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
 }
 
 // Convert RS-AC1 PointCloudMsg → NioFrame (raw POINT data for PCD recording).
-// Binary layout: [4 bytes: pointCount (uint32)] [pointCount * elementSize bytes: packed XYZIRT]
-// Each element: float x(4) + float y(4) + float z(4) + uint8 intensity(1) + uint16 ring(2) + double timestamp(8) = 23
-// bytes
+// Wire layout (see PcdLayout in nio_types.hpp):
+//   [12B header: srcPointSize(4) + numFields(4) + pointCount(4)]
+//   [numFields * 24B PcdFieldDesc entries]
+//   [pointCount * 24B packed PointXYZIRT data]
+// The PcdFieldDesc entries describe field offsets within the 24-byte
+// PointXYZIRT struct (which has 1 byte padding after intensity).
 inline NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     NioFrame f;
     f.type = NioFrameType::POINT;
@@ -75,28 +78,31 @@ inline NioFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
     f.timestampUs = static_cast<uint64_t>(cloud->timestamp * 1e6);
 
     uint32_t nPts = static_cast<uint32_t>(cloud->points.size());
-    constexpr size_t elemSize = 4 + 4 + 4 + 1 + 2 + 8; // 23 bytes per point
-    size_t dataSize = sizeof(uint32_t) + static_cast<size_t>(nPts) * elemSize;
+    PcdLayout layout = PcdLayout::rsAc1();
+    constexpr size_t srcPtSize = 24; // sizeof(PointXYZIRT)
+
+    // Wire header (serialized by PcdLayout), minus pointCount which we write ourselves
+    size_t hdrSize = 12 + layout.fields.size() * sizeof(PcdFieldDesc);
+    size_t dataSize = hdrSize + static_cast<size_t>(nPts) * srcPtSize;
     f.data.resize(dataSize);
 
     uint8_t* dst = f.data.data();
-    std::memcpy(dst, &nPts, sizeof(uint32_t));
-    dst += sizeof(uint32_t);
+    // Write header: srcPointSize(4) + numFields(4) + pointCount(4)
+    std::memcpy(dst, &layout.srcPointSize, 4);
+    dst += 4;
+    uint32_t nFields = static_cast<uint32_t>(layout.fields.size());
+    std::memcpy(dst, &nFields, 4);
+    dst += 4;
+    std::memcpy(dst, &nPts, 4);
+    dst += 4;
+    // Write field descriptors
+    if (!layout.fields.empty())
+        std::memcpy(dst, layout.fields.data(), nFields * sizeof(PcdFieldDesc));
+    dst += nFields * sizeof(PcdFieldDesc);
 
-    for (uint32_t i = 0; i < nPts; ++i) {
-        const auto& pt = cloud->points[i];
-        std::memcpy(dst, &pt.x, 4);
-        dst += 4;
-        std::memcpy(dst, &pt.y, 4);
-        dst += 4;
-        std::memcpy(dst, &pt.z, 4);
-        dst += 4;
-        std::memcpy(dst, &pt.intensity, 1);
-        dst += 1;
-        std::memcpy(dst, &pt.ring, 2);
-        dst += 2;
-        std::memcpy(dst, &pt.timestamp, 8);
-        dst += 8;
+    // Bulk-memcpy the entire points array — PointXYZIRT is 24 bytes with 1 byte padding
+    if (nPts > 0 && !cloud->points.empty()) {
+        std::memcpy(dst, cloud->points.data(), static_cast<size_t>(nPts) * srcPtSize);
     }
 
     return f;

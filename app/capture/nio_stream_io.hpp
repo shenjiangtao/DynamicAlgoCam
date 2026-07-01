@@ -90,9 +90,11 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
                              float scale, uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs = 0);
 
 // writePcdFile: write one PCD v0.7 binary file per frame.
-// Reads wire-format point data: [4B pointCount] + pointCount * 23B
-//   (float x,y,z + uint8 intensity + uint16 ring + double timestamp per point).
-// Output PCD has fields: x y z intensity ring timestamp (F F F F U F).
+// Input wire format is self-describing (see PcdLayout::serialize):
+//   [4B srcPointSize] [4B numFields] [4B pointCount]
+//   [numFields * 24B PcdFieldDesc entries]
+//   [pointCount * srcPointSize packed point data]
+// Output PCD header and binary data are generated from the field descriptors.
 // File path = outputDir / baseName_<deviceTsUs>.pcd
 void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
                   std::mutex& mtx, uint64_t deviceTsUs = 0);

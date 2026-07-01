@@ -67,6 +67,38 @@ inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
     extract(OB_FRAME_IR_LEFT, NioFrameType::IR_LEFT);
     extract(OB_FRAME_IR_RIGHT, NioFrameType::IR_RIGHT);
 
+    // Point cloud: wrap raw OB_FORMAT_POINT data in self-describing wire format
+    auto pointFrameRaw = obFs->getFrame(OB_FRAME_POINTS);
+    if (pointFrameRaw) {
+        auto* srcData = pointFrameRaw->getData();
+        auto srcSize = pointFrameRaw->getDataSize();
+        if (srcData && srcSize > 0) {
+            PcdLayout layout = PcdLayout::obXyz();
+            uint32_t nPts = static_cast<uint32_t>(srcSize / layout.srcPointSize);
+            uint32_t nFields = static_cast<uint32_t>(layout.fields.size());
+
+            size_t hdrSize = 12 + nFields * sizeof(PcdFieldDesc);
+            NioFrame nf;
+            nf.type = NioFrameType::POINT;
+            nf.format = NioFormat::POINT;
+            nf.timestampUs = pointFrameRaw->getTimeStampUs();
+            nf.data.resize(hdrSize + static_cast<size_t>(nPts) * layout.srcPointSize);
+
+            uint8_t* dst = nf.data.data();
+            std::memcpy(dst, &layout.srcPointSize, 4);
+            dst += 4;
+            std::memcpy(dst, &nFields, 4);
+            dst += 4;
+            std::memcpy(dst, &nPts, 4);
+            dst += 4;
+            std::memcpy(dst, layout.fields.data(), nFields * sizeof(PcdFieldDesc));
+            dst += nFields * sizeof(PcdFieldDesc);
+            std::memcpy(dst, srcData, static_cast<size_t>(nPts) * layout.srcPointSize);
+
+            nioFs.setFrame(NioFrameType::POINT, std::move(nf));
+        }
+    }
+
     return nioFs;
 }
 

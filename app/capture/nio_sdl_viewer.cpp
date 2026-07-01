@@ -266,7 +266,7 @@ int SDLViewer::addPointSlot(const std::string& label, int w, int h) {
     s.formatStr = "PCD";
     s.w = w;
     s.h = h;
-    s.rawBuf.resize(27648 * 23 + 4, 0);
+    s.rawBuf.resize(12 + 6 * sizeof(PcdFieldDesc) + 27648 * 24 + 4, 0);
     s.renderBuf.resize(w * h * 3, 0);
     return idx;
 }
@@ -634,14 +634,25 @@ bool SDLViewer::decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& raw
 
 bool SDLViewer::decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
                                 std::vector<uint8_t>& rgb) {
-    if (rawSz < 4)
-        return false;
-    const uint8_t* src = rawCopy.data();
+    PcdLayout layout;
     uint32_t nPts = 0;
-    memcpy(&nPts, src, 4);
-    src += 4;
-    constexpr size_t elemSize = 23;
-    if (rawSz < 4 + static_cast<size_t>(nPts) * elemSize)
+    size_t hdrBytes = PcdLayout::deserialize(rawCopy.data(), rawSz, layout, nPts);
+    if (hdrBytes == 0 || nPts == 0)
+        return false;
+
+    const uint8_t* pointData = rawCopy.data() + hdrBytes;
+    if (rawSz < hdrBytes + static_cast<size_t>(nPts) * layout.srcPointSize)
+        return false;
+
+    // Find xyz field offsets in the source point struct
+    int xOff = -1, yOff = -1, zOff = -1, iOff = -1;
+    for (const auto& f : layout.fields) {
+        if (std::string(f.name) == "x") xOff = f.srcOffset;
+        else if (std::string(f.name) == "y") yOff = f.srcOffset;
+        else if (std::string(f.name) == "z") zOff = f.srcOffset;
+        else if (std::string(f.name) == "intensity") iOff = f.srcOffset;
+    }
+    if (xOff < 0 || yOff < 0 || zOff < 0)
         return false;
 
     float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
@@ -655,14 +666,15 @@ bool SDLViewer::decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& ra
     std::vector<P> valid;
     valid.reserve(nPts);
     for (uint32_t i = 0; i < nPts; i++) {
-        const uint8_t* p = src + i * elemSize;
+        const uint8_t* pt = pointData + static_cast<size_t>(i) * layout.srcPointSize;
         float px, py, pz;
-        memcpy(&px, p, 4);
-        memcpy(&py, p + 4, 4);
-        memcpy(&pz, p + 8, 4);
+        memcpy(&px, pt + xOff, 4);
+        memcpy(&py, pt + yOff, 4);
+        memcpy(&pz, pt + zOff, 4);
         if (std::isnan(px) || std::isnan(py) || std::isnan(pz))
             continue;
-        valid.push_back({ px, py, pz, p[12] });
+        uint8_t intens = (iOff >= 0) ? pt[iOff] : 0;
+        valid.push_back({ px, py, pz, intens });
         if (px < minX)
             minX = px;
         if (px > maxX)

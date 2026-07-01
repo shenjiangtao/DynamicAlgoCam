@@ -11,10 +11,143 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace nio {
+
+// PcdFieldDesc: describes one field in a packed point cloud wire layout.
+// Used by writePcdFile() to generate PCD headers and transform source data.
+// Wire format for POINT frames:
+//   [4B pointCount (uint32)] [4B srcPointSize (uint32)] [4B numFields (uint32)]
+//   [numFields * sizeof(PcdFieldDesc)]
+//   [pointCount * srcPointSize — packed point data]
+struct PcdFieldDesc
+{
+    char name[16] = {};    // field name, e.g. "x", "intensity", "ring", "timestamp"
+    uint8_t srcSize = 0;   // bytes in source (wire) data: 1/2/4/8
+    uint8_t srcOffset = 0; // byte offset within the source point struct
+    uint8_t pcdSize = 0;   // bytes in output PCD: e.g. 4 when src uint8→float32
+    char pcdType = 'F';    // PCD TYPE char: 'F'=float, 'U'=unsigned, 'I'=signed
+    uint8_t pad_[4] = {};  // zero-padded to 24 bytes
+};
+static_assert(sizeof(PcdFieldDesc) == 24, "PcdFieldDesc must be 24 bytes for wire compatibility");
+
+// PcdLayout: convenience wrapper around a vector of PcdFieldDesc.
+struct PcdLayout
+{
+    std::vector<PcdFieldDesc> fields;
+    uint32_t srcPointSize = 0;
+
+    void addField(const char* name, uint8_t srcSize, uint8_t pcdSize, char pcdType) {
+        PcdFieldDesc d;
+        std::strncpy(d.name, name, sizeof(d.name) - 1);
+        d.srcSize = srcSize;
+        d.srcOffset = srcPointSize;
+        d.pcdSize = pcdSize;
+        d.pcdType = pcdType;
+        fields.push_back(d);
+        srcPointSize += srcSize;
+    }
+
+    uint32_t pcdPointSize() const {
+        uint32_t s = 0;
+        for (auto& f : fields)
+            s += f.pcdSize;
+        return s;
+    }
+
+    // Serialize this layout into a byte buffer (wire header prefix).
+    void serialize(std::vector<uint8_t>& out) const {
+        uint32_t n = static_cast<uint32_t>(fields.size());
+        size_t hdrSize = 12 + n * sizeof(PcdFieldDesc);
+        size_t oldSize = out.size();
+        out.resize(oldSize + hdrSize);
+        uint8_t* p = out.data() + oldSize;
+        std::memcpy(p, &srcPointSize, 4);
+        p += 4;
+        std::memcpy(p, &n, 4);
+        p += 4;
+        // placeholder for pointCount — caller writes it before the point data
+        std::memset(p, 0, 4);
+        p += 4;
+        if (!fields.empty())
+            std::memcpy(p, fields.data(), n * sizeof(PcdFieldDesc));
+    }
+
+    // Deserialize a PcdLayout from wire data. Returns bytes consumed (0 on error).
+    // Expects: [srcPointSize(4)] [numFields(4)] [pointCount(4)] [fields...]
+    static size_t deserialize(const uint8_t* data, size_t size, PcdLayout& layout, uint32_t& pointCount) {
+        if (size < 12)
+            return 0;
+        const uint8_t* p = data;
+        std::memcpy(&layout.srcPointSize, p, 4);
+        p += 4;
+        uint32_t n = 0;
+        std::memcpy(&n, p, 4);
+        p += 4;
+        std::memcpy(&pointCount, p, 4);
+        p += 4;
+        size_t fieldsBytes = static_cast<size_t>(n) * sizeof(PcdFieldDesc);
+        if (size < 12 + fieldsBytes)
+            return 0;
+        layout.fields.resize(n);
+        std::memcpy(layout.fields.data(), p, fieldsBytes);
+        p += fieldsBytes;
+        return static_cast<size_t>(p - data);
+    }
+
+    // RS-AC1 layout: matches PointXYZIRT struct layout (24 bytes with 1B padding after intensity)
+    // Offsets must match the compiler's layout, not a packed sum.
+    static PcdLayout rsAc1() {
+        PcdLayout l;
+        l.srcPointSize = 24;
+        l.fields.resize(6);
+        auto& f = l.fields;
+        std::strncpy(f[0].name, "x", 15);
+        f[0].srcSize = 4;
+        f[0].srcOffset = 0;
+        f[0].pcdSize = 4;
+        f[0].pcdType = 'F';
+        std::strncpy(f[1].name, "y", 15);
+        f[1].srcSize = 4;
+        f[1].srcOffset = 4;
+        f[1].pcdSize = 4;
+        f[1].pcdType = 'F';
+        std::strncpy(f[2].name, "z", 15);
+        f[2].srcSize = 4;
+        f[2].srcOffset = 8;
+        f[2].pcdSize = 4;
+        f[2].pcdType = 'F';
+        std::strncpy(f[3].name, "intensity", 15);
+        f[3].srcSize = 1;
+        f[3].srcOffset = 12;
+        f[3].pcdSize = 4;
+        f[3].pcdType = 'F';
+        std::strncpy(f[4].name, "ring", 15);
+        f[4].srcSize = 2;
+        f[4].srcOffset = 14;
+        f[4].pcdSize = 2;
+        f[4].pcdType = 'U';
+        std::strncpy(f[5].name, "timestamp", 15);
+        f[5].srcSize = 8;
+        f[5].srcOffset = 16;
+        f[5].pcdSize = 8;
+        f[5].pcdType = 'F';
+        return l;
+    }
+
+    // Orbbec XYZ-only layout: xyz(float3), 12 bytes per point, no transform needed
+    static PcdLayout obXyz() {
+        PcdLayout l;
+        l.addField("x", 4, 4, 'F');
+        l.addField("y", 4, 4, 'F');
+        l.addField("z", 4, 4, 'F');
+        return l;
+    }
+};
 
 // Pixel / frame format — SDK-independent.
 enum class NioFormat {
