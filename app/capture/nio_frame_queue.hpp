@@ -8,7 +8,7 @@
 // and the producer (SDK callback) is never blocked.
 //
 // Two specializations:
-//   FrameQueue<ob::FrameSet>  — for video frames (shared_ptr)
+//   FrameQueue<NioFrameSet>  — for video frames (shared_ptr)
 //   FrameQueue<std::string>   — for IMU CSV lines
 
 #pragma once

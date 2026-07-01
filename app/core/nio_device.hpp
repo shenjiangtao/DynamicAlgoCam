@@ -4,15 +4,15 @@
 // nio_device.hpp — Abstract device and pipeline interfaces for multi-SDK support.
 //
 // NioDevice: abstract interface for a camera device (sensor enumeration,
-// clock sync, property access).  Each SDK (Orbbec, RealSense, etc.) provides
-// a concrete subclass.
+// clock sync, property access).  Each vendor SDK provides a concrete
+// subclass.
 //
 // NioPipeline: abstract interface for a capture pipeline (configure streams,
 // start/stop, enable sync, check HW D2C support).  Each SDK provides a
 // concrete subclass.
 //
 // NioStreamConfig: SDK-neutral stream configuration (which streams to enable,
-// resolution, format).  Replaces ob::Config.
+// resolution, format).  Replaces vendor-specific Config types.
 
 #pragma once
 
@@ -83,7 +83,6 @@ public:
     virtual int32_t getIntProperty(int propertyId) = 0;
 
     // Whether the device has any IR sensor (IR / IR-Left / IR-Right).
-    // RS-AC1 has no IR sensors → returns false.
     virtual bool hasIRSensor() const = 0;
 
     // Enumerate sensors, select profiles, enable streams on the pipeline,
@@ -130,20 +129,18 @@ public:
     // Get the underlying device.
     virtual std::shared_ptr<NioDevice> getDevice() const = 0;
 
-    // Whether this pipeline's depth sensor outputs 3D point cloud
-    // (RS-AC1) instead of a 2D depth map (Orbbec).
-    virtual bool isPointCloudDepth() const {
+    // Whether point cloud output is enabled for this pipeline.
+    virtual bool isPcdEnabled() const {
         return false;
     }
 
-    // Enable depth-to-point-cloud conversion for Orbbec devices.
-    // No-op for non-Orbbec pipelines (RS-AC1 always outputs points).
-    virtual void setObPcd(bool enable) {
+    // Enable depth-to-point-cloud conversion.
+    // No-op for pipelines that always output points (e.g. LiDAR).
+    virtual void setPointCloudEnabled(bool enable) {
         (void)enable;
     }
 
     // Current D2C alignment mode (HW / SW / NONE).
-    // RS-AC1 always returns HW; OB returns the mode set via setAlignMode().
     virtual NioAlignMode getAlignMode() const = 0;
 
     // Get D2C alignment filter (may be null if HW D2C or not applicable).
@@ -153,9 +150,9 @@ public:
 };
 
 // NioD2CAlign: abstract D2C alignment filter.
-// Wraps SDK-specific alignment (e.g. ob::Align for Orbbec).
+// Wraps SDK-specific alignment.
 // process() takes a type-erased native FrameSet, performs alignment,
-// and returns aligned pixel data + metadata via NioAlignedFrameSet.
+// and returns aligned pixel data + metadata via NioAlignedFrame.
 struct NioAlignedFrame
 {
     const uint8_t* colorData = nullptr;

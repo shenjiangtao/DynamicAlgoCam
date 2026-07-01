@@ -49,7 +49,7 @@ public:
     void disableStream(NioFrameType type) override;
     void setAggregateAllTypeFrameRequire(bool require) override;
     void setAlignMode(NioAlignMode mode) override;
-    void setObPcd(bool enable) override;
+    void setPointCloudEnabled(bool enable) override;
     bool checkHWD2CSupport(int colorW, int colorH, NioFormat colorFmt, int depthW, int depthH, NioFormat depthFmt,
                            int depthFps) override;
     void enableFrameSync() override;
@@ -58,8 +58,8 @@ public:
     void stop() override;
     void stopImu() override;
     std::shared_ptr<NioDevice> getDevice() const override;
-    bool isPointCloudDepth() const override {
-        return obPcdEnabled_;
+    bool isPcdEnabled() const override {
+        return pcdEnabled_;
     }
     NioAlignMode getAlignMode() const override;
     std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const override;
@@ -104,7 +104,7 @@ private:
     std::shared_ptr<ob::Device> obDevice_;
     std::shared_ptr<ob::Align> alignFilter_;
     std::shared_ptr<ob::PointCloudFilter> pointCloudFilter_;
-    bool obPcdEnabled_ = false;
+    bool pcdEnabled_ = false;
     bool hwD2CMode_ = false;
     bool imuStarted_ = false;
     NioVideoCallback videoCallback_;

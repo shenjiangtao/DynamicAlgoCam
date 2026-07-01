@@ -264,7 +264,7 @@ struct NioStreamProfile
 };
 
 // Per-device sensor presence + profile summary.
-// Replaces SensorInfo (which used OBFormat / ob::VideoStreamProfile).
+// Replaces vendor-specific SensorInfo types.
 struct NioSensorInfo
 {
     bool hasColor = false;

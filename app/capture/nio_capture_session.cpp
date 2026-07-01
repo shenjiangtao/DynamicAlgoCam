@@ -41,7 +41,7 @@ bool CaptureSession::setup() {
     depthScale_ = sensorInfo_.depthScale;
 
     if (cfg_.depthToPcd)
-        pipeline_->setObPcd(true);
+        pipeline_->setPointCloudEnabled(true);
 
     sensorFiles_ = std::make_shared<SensorFiles>();
 
@@ -145,7 +145,7 @@ void CaptureSession::createImuTask() {
 }
 
 void CaptureSession::createPcdTask() {
-    if (!pipeline_ || !pipeline_->isPointCloudDepth())
+    if (!pipeline_ || !pipeline_->isPcdEnabled())
         return;
 
     std::string pcdDir = baseName_ + "_pcd_" + startTs_;
@@ -227,7 +227,7 @@ void CaptureSession::writeIntrinsicJson() {
     std::string intrinsicPath = baseName_ + "_depth_intrinsic_" + startTs_ + ".json";
     std::ofstream jf(intrinsicPath);
     if (jf.is_open()) {
-        bool isPointDepth = pipeline_ && pipeline_->isPointCloudDepth();
+        bool isPointDepth = pipeline_ && pipeline_->isPcdEnabled();
 
         jf << "{\n";
         jf << "  \"depth\": {\"fx\":" << sensorInfo_.depthIntrinsic.fx << ",\"fy\":" << sensorInfo_.depthIntrinsic.fy
@@ -268,11 +268,11 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
     NioFormat depthSlotFmt = NioFormat::Y16;
     int depthSlotW = sensorInfo_.depthW;
     int depthSlotH = sensorInfo_.depthH;
-    if (sensorInfo_.hasDepth && hwD2CMode_ && sensorInfo_.hasColor && !pipeline_->isPointCloudDepth()) {
+    if (sensorInfo_.hasDepth && hwD2CMode_ && sensorInfo_.hasColor && !pipeline_->isPcdEnabled()) {
         depthSlotW = sensorInfo_.colorW;
         depthSlotH = sensorInfo_.colorH;
     }
-    bool hasPoint = pipeline_ && pipeline_->isPointCloudDepth();
+    bool hasPoint = pipeline_ && pipeline_->isPcdEnabled();
     auto devInfo = device_->getDeviceInfo();
     std::string camType = devInfo.name;
     std::replace(camType.begin(), camType.end(), ' ', '_');

@@ -87,7 +87,7 @@ public:
     void stop() override;
     void stopImu() override;
     std::shared_ptr<NioDevice> getDevice() const override;
-    bool isPointCloudDepth() const override {
+    bool isPcdEnabled() const override {
         return true;
     }
     NioAlignMode getAlignMode() const override {

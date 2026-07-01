@@ -324,8 +324,8 @@ void ObPipeline::setAlignMode(NioAlignMode mode) {
     }
 }
 
-void ObPipeline::setObPcd(bool enable) {
-    obPcdEnabled_ = enable;
+void ObPipeline::setPointCloudEnabled(bool enable) {
+    pcdEnabled_ = enable;
     if (enable) {
         pointCloudFilter_ = std::make_shared<ob::PointCloudFilter>();
         pointCloudFilter_->setCreatePointFormat(OB_FORMAT_POINT);

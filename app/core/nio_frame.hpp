@@ -44,7 +44,7 @@ struct NioFrame {
 };
 
 // NioFrameSet: collection of frames from one synchronized capture.
-// Indexed by NioFrameType — replaces ob::FrameSet for consumers.
+// Indexed by NioFrameType — replaces vendor-specific FrameSet for consumers.
 struct NioFrameSet {
     // Get frame by type, or nullptr if absent.
     NioFrame *getFrame(NioFrameType type);
@@ -62,8 +62,8 @@ struct NioFrameSet {
     bool empty() const { return frames_.empty(); }
 
     // Optional: attached SDK-native FrameSet (type-erased shared_ptr).
-    // Used for pipeline operations (e.g. ob::Align) that need the original
-    // SDK frame.  Set by ObFrameAdapter; null for non-Orbbec paths.
+    // Used for pipeline operations (e.g. SW D2C alignment) that need the
+    // original SDK frame.  Set by driver adapter; null if not applicable.
     // Transitional — will be removed once NioAlign abstracts this.
     std::shared_ptr<void> nativeFrameSet;
 
