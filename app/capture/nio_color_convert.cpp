@@ -215,8 +215,13 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int 
             fusionRgbLogged = true;
         }
 
-        for (int row = 0; row < h; row++) {
-            memcpy(rgbBuf + row * w * 3, tmpFrame->data[0] + row * tmpFrame->linesize[0], w * 3);
+        int stride = w * 3;
+        if (tmpFrame->linesize[0] == stride) {
+            memcpy(rgbBuf, tmpFrame->data[0], static_cast<size_t>(stride) * h);
+        } else {
+            for (int row = 0; row < h; row++) {
+                memcpy(rgbBuf + row * stride, tmpFrame->data[0] + row * tmpFrame->linesize[0], stride);
+            }
         }
         av_frame_free(&tmpFrame);
         return true;
@@ -279,8 +284,13 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int 
 
         sws_scale(tmpSws, srcSlice, srcStride, 0, h, tmpFrame->data, tmpFrame->linesize);
 
-        for (int row = 0; row < h; row++) {
-            memcpy(rgbBuf + row * w * 3, tmpFrame->data[0] + row * tmpFrame->linesize[0], w * 3);
+        int stride = w * 3;
+        if (tmpFrame->linesize[0] == stride) {
+            memcpy(rgbBuf, tmpFrame->data[0], static_cast<size_t>(stride) * h);
+        } else {
+            for (int row = 0; row < h; row++) {
+                memcpy(rgbBuf + row * stride, tmpFrame->data[0] + row * tmpFrame->linesize[0], stride);
+            }
         }
         sws_freeContext(tmpSws);
         av_frame_free(&tmpFrame);

@@ -492,12 +492,24 @@ bool H264Encoder::swsConvertFrame(const uint8_t* data, uint32_t /*size*/) {
     } else {
         if (av_frame_make_writable(frame_) < 0)
             return false;
-        for (int i = 0; i < height_; i++)
-            memcpy(frame_->data[0] + i * frame_->linesize[0], data + i * width_, width_);
-        for (int i = 0; i < height_ / 2; i++) {
-            memcpy(frame_->data[1] + i * frame_->linesize[1], data + width_ * height_ + i * width_ / 2, width_ / 2);
-            memcpy(frame_->data[2] + i * frame_->linesize[2], data + width_ * height_ * 5 / 4 + i * width_ / 2,
-                   width_ / 2);
+        if (frame_->linesize[0] == width_) {
+            memcpy(frame_->data[0], data, static_cast<size_t>(width_) * height_);
+        } else {
+            for (int i = 0; i < height_; i++)
+                memcpy(frame_->data[0] + i * frame_->linesize[0], data + i * width_, width_);
+        }
+        int uvWidth = width_ / 2;
+        int uvHeight = height_ / 2;
+        int uvPlaneSize = uvWidth * uvHeight;
+        if (frame_->linesize[1] == uvWidth && frame_->linesize[2] == uvWidth) {
+            memcpy(frame_->data[1], data + width_ * height_, uvPlaneSize);
+            memcpy(frame_->data[2], data + width_ * height_ + uvPlaneSize, uvPlaneSize);
+        } else {
+            for (int i = 0; i < uvHeight; i++) {
+                memcpy(frame_->data[1] + i * frame_->linesize[1], data + width_ * height_ + i * uvWidth, uvWidth);
+                memcpy(frame_->data[2] + i * frame_->linesize[2],
+                       data + width_ * height_ + uvPlaneSize + i * uvWidth, uvWidth);
+            }
         }
     }
     return true;

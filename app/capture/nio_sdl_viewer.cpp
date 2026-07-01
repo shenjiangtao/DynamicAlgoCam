@@ -612,8 +612,12 @@ bool SDLViewer::decodeYuyvSlot(ViewerSlot& slot, const std::vector<uint8_t>& raw
     sws_scale(slot.yuyvSws, slot.yuyvSrcFrame->data, slot.yuyvSrcFrame->linesize, 0, h, slot.yuyvDstFrame->data,
               slot.yuyvDstFrame->linesize);
     int stride = w * 3;
-    for (int y = 0; y < h; y++) {
-        memcpy(rgb.data() + y * stride, slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0], stride);
+    if (slot.yuyvDstFrame->linesize[0] == stride) {
+        memcpy(rgb.data(), slot.yuyvDstFrame->data[0], static_cast<size_t>(stride) * h);
+    } else {
+        for (int y = 0; y < h; y++) {
+            memcpy(rgb.data() + y * stride, slot.yuyvDstFrame->data[0] + y * slot.yuyvDstFrame->linesize[0], stride);
+        }
     }
     return true;
 }
