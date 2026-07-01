@@ -136,6 +136,12 @@ public:
         return false;
     }
 
+    // Enable depth-to-point-cloud conversion for Orbbec devices.
+    // No-op for non-Orbbec pipelines (RS-AC1 always outputs points).
+    virtual void setObPcd(bool enable) {
+        (void)enable;
+    }
+
     // Current D2C alignment mode (HW / SW / NONE).
     // RS-AC1 always returns HW; OB returns the mode set via setAlignMode().
     virtual NioAlignMode getAlignMode() const = 0;

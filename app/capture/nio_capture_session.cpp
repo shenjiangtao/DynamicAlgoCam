@@ -40,6 +40,9 @@ bool CaptureSession::setup() {
     sensorInfo_ = device_->setupPipeline(*pipeline_);
     depthScale_ = sensorInfo_.depthScale;
 
+    if (cfg_.depthToPcd)
+        pipeline_->setObPcd(true);
+
     sensorFiles_ = std::make_shared<SensorFiles>();
 
     startTs_ = getTimestampMs();

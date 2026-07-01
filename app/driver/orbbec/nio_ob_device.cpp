@@ -324,6 +324,14 @@ void ObPipeline::setAlignMode(NioAlignMode mode) {
     }
 }
 
+void ObPipeline::setObPcd(bool enable) {
+    obPcdEnabled_ = enable;
+    if (enable) {
+        pointCloudFilter_ = std::make_shared<ob::PointCloudFilter>();
+        pointCloudFilter_->setCreatePointFormat(OB_FORMAT_POINT);
+    }
+}
+
 bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, NioFormat /*colorFmt*/, int /*depthW*/,
                                    int /*depthH*/, NioFormat /*depthFmt*/, int /*depthFps*/) {
     if (!colorProfile_ || !depthProfile_)
@@ -355,6 +363,15 @@ bool ObPipeline::start(NioVideoCallback callback) {
     try {
         obPipeline_->start(obConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
             if (obFs) {
+                if (pointCloudFilter_) {
+                    try {
+                        auto pointFrame = pointCloudFilter_->process(obFs);
+                        if (pointFrame) {
+                            obFs->pushFrame(pointFrame);
+                        }
+                    } catch (...) {
+                    }
+                }
                 auto nioFs = std::make_shared<NioFrameSet>(obFrameSetToNio(obFs));
                 nioFs->nativeFrameSet = std::static_pointer_cast<void>(obFs);
                 videoCallback_(nioFs);
