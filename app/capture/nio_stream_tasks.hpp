@@ -137,6 +137,22 @@ private:
     std::mutex fileMtx_;
 };
 
+// PcdSingleTask: writes one standalone PCD v0.7 file per frame.
+class PcdSingleTask : public StreamTask
+{
+public:
+    PcdSingleTask(const std::string& name, const std::string& outputDir, const std::string& baseName);
+    std::atomic<uint64_t> frameCount{ 0 };
+
+protected:
+    void processFrame(const FrameBlob& blob) override;
+
+private:
+    std::string outputDir_;
+    std::string baseName_;
+    std::mutex fileMtx_;
+};
+
 class PcdStreamTask : public StreamTask
 {
 public:

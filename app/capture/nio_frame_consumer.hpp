@@ -114,14 +114,14 @@ private:
 class PointcloudFrameConsumer : public FrameConsumer
 {
 public:
-    PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask, std::shared_ptr<SensorFiles> sensorFiles);
+    PointcloudFrameConsumer(std::shared_ptr<StreamTask> pcdTask, std::shared_ptr<SensorFiles> sensorFiles);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
     void setViewer(SDLViewer* viewer, int viewerIdx) override;
     void stopTask() override;
 
 private:
-    std::shared_ptr<PcdStreamTask> pcdTask_;
+    std::shared_ptr<StreamTask> pcdTask_;
     SDLViewer* viewer_ = nullptr;
     int viewerIdx_ = -1;
     std::shared_ptr<SensorFiles> sensorFiles_;

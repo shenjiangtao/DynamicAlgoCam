@@ -148,13 +148,19 @@ void CaptureSession::createPcdTask() {
     std::string pcdDir = baseName_ + "_pcd_" + startTs_;
     std::string pcdBase = safeName_;
 
-    pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
-    pcdTask_->start();
-
-    frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
-
-    NIO_LOG_INFO_S("PCD point cloud output: " << pcdDir << "/");
-    std::cout << "  PCD point cloud: " << pcdDir << "/" << std::endl;
+    if (cfg_.pcdMode == PcdMode::Single) {
+        pcdTask_ = std::make_shared<PcdSingleTask>(devId_ + "_pcd", pcdDir, pcdBase);
+        pcdTask_->start();
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
+        NIO_LOG_INFO_S("PCD point cloud output (single): " << pcdDir << "/");
+        std::cout << "  PCD point cloud (per-frame): " << pcdDir << "/" << std::endl;
+    } else {
+        pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
+        pcdTask_->start();
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
+        NIO_LOG_INFO_S("PCD point cloud output (stream): " << pcdDir << "/" << pcdBase << ".pcs");
+        std::cout << "  PCD point cloud (stream): " << pcdDir << "/" << pcdBase << ".pcs" << std::endl;
+    }
 }
 
 // ---------------------------------------------------------------------------

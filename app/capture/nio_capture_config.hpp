@@ -12,6 +12,11 @@
 
 namespace nio {
 
+enum class PcdMode {
+    Stream,
+    Single
+};
+
 struct CaptureConfig
 {
     std::vector<std::string> cameraFilter;
@@ -22,6 +27,7 @@ struct CaptureConfig
     bool enableFusion = true;
     bool noFusion = false;
     bool noShow = false;
+    PcdMode pcdMode = PcdMode::Single;
 };
 
 inline void printUsage(const char* prog) {
@@ -34,12 +40,14 @@ inline void printUsage(const char* prog) {
               << "  --depth-max M Max depth in meters for colormap (default: 5.0)\n"
               << "  --no-fusion   Disable D2C fusion output (only save individual streams)\n"
               << "  --no-show     Disable SDL live preview window\n"
+              << "  --pcd-mode M  Point cloud save mode: Single (pre-frame .pcd, default) or stream (signle .pcs)\n"
               << "  --help        Show this help\n"
               << "\nExamples:\n"
               << "  " << prog << "                                 # all devices, default settings\n"
               << "  " << prog << " -c \"305\" \"336L\"             # filter cameras by type\n"
               << "  " << prog << " -s /HDD/nio_capture             # custom save directory\n"
               << "  " << prog << " -c \"305\" --alpha 0.6          # combined options\n"
+              << "  " << prog << " --pcd-mode single             # per-frame .pcd files instead of .pcs stream\n"
               << std::endl;
 }
 
@@ -50,6 +58,7 @@ inline CaptureConfig parseArgs(int argc, char** argv) {
                                         { "depth-max", required_argument, nullptr, 'x' },
                                         { "no-fusion", no_argument, nullptr, 'n' },
                                         { "no-show", no_argument, nullptr, 'S' },
+                                        { "pcd-mode", required_argument, nullptr, 'p' },
                                         { "help", no_argument, nullptr, 'h' },
                                         { nullptr, 0, nullptr, 0 } };
 
@@ -84,6 +93,12 @@ inline CaptureConfig parseArgs(int argc, char** argv) {
             break;
         case 'S':
             cfg.noShow = true;
+            break;
+        case 'p':
+            if (std::string(optarg) == "stream")
+                cfg.pcdMode = PcdMode::Stream;
+            else
+                cfg.pcdMode = PcdMode::Single;
             break;
         case 'h':
             printUsage(argv[0]);

@@ -154,7 +154,7 @@ void IRFrameConsumer::setViewer(SDLViewer* viewer, int viewerIdx) {
 
 // === PointcloudFrameConsumer ===
 
-PointcloudFrameConsumer::PointcloudFrameConsumer(std::shared_ptr<PcdStreamTask> pcdTask,
+PointcloudFrameConsumer::PointcloudFrameConsumer(std::shared_ptr<StreamTask> pcdTask,
                                                  std::shared_ptr<SensorFiles> sensorFiles)
 : pcdTask_(std::move(pcdTask)), sensorFiles_(std::move(sensorFiles)) {}
 

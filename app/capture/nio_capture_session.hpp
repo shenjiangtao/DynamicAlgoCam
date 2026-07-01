@@ -112,7 +112,7 @@ private:
     std::vector<std::unique_ptr<FrameConsumer>> frameConsumers_;
     std::shared_ptr<FusionStreamTask> fusionTask_;
     std::shared_ptr<ImuStreamTask> imuTask_;
-    std::shared_ptr<PcdStreamTask> pcdTask_;
+    std::shared_ptr<StreamTask> pcdTask_;
 
     std::string devId_;
 

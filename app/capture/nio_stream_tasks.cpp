@@ -298,6 +298,16 @@ void ImuStreamTask::enqueueLine(std::string line) {
     enqueue(reinterpret_cast<const uint8_t*>(line.data()), static_cast<uint32_t>(line.size()), 0);
 }
 
+// === PcdSingleTask ===
+
+PcdSingleTask::PcdSingleTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
+: StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
+
+void PcdSingleTask::processFrame(const FrameBlob& blob) {
+    writePcdFile(outputDir_, baseName_, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
+    frameCount++;
+}
+
 // === PcdStreamTask ===
 
 PcdStreamTask::PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
