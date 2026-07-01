@@ -122,6 +122,70 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 // for a field, the source value is cast to the PCD type (e.g. uint8
 // intensity -> float32 intensity).
 
+namespace {
+
+// convertPcdPoints: convert wire point data to PCD binary format.
+// Returns the converted data buffer (or empty on error).
+std::vector<uint8_t> convertPcdPoints(const PcdLayout& layout, uint32_t pointCount, const uint8_t* pointData) {
+    size_t srcBytes = static_cast<size_t>(pointCount) * layout.srcPointSize;
+    uint32_t dstPointSize = layout.pcdPointSize();
+
+    bool needsConvert = false;
+    for (const auto& f : layout.fields) {
+        if (f.pcdSize != f.srcSize) {
+            needsConvert = true;
+            break;
+        }
+    }
+
+    if (!needsConvert) {
+        return std::vector<uint8_t>(pointData, pointData + srcBytes);
+    }
+
+    std::vector<uint8_t> buf(static_cast<size_t>(pointCount) * dstPointSize);
+    uint8_t* __restrict__ dstPtr = buf.data();
+    const uint8_t* __restrict__ srcBase = pointData;
+
+    for (uint32_t i = 0; i < pointCount; ++i) {
+        const uint8_t* srcPt = srcBase + static_cast<size_t>(i) * layout.srcPointSize;
+        for (const auto& f : layout.fields) {
+            const uint8_t* srcField = srcPt + f.srcOffset;
+            if (f.pcdSize == f.srcSize) {
+                std::memcpy(dstPtr, srcField, f.pcdSize);
+            } else if (f.srcSize == 1 && f.pcdSize == 4 && f.pcdType == 'F') {
+                float val = static_cast<float>(*srcField);
+                std::memcpy(dstPtr, &val, 4);
+            } else if (f.srcSize == 1 && f.pcdSize == 4 && f.pcdType == 'U') {
+                uint32_t val = static_cast<uint32_t>(*srcField);
+                std::memcpy(dstPtr, &val, 4);
+            } else if (f.srcSize == 2 && f.pcdSize == 4 && f.pcdType == 'F') {
+                uint16_t tmp;
+                std::memcpy(&tmp, srcField, 2);
+                float val = static_cast<float>(tmp);
+                std::memcpy(dstPtr, &val, 4);
+            } else {
+                size_t copyN = std::min(static_cast<size_t>(f.srcSize), static_cast<size_t>(f.pcdSize));
+                std::memcpy(dstPtr, srcField, copyN);
+                if (copyN < static_cast<size_t>(f.pcdSize))
+                    std::memset(dstPtr + copyN, 0, f.pcdSize - copyN);
+            }
+            dstPtr += f.pcdSize;
+        }
+    }
+    return buf;
+}
+
+} // anonymous namespace
+
+void mkdirRecursive(const std::string& path) {
+    for (size_t pos = 0; pos < path.size();) {
+        pos = path.find('/', pos + 1);
+        if (pos == std::string::npos)
+            pos = path.size();
+        mkdir(path.substr(0, pos).c_str(), 0755);
+    }
+}
+
 void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
                   std::mutex& mtx, uint64_t deviceTsUs) {
     PcdLayout layout;
@@ -140,13 +204,7 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, con
         std::lock_guard<std::mutex> lock(mtx);
         static bool dirCreated = false;
         if (!dirCreated) {
-            std::string path = outputDir;
-            for (size_t pos = 0; pos < path.size();) {
-                pos = path.find('/', pos + 1);
-                if (pos == std::string::npos)
-                    pos = path.size();
-                mkdir(path.substr(0, pos).c_str(), 0755);
-            }
+            mkdirRecursive(outputDir);
             dirCreated = true;
         }
     }
@@ -191,51 +249,89 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, con
                                pointCount);
     pcd.write(header, hdrLen);
 
-    bool needsConvert = false;
-    for (const auto& f : layout.fields) {
-        if (f.pcdSize != f.srcSize) {
-            needsConvert = true;
-            break;
-        }
-    }
-
-    if (!needsConvert) {
-        pcd.write(reinterpret_cast<const char*>(pointData), static_cast<std::streamsize>(expectedPointBytes));
-    } else {
-        uint32_t dstPointSize = layout.pcdPointSize();
-        std::vector<uint8_t> buf(static_cast<size_t>(pointCount) * dstPointSize);
-        uint8_t* __restrict__ dstPtr = buf.data();
-        const uint8_t* __restrict__ srcBase = pointData;
-
-        for (uint32_t i = 0; i < pointCount; ++i) {
-            const uint8_t* srcPt = srcBase + static_cast<size_t>(i) * layout.srcPointSize;
-            for (const auto& f : layout.fields) {
-                const uint8_t* srcField = srcPt + f.srcOffset;
-                if (f.pcdSize == f.srcSize) {
-                    std::memcpy(dstPtr, srcField, f.pcdSize);
-                } else if (f.srcSize == 1 && f.pcdSize == 4 && f.pcdType == 'F') {
-                    float val = static_cast<float>(*srcField);
-                    std::memcpy(dstPtr, &val, 4);
-                } else if (f.srcSize == 1 && f.pcdSize == 4 && f.pcdType == 'U') {
-                    uint32_t val = static_cast<uint32_t>(*srcField);
-                    std::memcpy(dstPtr, &val, 4);
-                } else if (f.srcSize == 2 && f.pcdSize == 4 && f.pcdType == 'F') {
-                    uint16_t tmp;
-                    std::memcpy(&tmp, srcField, 2);
-                    float val = static_cast<float>(tmp);
-                    std::memcpy(dstPtr, &val, 4);
-                } else {
-                    size_t copyN = std::min(static_cast<size_t>(f.srcSize), static_cast<size_t>(f.pcdSize));
-                    std::memcpy(dstPtr, srcField, copyN);
-                    if (copyN < static_cast<size_t>(f.pcdSize))
-                        std::memset(dstPtr + copyN, 0, f.pcdSize - copyN);
-                }
-                dstPtr += f.pcdSize;
-            }
-        }
-        pcd.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
-    }
+    auto converted = convertPcdPoints(layout, pointCount, pointData);
+    pcd.write(reinterpret_cast<const char*>(converted.data()), static_cast<std::streamsize>(converted.size()));
     pcd.close();
+}
+
+// === Section 2c: PCD stream writer (.pcs format) ===
+
+bool writePcdStreamHeader(PcdStream& stream, const uint8_t* wireData, uint32_t wireSize) {
+    PcdLayout layout;
+    uint32_t pointCount = 0;
+    size_t hdrBytes = PcdLayout::deserialize(wireData, wireSize, layout, pointCount);
+    if (hdrBytes == 0)
+        return false;
+
+    stream.layout = layout;
+
+    const char magic[] = "NIO_PCD_STREAM";
+    stream.file->write(magic, 16);
+
+    uint32_t n = static_cast<uint32_t>(layout.fields.size());
+    stream.file->write(reinterpret_cast<const char*>(&n), 4);
+    stream.file->write(reinterpret_cast<const char*>(&layout.srcPointSize), 4);
+    uint32_t pcdPtSz = layout.pcdPointSize();
+    stream.file->write(reinterpret_cast<const char*>(&pcdPtSz), 4);
+
+    if (!layout.fields.empty())
+        stream.file->write(reinterpret_cast<const char*>(layout.fields.data()), n * sizeof(PcdFieldDesc));
+
+    stream.dataStartOffset = 16 + 4 + 4 + 4 + n * sizeof(PcdFieldDesc);
+    stream.headerWritten = true;
+    return true;
+}
+
+bool writePcdStreamFrame(PcdStream& stream, const uint8_t* wireData, uint32_t wireSize, uint64_t deviceTsUs) {
+    if (!stream.file || !stream.file->is_open())
+        return false;
+
+    if (!stream.headerWritten) {
+        if (!writePcdStreamHeader(stream, wireData, wireSize))
+            return false;
+    }
+
+    // Deserialize wire data just to get pointCount and point data location
+    // (layout is already stored in stream.layout from the header write)
+    PcdLayout wireLayout;
+    uint32_t pointCount = 0;
+    size_t hdrBytes = PcdLayout::deserialize(wireData, wireSize, wireLayout, pointCount);
+    if (hdrBytes == 0 || pointCount == 0)
+        return false;
+
+    size_t expectedPointBytes = static_cast<size_t>(pointCount) * wireLayout.srcPointSize;
+    if (wireSize - hdrBytes < expectedPointBytes)
+        return false;
+
+    const uint8_t* pointData = wireData + hdrBytes;
+
+    uint64_t frameOffset = static_cast<uint64_t>(stream.file->tellp());
+
+    stream.file->write(reinterpret_cast<const char*>(&deviceTsUs), 8);
+    stream.file->write(reinterpret_cast<const char*>(&pointCount), 4);
+
+    auto converted = convertPcdPoints(stream.layout, pointCount, pointData);
+    stream.file->write(reinterpret_cast<const char*>(converted.data()), static_cast<std::streamsize>(converted.size()));
+    stream.file->flush();
+
+    stream.index.push_back({deviceTsUs, frameOffset});
+    return true;
+}
+
+void writePcdStreamIndex(PcdStream& stream) {
+    if (!stream.file || !stream.file->is_open())
+        return;
+
+    stream.file->write(reinterpret_cast<const char*>(&stream.dataStartOffset), 8);
+    uint32_t numFrames = static_cast<uint32_t>(stream.index.size());
+    stream.file->write(reinterpret_cast<const char*>(&numFrames), 4);
+
+    for (const auto& entry : stream.index) {
+        stream.file->write(reinterpret_cast<const char*>(&entry.timestampUs), 8);
+        stream.file->write(reinterpret_cast<const char*>(&entry.offset), 8);
+    }
+    stream.file->flush();
+    stream.file->close();
 }
 
 // === Section 3: Buffered file factory ===

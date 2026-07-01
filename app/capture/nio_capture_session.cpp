@@ -146,7 +146,7 @@ void CaptureSession::createPcdTask() {
         return;
 
     std::string pcdDir = baseName_ + "_pcd_" + startTs_;
-    std::string pcdBase = devId_;
+    std::string pcdBase = safeName_;
 
     pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
     pcdTask_->start();

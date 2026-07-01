@@ -60,6 +60,7 @@ public:
 protected:
     virtual void processFrame(const FrameBlob& blob) = 0;
     virtual void onIdle() {}
+    virtual void onStop() {}
     void wakeup();
 
 private:

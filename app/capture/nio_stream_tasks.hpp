@@ -141,15 +141,18 @@ class PcdStreamTask : public StreamTask
 {
 public:
     PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName);
+    ~PcdStreamTask();
     std::atomic<uint64_t> frameCount{ 0 };
 
 protected:
     void processFrame(const FrameBlob& blob) override;
+    void onStop() override;
 
 private:
     std::string outputDir_;
     std::string baseName_;
     std::mutex fileMtx_;
+    PcdStream pcdStream_;
 };
 
 } // namespace nio

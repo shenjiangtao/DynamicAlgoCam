@@ -89,7 +89,10 @@ void writeH264Frame(std::ofstream& file, const uint8_t* data, uint32_t size, boo
 void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size, int width, int height,
                              float scale, uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs = 0);
 
-// writePcdFile: write one PCD v0.7 binary file per frame.
+// mkdirRecursive: create all directories in path (like mkdir -p)
+void mkdirRecursive(const std::string& path);
+
+// writePcdFile: write one PCD v0.7 binary file per frame (legacy, one file per frame).
 // Input wire format is self-describing (see PcdLayout::serialize):
 //   [4B srcPointSize] [4B numFields] [4B pointCount]
 //   [numFields * 24B PcdFieldDesc entries]
@@ -98,6 +101,55 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
 // File path = outputDir / baseName_<deviceTsUs>.pcd
 void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
                   std::mutex& mtx, uint64_t deviceTsUs = 0);
+
+// PcdStream: continuous PCD stream file (.pcs format).
+//
+// File layout:
+//   [Header]
+//     16B  magic = "NIO_PCD_STREAM\0"
+//     4B   numFields  (uint32)
+//     4B   srcPointSize (uint32)
+//     4B   pcdPointSize (uint32)
+//     numFields * 24B  PcdFieldDesc entries
+//   [Frame 0]
+//     8B   timestampUs (uint64)
+//     4B   pointCount  (uint32)
+//     pointCount * pcdPointSize bytes  (converted PCD binary data)
+//   [Frame 1]
+//     ...
+//   [Trailing Index]  (written on close)
+//     8B   dataStartOffset (uint64) — byte offset of first frame from file start
+//     4B   numFrames (uint32)
+//     numFrames * 16B entries:
+//       8B  timestampUs
+//       8B  frameOffset (byte offset from file start to this frame's timestampUs)
+struct PcdStream
+{
+    std::shared_ptr<std::ofstream> file;
+    std::shared_ptr<char[]> fileBuf;
+    PcdLayout layout;
+    uint64_t dataStartOffset = 0; // byte offset of first frame data after header
+    bool headerWritten = false;
+
+    struct IndexEntry
+    {
+        uint64_t timestampUs;
+        uint64_t offset;
+    };
+    std::vector<IndexEntry> index;
+};
+
+// writePcdStreamHeader: write the .pcs file header (magic + field descriptors).
+// Must be called once with the first frame's wire data to extract the layout.
+bool writePcdStreamHeader(PcdStream& stream, const uint8_t* wireData, uint32_t wireSize);
+
+// writePcdStreamFrame: append one frame of converted point data to the .pcs file.
+// Extracts layout from wireData on first call (auto-writes header if needed).
+// Records an index entry for random access.
+bool writePcdStreamFrame(PcdStream& stream, const uint8_t* wireData, uint32_t wireSize, uint64_t deviceTsUs);
+
+// writePcdStreamIndex: write the trailing index table and close the file.
+void writePcdStreamIndex(PcdStream& stream);
 
 // openBufferedFile: open ofstream with large user-space buffer for fast writes
 std::shared_ptr<std::ofstream> openBufferedFile(const std::string& path,

@@ -113,6 +113,8 @@ void StreamTask::run() {
             processFrame(blob);
     }
 
+    onStop();
+
     NIO_LOG_DEBUG_S("StreamTask stopped: " << name_);
 }
 

@@ -303,9 +303,32 @@ void ImuStreamTask::enqueueLine(std::string line) {
 PcdStreamTask::PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
 : StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
 
+PcdStreamTask::~PcdStreamTask() {
+    if (pcdStream_.file && pcdStream_.file->is_open()) {
+        std::lock_guard<std::mutex> lock(fileMtx_);
+        writePcdStreamIndex(pcdStream_);
+    }
+}
+
 void PcdStreamTask::processFrame(const FrameBlob& blob) {
-    writePcdFile(outputDir_, baseName_, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
+    std::lock_guard<std::mutex> lock(fileMtx_);
+
+    if (!pcdStream_.file || !pcdStream_.file->is_open()) {
+        mkdirRecursive(outputDir_);
+        std::string path = outputDir_ + "/" + baseName_ + ".pcs";
+        pcdStream_.file = openBufferedFile(path, std::ios::binary, NIO_FILE_BUF_SIZE, &pcdStream_.fileBuf);
+        if (!pcdStream_.file || !pcdStream_.file->is_open())
+            return;
+    }
+
+    writePcdStreamFrame(pcdStream_, blob.data.data(), blob.size, blob.timestampUs);
     frameCount++;
+}
+
+void PcdStreamTask::onStop() {
+    std::lock_guard<std::mutex> lock(fileMtx_);
+    if (pcdStream_.file && pcdStream_.file->is_open())
+        writePcdStreamIndex(pcdStream_);
 }
 
 } // namespace nio
