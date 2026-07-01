@@ -55,6 +55,45 @@ DEVICE_PATTERNS = {
     "AC1": ["AC1", "RoboSense_AC1", "RS_AC1"],
 }
 
+DEVICE_SPECS = {
+    "335L": {
+        "vendor": "Orbbec", "model": "Gemini 335L",
+        "depth_tech": "Active Stereo IR (Structured Light Speckle)",
+        "depth_res": "1280x800", "depth_fps": 30,
+        "depth_range_m": (0.3, 5.0),
+        "depth_fov": "90°x65°",
+        "color_res": "1280x800", "color_fps": 30, "color_fov": "86°x55°",
+        "baseline_mm": 50, "depth_accuracy_pct": None,
+        "imu_rate_hz": 200, "ir_streams": 2,
+        "d2c_mode": "SW", "ir_filter": False,
+    },
+    "336L": {
+        "vendor": "Orbbec", "model": "Gemini 336L",
+        "depth_tech": "Active Stereo IR (Structured Light Speckle + IR Pass Filter)",
+        "depth_res": "1280x800", "depth_fps": 30,
+        "depth_range_m": (0.1, 20.0),
+        "depth_fov": "90°x65°",
+        "spatial_accuracy_pct": 1.5,
+        "color_res": "1920x1080", "color_fps": 30, "color_fov": "86°x55°",
+        "baseline_mm": 50, "depth_accuracy_pct": 1.5,
+        "imu_rate_hz": 200, "ir_streams": 2,
+        "d2c_mode": "SW", "ir_filter": True,
+    },
+    "AC1": {
+        "vendor": "RoboSense", "model": "Active Camera 1",
+        "depth_tech": "VCSEL+SPAD+CMOS TOF LiDAR (All-Solid-State)",
+        "depth_res": "point_grid", "depth_fps": 10,
+        "depth_range_m": (0.1, 70.0), "depth_range_10pct_m": 40.0,
+        "depth_fov": "120°x90°",
+        "depth_accuracy_cm": (1.0, 5.0), "depth_accuracy_cm_far": (3.0, 5.0),
+        "color_res": "1920x1080", "color_fps": 30, "color_fov": "144°x78°",
+        "pts_per_sec": 173333,
+        "imu_rate_hz": 200, "ir_streams": 0,
+        "d2c_mode": "HW", "laser_wavelength_nm": 940,
+        "sunlight_resistance_klux": 100,
+    },
+}
+
 
 def identify_device(dir_name):
     name = dir_name.replace(" ", "_")
@@ -1130,6 +1169,328 @@ def analyze_color_streams(h264_by_type, device_name, device_type, depth_stats):
     return result
 
 
+def analyze_ir_stream_quality(h264_by_type, device_name, device_type):
+    result = {"device": device_name, "ir_available": False, "ir_streams": {}}
+    ir_paths = []
+    for st in ["ir_left", "ir_right"]:
+        p = h264_by_type.get(st)
+        if p and os.path.exists(p):
+            ir_paths.append((st, p))
+    if not ir_paths:
+        return result
+    result["ir_available"] = True
+    result["ir_tech_note"] = (
+        "Orbbec active stereo IR: VCSEL speckle projector illuminates scene, "
+        "left/right global-shutter IR cameras capture speckle pattern for stereo matching. "
+        "336L adds IR pass filter to reject visible light."
+        if device_type in ("335L", "336L")
+        else "AC1 has no separate IR streams (LiDAR uses 940nm VCSEL+SPAD directly)"
+    )
+    if device_type == "336L":
+        result["ir_filter_note"] = (
+            "336L IR pass filter blocks visible light (<750nm), enhancing speckle SNR "
+            "in outdoor/high-ambient-light conditions. Expected: higher IR contrast "
+            "and fewer ambient-light artifacts vs 335L"
+        )
+
+    try:
+        import cv2
+        for st, p in ir_paths:
+            probe = probe_h264_stream(p)
+            tmp_dir = os.path.join("/tmp", f"nio_eval_ir_{device_name}_{st}")
+            indices = [0, min(30, probe.get("nal_frame_count", 1) - 1)]
+            frames = extract_h264_sample_frames(p, indices, tmp_dir)
+            ir_info = {
+                "resolution": f"{probe.get('width', '?')}x{probe.get('height', '?')}",
+                "frame_count": probe.get("nal_frame_count", 0),
+                "avg_bitrate_kbps": probe.get("avg_bitrate_kbps", 0),
+            }
+            if frames:
+                sample_idx = list(frames.keys())[0]
+                ir_img = frames[sample_idx]
+                ir_gray = cv2.cvtColor(ir_img, cv2.COLOR_BGR2GRAY)
+                h, w = ir_gray.shape
+                lap = cv2.Laplacian(ir_gray, cv2.CV_64F)
+                ir_info["sharpness"] = round(float(lap.var()), 2)
+                ir_info["brightness_mean"] = round(float(ir_gray.mean()), 1)
+                ir_info["brightness_std"] = round(float(ir_gray.std()), 1)
+                ir_info["brightness_max"] = int(ir_gray.max())
+
+                bright_mask = ir_gray > 200
+                bright_pct = round(100.0 * np.count_nonzero(bright_mask) / ir_gray.size, 1)
+                ir_info["saturated_pixel_pct"] = bright_pct
+
+                center_roi = ir_gray[h//4:3*h//4, w//4:3*w//4]
+                edge_roi_lst = [
+                    ir_gray[:h//8, :], ir_gray[7*h//8:, :],
+                    ir_gray[:, :w//8], ir_gray[:, 7*w//8:]
+                ]
+                edge_roi = np.concatenate([r.flatten() for r in edge_roi_lst if r.size > 0])
+                if center_roi.size > 0 and edge_roi.size > 0:
+                    center_mean = float(center_roi.mean())
+                    edge_mean = float(edge_roi.mean())
+                    ir_info["center_brightness"] = round(center_mean, 1)
+                    ir_info["edge_brightness"] = round(edge_mean, 1)
+                    ir_info["illumination_uniformity"] = round(edge_mean / (center_mean + 1e-6), 3)
+
+                ksize = min(h, w) // 8
+                if ksize >= 3 and ksize % 2 == 0:
+                    ksize -= 1
+                if ksize >= 3:
+                    blurred = cv2.GaussianBlur(ir_gray, (ksize, ksize), 0)
+                    high_freq = ir_gray.astype(float) - blurred.astype(float)
+                    hf_energy = float(np.mean(high_freq ** 2))
+                    ir_info["speckle_contrast"] = round(float(high_freq.std()), 2)
+                    ir_info["speckle_energy"] = round(hf_energy, 1)
+                    signal_power = float(np.mean(ir_gray.astype(float) ** 2))
+                    ir_info["speckle_snr_db"] = round(10 * np.log10(signal_power / (hf_energy + 1e-10)), 2)
+
+            result["ir_streams"][st] = ir_info
+
+        both_keys = [k for k in result["ir_streams"] if k in ("ir_left", "ir_right")]
+        if len(both_keys) == 2:
+            il = result["ir_streams"]["ir_left"]
+            ir = result["ir_streams"]["ir_right"]
+            if "brightness_mean" in il and "brightness_mean" in ir:
+                result["stereo_ir_brightness_diff"] = round(abs(il["brightness_mean"] - ir["brightness_mean"]), 1)
+                result["stereo_ir_brightness_ratio"] = round(
+                    min(il["brightness_mean"], ir["brightness_mean"]) /
+                    (max(il["brightness_mean"], ir["brightness_mean"]) + 1e-6), 3
+                )
+            if "speckle_contrast" in il and "speckle_contrast" in ir:
+                result["stereo_speckle_contrast_diff"] = round(
+                    abs(il["speckle_contrast"] - ir["speckle_contrast"]), 2
+                )
+    except ImportError:
+        result["note"] = "cv2 not available, IR quality analysis skipped"
+
+    return result
+
+
+def analyze_pcd_cloud(pcd_dir, device_name, device_type, max_files=30):
+    result = {"device": device_name, "available": False}
+    if pcd_dir is None or not os.path.isdir(pcd_dir):
+        return result
+    result["available"] = True
+    pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd')])
+    result["total_pcd_files"] = len(pcd_files)
+    if not pcd_files:
+        return result
+
+    spec = DEVICE_SPECS.get(device_type, {})
+    sample_files = pcd_files[:max_files] if len(pcd_files) > max_files else pcd_files
+    point_counts = []
+    all_distances_m = []
+    field_sets = set()
+
+    for pcd_fn in sample_files:
+        pcd_path = os.path.join(pcd_dir, pcd_fn)
+        info = parse_pcd_header(pcd_path)
+        if not info or info.get("points", 0) == 0:
+            continue
+        pts = info["points"]
+        point_counts.append(pts)
+        fields = info.get("fields", "")
+        field_sets.add(fields)
+
+        if "x" in fields:
+            try:
+                with open(pcd_path, 'rb') as f:
+                    header_size = 0
+                    for _ in range(20):
+                        line = f.readline()
+                        header_size += len(line)
+                        if line.decode('ascii', errors='replace').strip().startswith('DATA'):
+                            break
+                    data_start = f.tell()
+                    n_pts = pts
+                    sizes = info.get("sizes", [])
+                    stride = sum(sizes) if sizes else (4 * len(fields.split()))
+                    stride = max(stride, 12)
+                    f.seek(data_start)
+                    sample_n = min(n_pts, 5000)
+                    step = max(1, n_pts // sample_n)
+                    dists = []
+                    for i in range(0, n_pts, step):
+                        f.seek(data_start + i * stride)
+                        xyz_bytes = f.read(12)
+                        if len(xyz_bytes) < 12:
+                            break
+                        x, y, z = struct.unpack('<fff', xyz_bytes)
+                        d = math.sqrt(x*x + y*y + z*z)
+                        if not math.isfinite(d) or d < 0.01 or d > 200.0:
+                            continue
+                        dists.append(d)
+                    if dists:
+                        all_distances_m.extend(dists)
+            except Exception:
+                pass
+
+    if point_counts:
+        result["avg_points"] = float(np.mean(point_counts))
+        result["min_points"] = int(np.min(point_counts))
+        result["max_points"] = int(np.max(point_counts))
+        result["std_points"] = float(np.std(point_counts))
+        result["point_count_stability"] = round(
+            float(np.std(point_counts)) / (float(np.mean(point_counts)) + 1e-6), 4
+        )
+
+    if field_sets:
+        result["pcd_field_layouts"] = list(field_sets)
+        for fs in field_sets:
+            if "intensity" in fs:
+                result["has_intensity"] = True
+            if "ring" in fs:
+                result["has_ring"] = True
+            if "timestamp" in fs:
+                result["has_timestamp"] = True
+
+    if all_distances_m:
+        dist_arr = np.array(all_distances_m)
+        dist_arr = dist_arr[np.isfinite(dist_arr)]
+        if dist_arr.size > 0:
+            result["distance_mean_m"] = round(float(np.mean(dist_arr)), 2)
+            result["distance_median_m"] = round(float(np.median(dist_arr)), 2)
+            result["distance_std_m"] = round(float(np.std(dist_arr)), 2)
+            result["distance_min_m"] = round(float(np.min(dist_arr)), 2)
+            result["distance_max_m"] = round(float(np.max(dist_arr)), 2)
+            pcts = [5, 10, 25, 50, 75, 90, 95]
+            vals = np.percentile(dist_arr, pcts)
+            result["distance_percentiles_m"] = {f"p{p}": round(float(v), 2) for p, v in zip(pcts, vals)}
+
+            range_min, range_max = spec.get("depth_range_m", (0.1, 70.0))
+            in_range = np.sum((dist_arr >= range_min) & (dist_arr <= range_max))
+            result["points_in_spec_range_pct"] = round(100.0 * in_range / len(dist_arr), 1)
+
+            short_range = np.sum(dist_arr < 1.0)
+            mid_range = np.sum((dist_arr >= 1.0) & (dist_arr < 5.0))
+            far_range = np.sum(dist_arr >= 5.0)
+            total = len(dist_arr)
+            result["distance_bins"] = {
+                "short_lt1m_pct": round(100.0 * short_range / total, 1),
+                "mid_1to5m_pct": round(100.0 * mid_range / total, 1),
+                "far_gt5m_pct": round(100.0 * far_range / total, 1),
+            }
+
+    if spec.get("pts_per_sec") and result.get("avg_points"):
+        expected = spec["pts_per_sec"] / spec.get("depth_fps", 10)
+        result["expected_pts_per_frame"] = int(expected)
+        result["pts_per_frame_vs_spec_pct"] = round(
+            100.0 * result["avg_points"] / (expected + 1e-6), 1
+        )
+
+    if pcd_files:
+        timestamps = []
+        for fn in pcd_files:
+            m = re.search(r'(\d{13,})', fn)
+            if m:
+                timestamps.append(int(m.group(1)))
+        if len(timestamps) >= 2:
+            ts_sorted = sorted(timestamps)
+            duration_s = (ts_sorted[-1] - ts_sorted[0]) / 1e6
+            if duration_s > 0:
+                result["pcd_fps"] = len(pcd_files) / duration_s
+                result["pcd_duration_s"] = round(duration_s, 1)
+
+    return result
+
+
+def analyze_depth_accuracy_by_distance(depth_info, device_name, num_bins=8):
+    result = {"device": device_name, "available": False}
+    if depth_info is None or depth_info.get("num_frames", 0) < 3:
+        return result
+    result["available"] = True
+    frames = depth_info["frames"]
+    n = len(frames)
+    scale = depth_info["scale"]
+    w, h = depth_info["width"], depth_info["height"]
+    scale_is_meters = scale < 1.0
+    convert = scale * 1000.0 if scale_is_meters else scale
+
+    sample_frames = frames[:min(n, 30)]
+
+    valid_all = [f[f > 0].astype(np.float64).flatten() * convert for f in sample_frames if np.any(f > 0)]
+    if not valid_all:
+        result["available"] = False
+        return result
+
+    all_depth_mm = np.concatenate(valid_all)
+    all_depth_m = all_depth_mm / 1000.0
+
+    if len(all_depth_m) < 100:
+        result["available"] = False
+        return result
+
+    min_d = max(float(np.percentile(all_depth_m, 1)), 0.1)
+    max_d = min(float(np.percentile(all_depth_m, 99)), 20.0)
+    if max_d <= min_d + 0.1:
+        result["available"] = False
+        return result
+
+    bin_edges = np.linspace(min_d, max_d, num_bins + 1)
+    bin_labels = []
+    for i in range(num_bins):
+        lo = bin_edges[i]
+        hi = bin_edges[i + 1]
+        mask = (all_depth_m >= lo) & (all_depth_m < hi)
+        count = int(np.sum(mask))
+        if count < 10:
+            bin_labels.append(None)
+            continue
+        bin_vals_mm = all_depth_mm[mask]
+        bin_mean_m = round(lo + (hi - lo) / 2, 2)
+        depth_std_mm = float(np.std(bin_vals_mm))
+        depth_mean_mm = float(np.mean(bin_vals_mm))
+        if bin_mean_m > 0:
+            relative_pct = (depth_std_mm / (bin_mean_m * 1000)) * 100.0
+        else:
+            relative_pct = 0
+
+        spec = DEVICE_SPECS.get(device_name, {})
+        if device_name in ("335L", "336L"):
+            spec_pct = spec.get("depth_accuracy_pct")
+        elif device_name == "AC1":
+            spec_cm = spec.get("depth_accuracy_cm", (1, 5))
+            expected_sigma_mm = (spec_cm[0] * 10) * bin_mean_m / 5.0 if bin_mean_m <= 5 else (spec_cm[1] * 10)
+            relative_pct_spec = (expected_sigma_mm / (bin_mean_m * 1000)) * 100.0
+            spec_pct = round(relative_pct_spec, 2)
+        else:
+            spec_pct = None
+
+        entry = {
+            "distance_m": bin_mean_m,
+            "num_points": count,
+            "depth_std_mm": round(depth_std_mm, 1),
+            "relative_precision_pct": round(relative_pct, 2),
+            "spec_accuracy_pct": spec_pct,
+            "passes_spec": relative_pct <= spec_pct if spec_pct is not None else None,
+        }
+        bin_labels.append(entry)
+
+    result["distance_bins"] = [b for b in bin_labels if b is not None]
+
+    if n >= 10:
+        f0 = frames[0].astype(np.float64) * convert
+        f1 = frames[min(5, n - 1)].astype(np.float64) * convert
+        valid = (frames[0] > 0) & (frames[min(5, n - 1)] > 0)
+        if np.any(valid):
+            diff = np.abs(f0[valid] - f1[valid])
+            depth_vals = f0[valid]
+            permille_bins = {}
+            for lo_m, hi_m in [(0.3, 1.0), (1.0, 3.0), (3.0, 5.0), (5.0, 10.0), (10.0, 20.0)]:
+                mask = (depth_vals >= lo_m * 1000) & (depth_vals < hi_m * 1000)
+                if np.sum(mask) > 100:
+                    d = diff[mask]
+                    permille_bins[f"{lo_m}-{hi_m}m"] = {
+                        "temporal_noise_median_mm": round(float(np.median(d)), 2),
+                        "temporal_noise_p95_mm": round(float(np.percentile(d, 95)), 2),
+                    }
+            if permille_bins:
+                result["temporal_noise_by_distance"] = permille_bins
+
+    return result
+
+
 def assess_color(color_info, device_type):
     checks = []
     if not color_info.get("color_available", False):
@@ -1242,12 +1603,18 @@ def parse_pcd_header(filepath):
                     break
             points = 0
             fields = ""
+            sizes = []
+            types = []
             for hl in header_lines:
                 if hl.startswith('POINTS'):
                     points = int(hl.split()[1])
                 if hl.startswith('FIELDS'):
                     fields = hl.split(None, 1)[1] if len(hl.split()) > 1 else ""
-            return {"points": points, "fields": fields}
+                if hl.startswith('SIZE'):
+                    sizes = [int(x) for x in hl.split()[1:]]
+                if hl.startswith('TYPE'):
+                    types = hl.split()[1:]
+            return {"points": points, "fields": fields, "sizes": sizes, "types": types}
     except Exception:
         return None
 
@@ -1452,13 +1819,15 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
     lines.append("7. 多设备时间同步对齐分析")
     lines.append("8. 跨设备深度差异分析")
     lines.append("9. 通过/不通过判定")
-    lines.append("10. 336L 评估 (待补充)")
-    lines.append("11. 不同距离精度评估 (待补充)")
-    lines.append("12. 关键发现与建议")
-    lines.append("13. 附录：原始数据路径")
-    lines.append("14. 彩色与红外视频流分析")
-    lines.append("15. D2C 深度-彩色融合分析")
-    lines.append("16. 跨设备融合方法对比")
+    lines.append("10. 设备技术规格对比 (Structured Light vs LiDAR TOF)")
+    lines.append("11. 不同距离精度评估")
+    lines.append("12. IR 红外散斑流质量分析")
+    lines.append("13. PCD 点云密度与分布分析")
+    lines.append("14. 关键发现与建议")
+    lines.append("15. 附录：原始数据路径")
+    lines.append("16. 彩色与红外视频流分析")
+    lines.append("17. D2C 深度-彩色融合分析")
+    lines.append("18. 跨设备融合方法对比")
     lines.append("")
 
     lines.append("## 1. 采集会话概览")
@@ -1923,54 +2292,271 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                     lines.append(f"- {section_name} / {name}：实际={actual}，期望={expected}")
     lines.append("")
 
-    lines.append("## 10. 336L 评估 (待补充)")
+    lines.append("## 10. 设备技术规格对比 (Structured Light vs LiDAR TOF)")
     lines.append("")
-    ds_336l = devices_data.get("336L", {}).get("depth_stats")
-    imu_336l = devices_data.get("336L", {}).get("imu_stats")
-    if ds_336l:
-        lines.append("_336L 数据已采集，评估结果如下_")
+    lines.append("本节从测距原理层面对比 Orbbec（主动立体视觉+IR散斑结构光）与 RoboSense AC1（VCSEL+SPAD TOF LiDAR）")
+    lines.append("的根本差异，这些差异决定了深度数据特性而非简单的数值高低。")
+    lines.append("")
+
+    lines.append("### 10.1 测距原理对比")
+    lines.append("")
+    lines.append("| 特性 | Structured Light (335L/336L) | TOF LiDAR (AC1) |")
+    lines.append("|------|---------------------------|-----------------|")
+    lines.append("| 测距原理 | VCSEL投射IR散斑→双IR相机立体匹配→视差→深度 | VCSEL发射脉冲→SPAD计时往返→深度 |")
+    lines.append("| 深度密度 | 每像素一个深度值（1280x800=1M pts） | 稀疏点云（~17k pts/frame） |")
+    lines.append("| 深度噪声特征 | 与散斑匹配置信度相关，表面反射率影响大 | 与计时精度相关，距离影响大 |")
+    lines.append("| 深度精度范围 | 335L: 0.3-5m; 336L: 0.1-20m | AC1: 0.1-70m (@10%反射率40m) |")
+    lines.append("| 户外性能 | 受环境IR干扰（阳光含IR）；336L IR滤光片缓解 | TOF抗干扰强，支持100klux阳光 |")
+    lines.append("| 暗面/黑体 | 散斑反射率低→匹配失败→空洞 | SPAD灵敏度低→回波弱→无效点 |")
+    lines.append("| 透明/镜面 | 散斑穿透/反射→错误深度 | 脉冲穿透→无效或穿透后反射 |")
+    lines.append("| 近距精度 | 极高（视差范围大，亚像素精度高） | 一般（计时分辨率固定） |")
+    lines.append("| 远距精度 | 335L: 5m截止; 336L: 精度随距离²下降 | 远距仍有效，精度±3cm@>5m |")
+    lines.append("| 帧率 | 30fps（全局快门IR，无运动模糊） | 10fps（累积时间影响帧率） |")
+    lines.append("| D2C方式 | SW重投影（深度→彩色坐标变换） | HW上采样（96x288→1920x1080） |")
+    lines.append("")
+
+    lines.append("### 10.2 已发布规格对比表")
+    lines.append("")
+    spec_devs = [dt for dt in dev_types if dt in DEVICE_SPECS]
+    if spec_devs:
+        spec_header = "| 规格项 |" + "|".join([f" {dev_labels.get(dt, dt)} " for dt in spec_devs]) + "|"
+        spec_sep = "|--------|" + "|".join(["------" for _ in spec_devs]) + "|"
+        lines.append(spec_header)
+        lines.append(spec_sep)
+        spec_rows = [
+            ("测距原理", "depth_tech"),
+            ("深度分辨率", "depth_res"),
+            ("深度帧率", None),
+            ("深度范围", None),
+            ("深度精度", None),
+            ("基线/cm", None),
+            ("彩色分辨率", "color_res"),
+            ("彩色FOV", "color_fov"),
+            ("深度FOV", "depth_fov"),
+            ("IMU频率", None),
+            ("IR流数", "ir_streams"),
+            ("D2C模式", "d2c_mode"),
+        ]
+        for label, key in spec_rows:
+            row = f"| {label} |"
+            for dt in spec_devs:
+                s = DEVICE_SPECS[dt]
+                if label == "深度帧率":
+                    row += f" {s.get('depth_fps', 'N/A')} fps |"
+                elif label == "深度范围":
+                    r = s.get("depth_range_m", ())
+                    row += f" {r[0]}-{r[1]}m |" if r else " N/A |"
+                elif label == "深度精度":
+                    if s.get("depth_accuracy_pct"):
+                        row += f" ≤{s['depth_accuracy_pct']}% @2m |"
+                    elif s.get("depth_accuracy_cm"):
+                        a = s["depth_accuracy_cm"]
+                        row += f" ±{a[0]}cm(0-5m), ±{a[1]}cm(>5m) |"
+                    else:
+                        row += " 335L: N/A |"
+                elif label == "基线/cm":
+                    b = s.get("baseline_mm")
+                    row += f" {b/10:.1f}cm |" if b else " N/A(固态) |"
+                elif label == "IMU频率":
+                    row += f" {s.get('imu_rate_hz', 'N/A')}Hz |"
+                elif label == "IR滤光片":
+                    row += f" {'是' if s.get('ir_filter') else '否'} |"
+                else:
+                    row += f" {s.get(key, 'N/A')} |"
+            lines.append(row)
         lines.append("")
-        lines.append("| 指标 | 336L |")
-        lines.append("|------|------|")
-        lines.append(f"| 分辨率 | {ds_336l.get('resolution', 'N/A')} |")
-        lines.append(f"| 帧数 | {ds_336l.get('num_frames', 0)} |")
-        lines.append(f"| depthScale | {ds_336l.get('depth_scale', 'N/A')} |")
-        lines.append(f"| 文件大小 | {ds_336l.get('file_size_mb', 0):.1f} MB |")
-        if "avg_valid_ratio" in ds_336l:
-            lines.append(f"| 有效像素比 | {ds_336l['avg_valid_ratio']*100:.1f}% |")
-        if "global_mean_mm" in ds_336l:
-            lines.append(f"| 全局均值 | {ds_336l.get('global_mean_mm', 0):.1f} mm ({ds_336l.get('global_mean_m', 0):.3f} m) |")
+
+        lines.append("### 10.3 336L IR 滤光片特性")
+        lines.append("")
+        lines.append("336L 在 335L 基础上增加了 **IR带通滤光片**（透过>750nm，阻挡可见光<750nm）。")
+        lines.append("效果：")
+        lines.append("- 增强户外/强光下的散斑信噪比（滤除环境可见光噪声）")
+        lines.append("- 改善 IR 图像对比度（仅 IR 散斑投影与场景反射 IR 通过）")
+        lines.append("- 测距范围从 5m 扩展到 20m（散斑匹配在更长基线下仍可靠）")
+        lines.append("- 代价：IR 图像失去可见光信息，不适合需要可见光+IR 的融合应用")
+        lines.append("")
+        ir_336l = devices_data.get("336L", {}).get("ir_stats", {})
+        if ir_336l.get("ir_available"):
+            lines.append("_336L IR 流数据已采集，详见第12节 IR 散斑质量分析_")
+        else:
+            lines.append("_336L IR 流暂无采集数据，待设备接入后补充_")
+        lines.append("")
     else:
-        lines.append("_336L 暂无采集数据。336L（Gemini 336L, VID:PID 2BC5:0807）为335L的长距版本，")
-        lines.append("官方标称测距范围 0.3–10m（vs 335L 0.3–5m），深度分辨率与335L相同（1280x800）。_")
+        lines.append("_无已采集设备匹配 DEVICE_SPECS 配置_")
         lines.append("")
-        lines.append("| 对比项 | 335L | 336L (spec) |")
-        lines.append("|--------|------|-------------|")
-        lines.append("| 测距范围 | 0.3–5m | 0.3–10m |")
-        lines.append("| 深度分辨率 | 1280x800 | 1280x800 |")
-        lines.append("| depthScale | 0.001 | 0.001 (预估) |")
-        lines.append("| D2C | SW | 待测 |")
+
+    lines.append("## 11. 不同距离精度评估")
+    lines.append("")
+    lines.append("本节基于采集的 depth_raw 数据，按距离区间统计深度精度（标准差/相对精度），")
+    lines.append("并与各设备已发布规格进行对比。实测精度受场景内容影响，仅供参考。")
     lines.append("")
 
-    lines.append("## 11. 不同距离精度评估 (待补充)")
+    any_acc_data = False
+    for dt in dev_types:
+        acc = devices_data[dt].get("depth_accuracy_stats", {})
+        if not acc.get("available"):
+            continue
+        any_acc_data = True
+        lines.append(f"### 11.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append("")
+        bins = acc.get("distance_bins", [])
+        if not bins:
+            lines.append("_距离区间统计数据不足（有效深度点<100），跳过_")
+            lines.append("")
+            continue
+
+        lines.append("| 目标距离 (m) | 采样点数 | 深度std (mm) | 相对精度 (%) | 规格精度 (%) | 是否达标 |")
+        lines.append("|-------------|---------|-------------|-------------|-------------|---------|")
+        for b in bins:
+            spec_str = f"{b['spec_accuracy_pct']:.2f}%" if b.get("spec_accuracy_pct") is not None else "N/A"
+            pass_str = "✅" if b.get("passes_spec") is True else ("❌" if b.get("passes_spec") is False else "—")
+            lines.append(f"| {b['distance_m']:.2f} | {b['num_points']} | {b['depth_std_mm']:.1f} | {b['relative_precision_pct']:.2f} | {spec_str} | {pass_str} |")
+        lines.append("")
+
+        temporal = acc.get("temporal_noise_by_distance", {})
+        if temporal:
+            lines.append("**时间域噪声（帧间深度差）按距离区间：**")
+            lines.append("")
+            lines.append("| 距离区间 | 中位数噪声 (mm) | P95噪声 (mm) |")
+            lines.append("|---------|-----------------|-------------|")
+            for rng, vals in sorted(temporal.items()):
+                lines.append(f"| {rng} | {vals.get('temporal_noise_median_mm', 'N/A')} | {vals.get('temporal_noise_p95_mm', 'N/A')} |")
+            lines.append("")
+
+    if not any_acc_data:
+        lines.append("_暂无足量深度帧数据（需≥3帧）进行距离精度分析，待采集后补充_")
+        lines.append("")
+        lines.append("| 目标距离 (m) | 335L 误差 (mm) | 336L 误差 (mm) | AC1 误差 (mm) | 测试方法 |")
+        lines.append("|-------------|---------------|---------------|--------------|----------|")
+        for d in [0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0]:
+            method = "平面标定板" if d <= 5 else ("大型平面/墙面" if d <= 20 else "远距目标")
+            lines.append(f"| {d} | - | - | - | {method} |")
+        lines.append("")
+        lines.append("_测试方法：在已知距离放置标定板/平面，采集30帧以上，取深度均值与已知距离之差为系统误差，标准差为随机误差。_")
+        lines.append("")
+
+    lines.append("## 12. IR 红外散斑流质量分析")
     lines.append("")
-    lines.append("当有多距离采集数据后，此节将对比各设备在不同目标距离下的深度误差。")
-    lines.append("")
-    dist_devices = [dt for dt in dev_types if dt != "AC1"] + ["AC1"]
-    header = "| 目标距离 (m) |" + "|".join([f" {dt} 误差 (mm) " for dt in dist_devices]) + "| 测试方法 |"
-    sep = "|-------------|" + "|".join(["----------------"] * len(dist_devices)) + "|----------|"
-    lines.append(header)
-    lines.append(sep)
-    for d in [0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0]:
-        row = f"| {d} |" + "|".join([" - " for _ in dist_devices]) + "|"
-        method = "平面标定板" if d <= 5 else ("大型平面/墙面" if d <= 20 else "远距目标")
-        row += f" {method} |"
-        lines.append(row)
-    lines.append("")
-    lines.append("_测试方法：在已知距离放置标定板/平面，采集30帧以上，取深度均值与已知距离之差为系统误差，标准差为随机误差。_")
+    lines.append("本节分析 Orbbec 设备的 IR 流质量，散斑投影器（VCSEL）投射随机散斑到场景，")
+    lines.append("左右 IR 全局快门相机捕捉散斑图用于立体匹配，深度质量直接取决于 IR 散斑质量。")
     lines.append("")
 
-    lines.append("## 12. 关键发现与建议")
+    any_ir = False
+    for dt in dev_types:
+        ir = devices_data[dt].get("ir_stats", {})
+        if not ir.get("ir_available"):
+            continue
+        any_ir = True
+        lines.append(f"### 12.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append("")
+        if ir.get("ir_tech_note"):
+            lines.append(f"_技术说明：{ir['ir_tech_note']}_")
+            lines.append("")
+        if ir.get("ir_filter_note"):
+            lines.append(f"**IR 滤光片效果**：{ir['ir_filter_note']}")
+            lines.append("")
+
+        for st, info in ir.get("ir_streams", {}).items():
+            label = "左IR" if "left" in st else "右IR"
+            lines.append(f"**{label} ({st})**")
+            lines.append("")
+            lines.append("| 指标 | 值 | 说明 |")
+            lines.append("|------|-----|------|")
+            lines.append(f"| 分辨率 | {info.get('resolution', 'N/A')} | |")
+            lines.append(f"| 帧数 | {info.get('frame_count', 0)} | |")
+            lines.append(f"| 平均码率 | {info.get('avg_bitrate_kbps', 0)} kbps | |")
+            if "sharpness" in info:
+                lines.append(f"| 锐度 (Laplacian var) | {info['sharpness']:.2f} | IR 纹理清晰度 |")
+            if "brightness_mean" in info:
+                lines.append(f"| 平均亮度 | {info['brightness_mean']:.1f} | IR 灰度均值 |")
+            if "brightness_std" in info:
+                lines.append(f"| 亮度标准差 | {info['brightness_std']:.1f} | 场景对比度 |")
+            if "saturated_pixel_pct" in info:
+                sat_status = "⚠️ 过曝" if info['saturated_pixel_pct'] > 10 else "正常"
+                lines.append(f"| 饱和像素占比 | {info['saturated_pixel_pct']:.1f}% | {sat_status} |")
+            if "center_brightness" in info:
+                lines.append(f"| 中心亮度 | {info['center_brightness']:.1f} | 投影器中心照度 |")
+            if "edge_brightness" in info:
+                lines.append(f"| 边缘亮度 | {info['edge_brightness']:.1f} | 投影器边缘照度 |")
+            if "illumination_uniformity" in info:
+                u = info['illumination_uniformity']
+                u_note = "均匀" if u > 0.7 else ("尚可" if u > 0.4 else "⚠️ 不均匀")
+                lines.append(f"| 照明均匀度 (边缘/中心) | {u:.3f} | {u_note} |")
+            if "speckle_contrast" in info:
+                lines.append(f"| 散斑对比度 | {info['speckle_contrast']:.2f} | 高频标准差，越高散斑越明显 |")
+            if "speckle_energy" in info:
+                lines.append(f"| 散斑能量 | {info['speckle_energy']:.1f} | 高频MSE |")
+            if "speckle_snr_db" in info:
+                snr = info['speckle_snr_db']
+                snr_note = "优秀" if snr > 20 else ("良好" if snr > 10 else "⚠️ 偏低")
+                lines.append(f"| 散斑信噪比 (dB) | {snr:.2f} | {snr_note} |")
+            lines.append("")
+
+        if ir.get("stereo_ir_brightness_diff") is not None:
+            lines.append(f"**立体IR一致性**：左右IR亮度差 = {ir['stereo_ir_brightness_diff']:.1f}，"
+                         f"亮度比 = {ir.get('stereo_ir_brightness_ratio', 'N/A')}")
+            if ir.get("stereo_speckle_contrast_diff") is not None:
+                lines.append(f"左右散斑对比度差 = {ir['stereo_speckle_contrast_diff']:.2f}")
+            lines.append("")
+
+    if not any_ir:
+        lines.append("_无 Orbbec 设备 IR 流数据，或 cv2 不可用。IR 散斑流分析仅适用于 335L/336L。_")
+        lines.append("")
+
+    lines.append("## 13. PCD 点云密度与分布分析")
+    lines.append("")
+    lines.append("本节分析 PCD 点云数据的密度、距离分布、有效比例等空间特性，")
+    lines.append("区分 Structured Light（密集深度图转点云）与 LiDAR TOF（稀疏直接点云）的密度差异。")
+    lines.append("")
+
+    any_pcd_cloud = False
+    for dt in dev_types:
+        pc = devices_data[dt].get("pcd_cloud_stats", {})
+        if not pc.get("available"):
+            continue
+        any_pcd_cloud = True
+        lines.append(f"### 13.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append("")
+        lines.append("| 指标 | 值 | 说明 |")
+        lines.append("|------|-----|------|")
+        lines.append(f"| PCD文件数 | {pc.get('total_pcd_files', 0)} | |")
+        if "avg_points" in pc:
+            lines.append(f"| 平均点数/帧 | {pc['avg_points']:.0f} | |")
+            lines.append(f"| 最小点数 | {pc['min_points']} | |")
+            lines.append(f"| 最大点数 | {pc['max_points']} | |")
+            lines.append(f"| 点数稳定性 (CV) | {pc.get('point_count_stability', 'N/A')} | <0.1稳定 |")
+        if "expected_pts_per_frame" in pc:
+            lines.append(f"| 规格预期点数/帧 | {pc['expected_pts_per_frame']} | pts_per_sec/fps |")
+            lines.append(f"| 实际/规格比 | {pc.get('pts_per_frame_vs_spec_pct', 'N/A')}% | |")
+        if "distance_mean_m" in pc:
+            lines.append(f"| 平均距离 | {pc['distance_mean_m']} m | |")
+            lines.append(f"| 距离中位数 | {pc['distance_median_m']} m | |")
+            lines.append(f"| 距离标准差 | {pc['distance_std_m']} m | |")
+            lines.append(f"| 距离范围 | {pc['distance_min_m']}-{pc['distance_max_m']} m | |")
+        if "points_in_spec_range_pct" in pc:
+            lines.append(f"| 规格范围内点占比 | {pc['points_in_spec_range_pct']:.1f}% | depth_range_m |")
+        bins = pc.get("distance_bins", {})
+        if bins:
+            lines.append(f"| 近距(<1m) | {bins.get('short_lt1m_pct', 'N/A')}% | |")
+            lines.append(f"| 中距(1-5m) | {bins.get('mid_1to5m_pct', 'N/A')}% | |")
+            lines.append(f"| 远距(>5m) | {bins.get('far_gt5m_pct', 'N/A')}% | |")
+        if "pcd_fps" in pc:
+            lines.append(f"| PCD 帧率 | {pc['pcd_fps']:.1f} fps | |")
+            lines.append(f"| PCD 持续时间 | {pc.get('pcd_duration_s', 'N/A')} s | |")
+        lines.append("")
+
+        dist_pcts = pc.get("distance_percentiles_m", {})
+        if dist_pcts:
+            lines.append("**距离分布百分位：**")
+            pstr = " / ".join([f"P{p.replace('p','')}={v}m" for p, v in dist_pcts.items()])
+            lines.append(f"{pstr}")
+            lines.append("")
+
+    if not any_pcd_cloud:
+        lines.append("_无 PCD 目录数据，点云密度分析不可用_")
+        lines.append("")
+
+    lines.append("## 14. 关键发现与建议")
     lines.append("")
     findings = []
 
@@ -2018,7 +2604,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             findings.append(f"设备间 IMU 起始时间偏移仅 {offset:.1f} ms，时间同步质量良好")
 
     if "336L" not in dev_types or not depth_data.get("336L"):
-        findings.append("336L（长距版 335L）暂无物理设备，评估需等待设备接入后补充测试（含不同距离精度评估）")
+        findings.append("336L（Gemini 336L, IR滤光片+长距版335L）暂无物理设备，评估需等待设备接入。336L标称测距0.1-20m，精度≤1.5%@2m，IR带通滤光片增强户外散斑SNR")
 
     for dt in dev_types:
         cs = devices_data[dt].get("color_stats", {})
@@ -2044,23 +2630,66 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         qa = color_ac1["color_quality"]
         findings.append(f"彩色流质量：335L 锐度={q3.get('sharpness',0):.1f}、亮度={q3.get('brightness_mean',0):.1f}；AC1 锐度={qa.get('sharpness',0):.1f}、亮度={qa.get('brightness_mean',0):.1f}")
 
+    for dt in dev_types:
+        ir = devices_data[dt].get("ir_stats", {})
+        for st, info in ir.get("ir_streams", {}).items():
+            if info.get("saturated_pixel_pct", 0) > 10:
+                findings.append(f"{dt} {st} 红外流过曝（饱和像素{info['saturated_pixel_pct']:.1f}%），散斑投影器功率可能与近距离场景不匹配，考虑降低曝光或调整距离")
+            u = info.get("illumination_uniformity", 0)
+            if u and u < 0.4:
+                findings.append(f"{dt} {st} IR 照明均匀度={u:.3f}（边缘/中心比），偏低，影响边缘深度质量")
+
+    for dt in dev_types:
+        pc = devices_data[dt].get("pcd_cloud_stats", {})
+        if pc.get("available") and pc.get("pts_per_frame_vs_spec_pct"):
+            pct = pc["pts_per_frame_vs_spec_pct"]
+            if pct < 50:
+                findings.append(f"{dt} PCD 实际点数仅为规格的 {pct:.1f}%，可能存在点云过滤或数据丢失")
+            elif pct > 120:
+                findings.append(f"{dt} PCD 实际点数超过规格 {pct:.1f}%，检查点云格式是否含重复/额外字段")
+
+    orb_devs = [dt for dt in dev_types if dt in ("335L", "336L")]
+    ac1_devs = [dt for dt in dev_types if dt == "AC1"]
+    if orb_devs and ac1_devs:
+        for odt in orb_devs:
+            pc_orb = devices_data[odt].get("pcd_cloud_stats", {})
+            pc_ac1 = devices_data.get("AC1", {}).get("pcd_cloud_stats", {})
+            if pc_orb.get("avg_points") and pc_ac1.get("avg_points"):
+                ratio = pc_orb["avg_points"] / max(pc_ac1["avg_points"], 1)
+                tech_note = "（结构光每像素一个深度点 vs LiDAR稀疏离散点）"
+                findings.append(f"{odt} PCD 点数约 {pc_orb['avg_points']:.0f}，AC1 约 {pc_ac1['avg_points']:.0f}，"
+                               f"比值 {ratio:.0f}x {tech_note}")
+
+    for dt in dev_types:
+        acc = devices_data[dt].get("depth_accuracy_stats", {})
+        if acc.get("available"):
+            bins = acc.get("distance_bins", [])
+            failed_bins = [b for b in bins if b.get("passes_spec") is False]
+            if failed_bins:
+                dists = ", ".join([f"{b['distance_m']:.1f}m({b['relative_precision_pct']:.2f}%>spec{b['spec_accuracy_pct']:.2f}%)" for b in failed_bins])
+                findings.append(f"{dt} 部分距离区间深度精度未达规格：{dists}")
+            temporal = acc.get("temporal_noise_by_distance", {})
+            for rng, vals in temporal.items():
+                if vals.get("temporal_noise_p95_mm", 0) > 50:
+                    findings.append(f"{dt} 距离区间{rng}时间噪声P95={vals['temporal_noise_p95_mm']:.1f}mm偏高，可能影响深度滤波收敛")
+
     for i, f in enumerate(findings, 1):
         lines.append(f"{i}. {f}")
     lines.append("")
 
-    lines.append("## 13. 附录：原始数据路径")
+    lines.append("## 15. 附录：原始数据路径")
     lines.append("")
     for dt in dev_types:
         lines.append(f"- {dev_labels.get(dt, dt)}: `{devices_data[dt]['path']}`")
     lines.append("")
 
-    lines.append("## 14. 彩色与红外视频流分析")
+    lines.append("## 16. 彩色与红外视频流分析")
     lines.append("")
     for dt in dev_types:
         cs = devices_data[dt].get("color_stats", {})
         if not cs:
             continue
-        lines.append(f"### 14.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append(f"### 16.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
         lines.append("")
         lines.append("| 指标 | 值 |")
         lines.append("|------|-----|")
@@ -2095,7 +2724,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         lines.append("")
 
     enc_sub_idx = sum(1 for dt in dev_types if devices_data[dt].get("color_stats"))
-    lines.append(f"### 14.{enc_sub_idx + 1} H.264 编码参数诊断")
+    lines.append(f"### 16.{enc_sub_idx + 1} H.264 编码参数诊断")
     lines.append("")
     lines.append("本节从 H.264 Annex-B 码流层面分析编码配置与 NAL 单元分布，诊断编码质量相关问题。")
     lines.append("")
@@ -2161,7 +2790,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             lines.append("")
 
     sq_sub_idx = enc_sub_idx + 2
-    lines.append(f"### 14.{sq_sub_idx} 彩色传感器成像质量分析")
+    lines.append(f"### 16.{sq_sub_idx} 彩色传感器成像质量分析")
     lines.append("")
     lines.append("本节从传感器物理成像层面分析彩色流图像质量，区分 MJPEG 解压伪影与原始传感器噪声。")
     lines.append("335L 彩色源为 MJPEG（经 yuvj422p→yuv420p sws 转换），AC1 为 NV12 直出，噪声来源不同。")
@@ -2215,13 +2844,13 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             lines.append(f"| 边缘保留强度 | {sq['edge_preservation']:.2f} | 原始-模糊 差分均值 |")
         lines.append("")
 
-    lines.append("## 15. D2C 深度-彩色融合分析")
+    lines.append("## 17. D2C 深度-彩色融合分析")
     lines.append("")
     for dt in dev_types:
         d2c = devices_data[dt].get("d2c_fusion", {})
         if not d2c:
             continue
-        lines.append(f"### 15.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
+        lines.append(f"### 17.{dev_types.index(dt)+1} {dev_labels.get(dt, dt)}")
         lines.append("")
         lines.append("| 指标 | 值 |")
         lines.append("|------|-----|")
@@ -2258,7 +2887,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                     lines.append(f"| SSIM 逐通道 (B/G/R) | {detail['ssim_per_channel']} |")
         lines.append("")
 
-    lines.append("## 16. 跨设备融合方法对比")
+    lines.append("## 18. 跨设备融合方法对比")
     lines.append("")
     d2c_devs = [dt for dt in dev_types if devices_data[dt].get("d2c_fusion", {}).get("fused_available")]
     if len(d2c_devs) >= 2:
@@ -2304,7 +2933,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             lines.append(row)
         lines.append("")
 
-        lines.append("### 16.1 SW D2C vs HW D2C 分析")
+        lines.append("### 18.1 SW D2C vs HW D2C 分析")
         lines.append("")
         lines.append("- **SW D2C（335L/336L）**：深度帧 1280x800 通过软件重投影对齐到彩色 1280x800，")
         lines.append("  深度像素被插值到彩色平面，融合图保持高空间分辨率，边缘可能出现轻微对齐偏差。")
@@ -2349,11 +2978,12 @@ def _dir_size_mb(path):
 
 
 def evaluate_device(dev_path, dev_type, session_log=None):
-    result = {"path": dev_path, "depth_stats": {}, "imu_stats": {}, "pcd_stats": {}, "intrinsic": None, "log_info": {}, "h264_stats": {}, "d2c_fusion": {}, "color_stats": {}, "h264_encoding": {}}
+    result = {"path": dev_path, "depth_stats": {}, "imu_stats": {}, "pcd_stats": {}, "intrinsic": None, "log_info": {}, "h264_stats": {}, "d2c_fusion": {}, "color_stats": {}, "h264_encoding": {}, "ir_stats": {}, "pcd_cloud_stats": {}, "depth_accuracy_stats": {}}
     files = find_files(dev_path)
     result["_files"] = files
     files = find_files(dev_path)
 
+    depth_info = None
     if files["raw"]:
         print(f"  Parsing depth_raw: {files['raw']}")
         depth_info = parse_depth_raw(files["raw"])
@@ -2392,6 +3022,20 @@ def evaluate_device(dev_path, dev_type, session_log=None):
             print(f"    WARNING: Color issue={cs['color_issue']} ({cs.get('color_issue_note', '')})")
         print(f"  Analyzing D2C fusion...")
         result["d2c_fusion"] = analyze_d2c_fusion(files["h264_by_type"], dev_type, dev_type, result["log_info"])
+
+    if dev_type in ("335L", "336L") and files.get("h264_by_type"):
+        print(f"  Analyzing IR stream quality...")
+        result["ir_stats"] = analyze_ir_stream_quality(files["h264_by_type"], dev_type, dev_type)
+
+    if files["pcd_dir"]:
+        print(f"  Analyzing PCD cloud distribution...")
+        result["pcd_cloud_stats"] = analyze_pcd_cloud(files["pcd_dir"], dev_type, dev_type)
+
+    if depth_info and depth_info.get("num_frames", 0) >= 3:
+        print(f"  Analyzing depth accuracy by distance...")
+        result["depth_accuracy_stats"] = analyze_depth_accuracy_by_distance(
+            depth_info, dev_type
+        )
 
     return result
 
