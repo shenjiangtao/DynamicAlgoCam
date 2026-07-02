@@ -10,14 +10,11 @@
 //
 
 #include "nio_sdl_viewer.hpp"
-#include <utility>
-
-constexpr int nio::SDLViewer::MAX_TILE_W;
-constexpr int nio::SDLViewer::MAX_TILE_H;
 #include "nio_log.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace nio {
 
@@ -326,26 +323,34 @@ bool SDLViewer::createWindow() {
     if (initialized_ || slots_.empty())
         return false;
 
-    int maxW = 0, maxH = 0;
-    for (auto& s : slots_) {
-        maxW = std::max(maxW, s->w);
-        maxH = std::max(maxH, s->h);
-    }
     maxSlotsPerRow_ = 0;
     for (auto& d : devices_)
         maxSlotsPerRow_ = std::max(maxSlotsPerRow_, static_cast<int>(d.slotIndices.size()));
-    tileW_ = std::min(maxW, MAX_TILE_W);
-    tileH_ = std::min(maxH, MAX_TILE_H);
+    tileW_ = targetWinW_ / std::max(1, maxSlotsPerRow_);
+    tileH_ = targetWinH_ / std::max(1, static_cast<int>(devices_.size()));
 
-    int winW = maxSlotsPerRow_ * tileW_;
-    int rows = static_cast<int>(devices_.size());
-    int winH = rows * (tileH_ + ROW_HEADER_H + FORMAT_BAR_H);
-    window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winW, winH,
-                               SDL_WINDOW_SHOWN);
+    SDL_DisplayMode dm;
+    if (SDL_GetCurrentDisplayMode(0, &dm) != 0) {
+        std::cerr << "SDL_GetCurrentDisplayMode failed: " << SDL_GetError() << std::endl;
+        return false;
+    }
+
+    int screenW = dm.w;
+    int screenH = dm.h;
+
+    int winW = screenW * 2 / 3; // 这里可以改成 screenW / 2
+    int winH = screenH * 2 / 3; // 这里可以改成 screenH / 2
+
+    winW = std::min(winW, targetWinW_);
+    winH = std::min(winH, targetWinH_);
+
+    window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
+                               SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
         return false;
     }
+
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
     if (!renderer_) {
         std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
@@ -359,10 +364,8 @@ bool SDLViewer::createWindow() {
         textures_.push_back(tex);
     }
 
-    // Pre-render label textures at initial window size
     rebuildLabelTextures(winW, winH);
 
-    // Start decode + render threads
     decodeThread_ = std::thread(&SDLViewer::decodeThreadFunc, this);
     renderThread_ = std::thread(&SDLViewer::renderLoop, this);
     initialized_ = true;
@@ -841,6 +844,7 @@ void SDLViewer::renderDeviceRow(int di, int rowY, float scale, int colW, int win
     }
 
     int videoY = rowY + static_cast<int>(ROW_HEADER_H * scale);
+    int videoH = static_cast<int>(tileH_ * scale) - static_cast<int>((ROW_HEADER_H + FORMAT_BAR_H) * scale);
 
     for (int si = 0; si < static_cast<int>(dev.slotIndices.size()); si++) {
         int slotIdx = dev.slotIndices[si];
@@ -855,7 +859,7 @@ void SDLViewer::renderDeviceRow(int di, int rowY, float scale, int colW, int win
             }
         }
 
-        auto [dstW, dstH] = computeSlotDisplaySize(slotIdx, scale);
+        auto [dstW, dstH] = computeSlotDisplaySize(slotIdx, colW, videoH);
         int xOff = si * colW + (colW - dstW) / 2;
 
         SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
@@ -895,13 +899,15 @@ void SDLViewer::renderLoop() {
 
         int rowTotalH = ROW_HEADER_H + tileH_ + FORMAT_BAR_H;
         int totalContentH = numRows * rowTotalH;
-        float scaleX = static_cast<float>(winW) / (maxSlotsPerRow_ * tileW_);
-        float scaleY = static_cast<float>(winH) / totalContentH;
-        float scale = std::min(scaleX, scaleY);
-        int colW = static_cast<int>(winW / maxSlotsPerRow_);
+        float scale = 1.0f;
+        if (totalContentH > winH) {
+            scale = static_cast<float>(winH) / totalContentH;
+        }
 
         for (int di = 0; di < numRows; di++) {
             int rowY = static_cast<int>(di * rowTotalH * scale);
+            int slotsInRow = static_cast<int>(devices_[di].slotIndices.size());
+            int colW = (slotsInRow > 0) ? (winW / slotsInRow) : winW;
             renderDeviceRow(di, rowY, scale, colW, winW);
         }
 
@@ -911,15 +917,15 @@ void SDLViewer::renderLoop() {
 }
 
 // Compute the displayed size of a slot while preserving aspect ratio
-std::pair<int, int> SDLViewer::computeSlotDisplaySize(int slotIdx, float scale) const {
+std::pair<int, int> SDLViewer::computeSlotDisplaySize(int slotIdx, int slotW, int slotH) const {
     if (slotIdx < 0 || slotIdx >= static_cast<int>(slots_.size()))
         return { 0, 0 };
     const auto& slot = *slots_[slotIdx];
     int dstW = 0, dstH = 0;
-    if (slot.w > 0 && slot.h > 0) {
-        float aspScale = std::min(static_cast<float>(tileW_) / slot.w, static_cast<float>(tileH_) / slot.h);
-        dstW = static_cast<int>(slot.w * aspScale * scale);
-        dstH = static_cast<int>(slot.h * aspScale * scale);
+    if (slot.w > 0 && slot.h > 0 && slotW > 0 && slotH > 0) {
+        float aspScale = std::min(static_cast<float>(slotW) / slot.w, static_cast<float>(slotH) / slot.h);
+        dstW = static_cast<int>(slot.w * aspScale);
+        dstH = static_cast<int>(slot.h * aspScale);
     }
     return { dstW, dstH };
 }

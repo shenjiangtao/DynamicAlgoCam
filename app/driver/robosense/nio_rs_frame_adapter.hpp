@@ -27,13 +27,17 @@ static constexpr float RS_AC1_DEPTH_SCALE = 5.0f;
 
 // Convert RS-AC1 PointCloudMsg → NioFrame (synthetic Y16 depth map).
 // Each point[i] maps to pixel(col=i%96, row=i/96).
+// Output is upsampled to AC1_COLOR_W × AC1_COLOR_H (nearest-neighbor, vertical flip).
 // Invalid points (NaN or <0.2m) get depth=0.
+static constexpr int AC1_COLOR_W = 1920;
+static constexpr int AC1_COLOR_H = 1080;
+
 inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     NioFrame f;
     f.type = NioFrameType::DEPTH;
     f.format = NioFormat::Y16;
-    f.width = RS_AC1_DEPTH_WIDTH;
-    f.height = RS_AC1_DEPTH_HEIGHT;
+    f.width = AC1_COLOR_W;
+    f.height = AC1_COLOR_H;
     f.depthScale = RS_AC1_DEPTH_SCALE;
     f.timestampUs = static_cast<uint64_t>(cloud->timestamp * 1e6);
 
@@ -42,9 +46,8 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
     auto* dst = reinterpret_cast<uint16_t*>(f.data.data());
 
     size_t nPts = cloud->points.size();
-    // Upsample low‑resolution depth grid to the full frame size (nearest‑neighbor).
-    const size_t scaleW = f.width / RS_AC1_DEPTH_WIDTH; // 1920/96 = 20
-    const size_t scaleH = f.height / RS_AC1_DEPTH_HEIGHT; // 1080/288 = 3 (integer floor)
+    const size_t scaleW = f.width / RS_AC1_DEPTH_WIDTH;
+    const size_t scaleH = f.height / RS_AC1_DEPTH_HEIGHT;
     for (size_t rowLow = 0; rowLow < RS_AC1_DEPTH_HEIGHT; ++rowLow) {
         for (size_t colLow = 0; colLow < RS_AC1_DEPTH_WIDTH; ++colLow) {
             size_t srcIdx = rowLow * RS_AC1_DEPTH_WIDTH + colLow;
@@ -59,13 +62,11 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
                     }
                 }
             }
-            // Write the value into the upsampled block (invert vertically).
             for (size_t dy = 0; dy < scaleH; ++dy) {
-                size_t targetRow = (RS_AC1_DEPTH_HEIGHT - 1 - rowLow) * scaleH + dy; // vertical flip
+                size_t targetRow = (RS_AC1_DEPTH_HEIGHT - 1 - rowLow) * scaleH + dy;
                 for (size_t dx = 0; dx < scaleW; ++dx) {
                     size_t targetCol = colLow * scaleW + dx;
-                    size_t targetIdx = targetRow * f.width + targetCol;
-                    dst[targetIdx] = depthVal;
+                    dst[targetRow * f.width + targetCol] = depthVal;
                 }
             }
         }

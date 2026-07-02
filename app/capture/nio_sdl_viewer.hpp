@@ -97,8 +97,8 @@ public:
                   bool hasPoint = false, int pw = 640, int ph = 480);
 
     int addViewerSlot(const std::string& label, NioFormat fmt, int w, int h);
-    // Compute slot display size (preserving aspect) based on current tile constraints
-    std::pair<int, int> computeSlotDisplaySize(int slotIdx, float scale = 1.0f) const;
+    // Compute slot display size (preserving aspect) to fit within slotW x slotH bounds
+    std::pair<int, int> computeSlotDisplaySize(int slotIdx, int slotW, int slotH) const;
     int addPointSlot(const std::string& label, int w, int h);
 
     bool createWindow();
@@ -172,6 +172,8 @@ private:
     int tileW_ = 0;
     int tileH_ = 0;
     int maxSlotsPerRow_ = 0;
+    int targetWinW_ = 1080;
+    int targetWinH_ = 1920;
 
     std::mutex decodeCvMtx_;
     std::condition_variable decodeCv_;
@@ -181,8 +183,6 @@ private:
     static const int ROW_HEADER_H = 36;
     static const int FORMAT_BAR_H = 26;
     static const int FONT_SCALE = 3;
-    static const int MAX_TILE_W = 640;
-    static const int MAX_TILE_H = 480;
 };
 
 } // namespace nio

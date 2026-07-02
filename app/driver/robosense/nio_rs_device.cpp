@@ -57,8 +57,8 @@ NioSensorInfo RsDevice::getSensorInfo() const {
     si.colorFps = 30;
 
     si.depthFormat = NioFormat::Y16;
-    si.depthW = RS_AC1_DEPTH_WIDTH;
-    si.depthH = RS_AC1_DEPTH_HEIGHT;
+    si.depthW = si.colorW;
+    si.depthH = si.colorH;
     si.depthFps = 10;
 
     return si;

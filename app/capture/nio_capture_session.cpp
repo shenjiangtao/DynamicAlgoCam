@@ -262,7 +262,7 @@ void CaptureSession::setupViewerSlot(SDLViewer& viewer) {
     NioFormat depthSlotFmt = NioFormat::Y16;
     int depthSlotW = sensorInfo_.depthW;
     int depthSlotH = sensorInfo_.depthH;
-    if (sensorInfo_.hasDepth && hwD2CMode_ && sensorInfo_.hasColor && !pipeline_->isPcdEnabled()) {
+    if (sensorInfo_.hasDepth && sensorInfo_.hasColor) {
         depthSlotW = sensorInfo_.colorW;
         depthSlotH = sensorInfo_.colorH;
     }
