@@ -10,6 +10,7 @@
 //
 
 #include "nio_sdl_viewer.hpp"
+#include <utility>
 
 constexpr int nio::SDLViewer::MAX_TILE_W;
 constexpr int nio::SDLViewer::MAX_TILE_H;
@@ -651,10 +652,14 @@ bool SDLViewer::decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& ra
     // Find xyz field offsets in the source point struct
     int xOff = -1, yOff = -1, zOff = -1, iOff = -1;
     for (const auto& f : layout.fields) {
-        if (std::string(f.name) == "x") xOff = f.srcOffset;
-        else if (std::string(f.name) == "y") yOff = f.srcOffset;
-        else if (std::string(f.name) == "z") zOff = f.srcOffset;
-        else if (std::string(f.name) == "intensity") iOff = f.srcOffset;
+        if (std::string(f.name) == "x")
+            xOff = f.srcOffset;
+        else if (std::string(f.name) == "y")
+            yOff = f.srcOffset;
+        else if (std::string(f.name) == "z")
+            zOff = f.srcOffset;
+        else if (std::string(f.name) == "intensity")
+            iOff = f.srcOffset;
     }
     if (xOff < 0 || yOff < 0 || zOff < 0)
         return false;
@@ -799,6 +804,8 @@ void SDLViewer::decodeThreadFunc() {
 // Render channel label (top-left) and format label (below tile) for one slot
 // 渲染单个slot的通道标签（左上）和格式标签（瓦片下方）
 void SDLViewer::renderSlotLabel(int slotIdx, int xOff, int videoY, int dstW, int dstH, float scale) {
+    // Existing implementation unchanged
+
     if (slotIdx < static_cast<int>(channelTexs_.size()) && channelTexs_[slotIdx].tex) {
         auto& clt = channelTexs_[slotIdx];
         int clH = std::min(clt.h, static_cast<int>(ROW_HEADER_H * scale * 0.7f));
@@ -848,12 +855,7 @@ void SDLViewer::renderDeviceRow(int di, int rowY, float scale, int colW, int win
             }
         }
 
-        int dstW = 0, dstH = 0;
-        if (slot.w > 0 && slot.h > 0) {
-            float aspScale = std::min(static_cast<float>(tileW_) / slot.w, static_cast<float>(tileH_) / slot.h);
-            dstW = static_cast<int>(slot.w * aspScale * scale);
-            dstH = static_cast<int>(slot.h * aspScale * scale);
-        }
+        auto [dstW, dstH] = computeSlotDisplaySize(slotIdx, scale);
         int xOff = si * colW + (colW - dstW) / 2;
 
         SDL_Rect dstRect = { xOff, videoY, dstW, dstH };
@@ -906,6 +908,20 @@ void SDLViewer::renderLoop() {
         SDL_RenderPresent(renderer_);
         SDL_Delay(1000 / RENDER_FPS);
     }
+}
+
+// Compute the displayed size of a slot while preserving aspect ratio
+std::pair<int, int> SDLViewer::computeSlotDisplaySize(int slotIdx, float scale) const {
+    if (slotIdx < 0 || slotIdx >= static_cast<int>(slots_.size()))
+        return { 0, 0 };
+    const auto& slot = *slots_[slotIdx];
+    int dstW = 0, dstH = 0;
+    if (slot.w > 0 && slot.h > 0) {
+        float aspScale = std::min(static_cast<float>(tileW_) / slot.w, static_cast<float>(tileH_) / slot.h);
+        dstW = static_cast<int>(slot.w * aspScale * scale);
+        dstH = static_cast<int>(slot.h * aspScale * scale);
+    }
+    return { dstW, dstH };
 }
 
 } // namespace nio

@@ -19,6 +19,7 @@
 #pragma once
 
 #include "nio_types.hpp"
+#include <utility>
 #include <SDL2/SDL.h>
 
 #include <atomic>
@@ -96,6 +97,8 @@ public:
                   bool hasPoint = false, int pw = 640, int ph = 480);
 
     int addViewerSlot(const std::string& label, NioFormat fmt, int w, int h);
+    // Compute slot display size (preserving aspect) based on current tile constraints
+    std::pair<int, int> computeSlotDisplaySize(int slotIdx, float scale = 1.0f) const;
     int addPointSlot(const std::string& label, int w, int h);
 
     bool createWindow();
