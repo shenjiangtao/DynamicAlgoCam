@@ -43,21 +43,25 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
 
     size_t nPts = cloud->points.size();
     for (size_t i = 0; i < pixelCount; ++i) {
+        size_t col = i % RS_AC1_DEPTH_WIDTH;
+        size_t row = i / RS_AC1_DEPTH_WIDTH;
+        // Invert vertically: map top row to bottom row
+        size_t targetIdx = (RS_AC1_DEPTH_HEIGHT - 1 - row) * RS_AC1_DEPTH_WIDTH + col;
         if (i < nPts) {
             const auto& pt = cloud->points[i];
             if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) {
-                dst[i] = 0;
+                dst[targetIdx] = 0;
                 continue;
             }
             float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
             if (dist < 0.2f) {
-                dst[i] = 0;
+                dst[targetIdx] = 0;
             } else {
                 uint16_t raw = static_cast<uint16_t>(dist / 0.005f);
-                dst[i] = (raw > 40000) ? 0 : raw;
+                dst[targetIdx] = (raw > 40000) ? 0 : raw;
             }
         } else {
-            dst[i] = 0;
+            dst[targetIdx] = 0;
         }
     }
 
