@@ -22,9 +22,6 @@ namespace nio {
 inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
     NioFrameSet nioFs;
 
-    // Attach the original ob::FrameSet for pipeline operations (e.g. ob::Align)
-    nioFs.nativeFrameSet = std::static_pointer_cast<void>(obFs);
-
     auto extract = [&](OBFrameType obType, NioFrameType nioType) {
         auto frame = obFs->getFrame(obType);
         if (!frame)

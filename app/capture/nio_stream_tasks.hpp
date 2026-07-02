@@ -64,7 +64,7 @@ class FusionStreamTask : public StreamTask
 public:
     FusionStreamTask(const std::string& name, int colorW, int colorH, NioFormat colorFormat, int fusedFps,
                      std::shared_ptr<H264Encoder> fusedEncoder, std::shared_ptr<std::ofstream> fusedFile,
-                     std::mutex& fusedMtx, std::shared_ptr<NioD2CAlign> alignFilter, bool hwD2CMode, float alpha,
+                     std::mutex& fusedMtx, bool hwD2CMode, float alpha,
                      float depthMinM, float depthMaxM, float depthScale, std::shared_ptr<MjpgDecoderRes> mjpgRes);
 
     std::atomic<uint64_t> frameCount{ 0 };
@@ -89,7 +89,6 @@ private:
     std::shared_ptr<H264Encoder> fusedEncoder_;
     std::shared_ptr<std::ofstream> fusedFile_;
     std::mutex& fusedMtx_;
-    std::shared_ptr<NioD2CAlign> alignFilter_;
     bool hwD2CMode_;
 
     float alpha_;

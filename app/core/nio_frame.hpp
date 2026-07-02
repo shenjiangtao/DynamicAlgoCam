@@ -61,12 +61,6 @@ struct NioFrameSet {
 
     bool empty() const { return frames_.empty(); }
 
-    // Optional: attached SDK-native FrameSet (type-erased shared_ptr).
-    // Used for pipeline operations (e.g. SW D2C alignment) that need the
-    // original SDK frame.  Set by driver adapter; null if not applicable.
-    // Transitional — will be removed once NioAlign abstracts this.
-    std::shared_ptr<void> nativeFrameSet;
-
 private:
     std::map<NioFrameType, NioFrame> frames_;
 };

@@ -26,7 +26,6 @@ if(ENABLE_ORBBEC)
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_frame_adapter.hpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
         ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_d2c_align.hpp
     )
 
     target_compile_definitions(nio_drivers PUBLIC

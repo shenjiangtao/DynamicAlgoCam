@@ -183,11 +183,6 @@ void CaptureSession::setupFusion() {
 
     hwD2CMode_ = (pipeline_->getAlignMode() == NioAlignMode::HW);
 
-    std::shared_ptr<NioD2CAlign> alignFilter;
-    if (!hwD2CMode_) {
-        alignFilter = pipeline_->getD2CAlignFilter();
-    }
-
     fusedFps_ = std::min(sensorInfo_.colorFps, sensorInfo_.depthFps);
 
     std::string fusedPath = baseName_ + "_d2c_fused_" + startTs_ + ".h264";
@@ -202,10 +197,9 @@ void CaptureSession::setupFusion() {
 
     mjpgRes_ = std::make_shared<MjpgDecoderRes>();
     mjpgRes_->init(sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFormat);
-    fusionTask_ = std::make_shared<FusionStreamTask>(devId_ + "_fusion", sensorInfo_.colorW, sensorInfo_.colorH,
-                                                     sensorInfo_.colorFormat, fusedFps_, fusedEncoder, fusedFile,
-                                                     fusedMtx_, alignFilter, hwD2CMode_, cfg_.alpha, cfg_.depthMinM,
-                                                     cfg_.depthMaxM, depthScale_, mjpgRes_);
+    fusionTask_ = std::make_shared<FusionStreamTask>(
+        devId_ + "_fusion", sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFormat, fusedFps_, fusedEncoder,
+        fusedFile, fusedMtx_, hwD2CMode_, cfg_.alpha, cfg_.depthMinM, cfg_.depthMaxM, depthScale_, mjpgRes_);
     fusionTask_->start();
     std::cout << "  D2C Fusion: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@" << fusedFps_
               << " alpha=" << cfg_.alpha << " depth=[" << cfg_.depthMinM << "m, " << cfg_.depthMaxM << "m]"

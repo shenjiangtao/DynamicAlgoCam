@@ -31,7 +31,6 @@ class NioPipeline;
 
 // Forward declarations
 class NioFrameSet;
-struct NioD2CAlign;
 
 // Device info (SDK-agnostic).
 struct NioDeviceInfo
@@ -142,32 +141,6 @@ public:
 
     // Current D2C alignment mode (HW / SW / NONE).
     virtual NioAlignMode getAlignMode() const = 0;
-
-    // Get D2C alignment filter (may be null if HW D2C or not applicable).
-    virtual std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const {
-        return nullptr;
-    }
-};
-
-// NioD2CAlign: abstract D2C alignment filter.
-// Wraps SDK-specific alignment.
-// process() takes a type-erased native FrameSet, performs alignment,
-// and returns aligned pixel data + metadata via NioAlignedFrame.
-struct NioAlignedFrame
-{
-    const uint8_t* colorData = nullptr;
-    uint32_t colorSize = 0;
-    uint64_t colorTs = 0;
-    const uint8_t* depthData = nullptr;
-    uint32_t depthSize = 0;
-    uint64_t depthTs = 0;
-    float depthScale = 1.0f;
-};
-
-struct NioD2CAlign
-{
-    virtual ~NioD2CAlign() = default;
-    virtual bool process(std::shared_ptr<void> nativeFrameSet, NioAlignedFrame& out) = 0;
 };
 
 // NioContext: abstract SDK context for device discovery.

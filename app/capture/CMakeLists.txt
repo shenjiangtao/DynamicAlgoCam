@@ -3,7 +3,7 @@
 #
 # nio_capture — Capture/recording layer: encoding, file I/O, stream tasks,
 # frame queues, session management, color conversion, SDL preview.
-# Depends on: nio_core, nio_drivers, FFmpeg, SDL2.
+# Depends on: nio_core, FFmpeg, SDL2.
 
 cmake_minimum_required(VERSION 3.10)
 project(nio_capture)

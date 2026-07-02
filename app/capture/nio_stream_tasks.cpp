@@ -45,7 +45,7 @@ void DepthRawTask::processFrame(const FrameBlob& blob) {
 FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, NioFormat colorFormat,
                                    int /*fusedFps*/, std::shared_ptr<H264Encoder> fusedEncoder,
                                    std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx,
-                                   std::shared_ptr<NioD2CAlign> alignFilter, bool hwD2CMode, float alpha,
+                                   bool hwD2CMode, float alpha,
                                    float depthMinM, float depthMaxM, float depthScale,
                                    std::shared_ptr<MjpgDecoderRes> mjpgRes)
 : StreamTask(name, 4)
@@ -55,7 +55,6 @@ FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colo
 , fusedEncoder_(std::move(fusedEncoder))
 , fusedFile_(std::move(fusedFile))
 , fusedMtx_(fusedMtx)
-, alignFilter_(std::move(alignFilter))
 , hwD2CMode_(hwD2CMode)
 , alpha_(alpha)
 , depthMinM_(depthMinM)
@@ -133,8 +132,8 @@ void FusionStreamTask::onIdleHwD2C() {
             depthBuf.timestampUs, depthBuf.depthScale);
 }
 
-// onIdle for software D2C mode: align FrameSet then blend color+depth
-// 软件D2C模式空闲回调：对齐FrameSet后融合color+depth
+// onIdle for software D2C mode: frames are already aligned in the driver,
+// blend color+depth directly from NioFrameSet
 void FusionStreamTask::onIdleSwD2C() {
     if (!frameSetReady_.load())
         return;
@@ -148,15 +147,6 @@ void FusionStreamTask::onIdleSwD2C() {
 
     if (!nioFrameSet)
         return;
-
-    if (alignFilter_ && nioFrameSet->nativeFrameSet) {
-        NioAlignedFrame aligned;
-        if (alignFilter_->process(nioFrameSet->nativeFrameSet, aligned)) {
-            doBlend(aligned.colorData, aligned.colorSize, aligned.colorTs, aligned.depthData, aligned.depthSize,
-                    aligned.depthTs, aligned.depthScale);
-            return;
-        }
-    }
 
     auto* colorFrame = nioFrameSet->getFrame(NioFrameType::COLOR);
     auto* depthFrame = nioFrameSet->getFrame(NioFrameType::DEPTH);

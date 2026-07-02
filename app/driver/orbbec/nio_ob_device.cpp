@@ -372,8 +372,16 @@ bool ObPipeline::start(NioVideoCallback callback) {
                     } catch (...) {
                     }
                 }
+                if (alignFilter_) {
+                    try {
+                        auto aligned = alignFilter_->process(obFs);
+                        auto alignedFS = aligned ? std::dynamic_pointer_cast<ob::FrameSet>(aligned) : nullptr;
+                        if (alignedFS)
+                            obFs = alignedFS;
+                    } catch (...) {
+                    }
+                }
                 auto nioFs = std::make_shared<NioFrameSet>(obFrameSetToNio(obFs));
-                nioFs->nativeFrameSet = std::static_pointer_cast<void>(obFs);
                 videoCallback_(nioFs);
             }
         });
@@ -440,12 +448,6 @@ NioAlignMode ObPipeline::getAlignMode() const {
     if (alignFilter_)
         return NioAlignMode::SW;
     return NioAlignMode::NONE;
-}
-
-std::shared_ptr<NioD2CAlign> ObPipeline::getD2CAlignFilter() const {
-    if (alignFilter_)
-        return std::make_shared<ObD2CAlign>(alignFilter_);
-    return nullptr;
 }
 
 // === ObContext ===

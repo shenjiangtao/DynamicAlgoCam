@@ -7,7 +7,6 @@
 
 #include "nio_device.hpp"
 #include "nio_ob_adapter.hpp"
-#include "nio_ob_d2c_align.hpp"
 #include "nio_ob_frame_adapter.hpp"
 
 #include <libobsensor/ObSensor.hpp>
@@ -62,7 +61,6 @@ public:
         return pcdEnabled_;
     }
     NioAlignMode getAlignMode() const override;
-    std::shared_ptr<NioD2CAlign> getD2CAlignFilter() const override;
 
     bool isHwD2CMode() const {
         return hwD2CMode_;
