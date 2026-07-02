@@ -37,31 +37,37 @@ inline NioFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZ
     f.depthScale = RS_AC1_DEPTH_SCALE;
     f.timestampUs = static_cast<uint64_t>(cloud->timestamp * 1e6);
 
-    size_t pixelCount = static_cast<size_t>(RS_AC1_DEPTH_WIDTH) * RS_AC1_DEPTH_HEIGHT;
+    size_t pixelCount = static_cast<size_t>(f.width) * f.height;
     f.data.resize(pixelCount * 2);
     auto* dst = reinterpret_cast<uint16_t*>(f.data.data());
 
     size_t nPts = cloud->points.size();
-    for (size_t i = 0; i < pixelCount; ++i) {
-        size_t col = i % RS_AC1_DEPTH_WIDTH;
-        size_t row = i / RS_AC1_DEPTH_WIDTH;
-        // Invert vertically: map top row to bottom row
-        size_t targetIdx = (RS_AC1_DEPTH_HEIGHT - 1 - row) * RS_AC1_DEPTH_WIDTH + col;
-        if (i < nPts) {
-            const auto& pt = cloud->points[i];
-            if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) {
-                dst[targetIdx] = 0;
-                continue;
+    // Upsample low‑resolution depth grid to the full frame size (nearest‑neighbor).
+    const size_t scaleW = f.width / RS_AC1_DEPTH_WIDTH; // 1920/96 = 20
+    const size_t scaleH = f.height / RS_AC1_DEPTH_HEIGHT; // 1080/288 = 3 (integer floor)
+    for (size_t rowLow = 0; rowLow < RS_AC1_DEPTH_HEIGHT; ++rowLow) {
+        for (size_t colLow = 0; colLow < RS_AC1_DEPTH_WIDTH; ++colLow) {
+            size_t srcIdx = rowLow * RS_AC1_DEPTH_WIDTH + colLow;
+            uint16_t depthVal = 0;
+            if (srcIdx < nPts) {
+                const auto& pt = cloud->points[srcIdx];
+                if (!std::isnan(pt.x) && !std::isnan(pt.y) && !std::isnan(pt.z)) {
+                    float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
+                    if (dist >= 0.2f) {
+                        uint16_t raw = static_cast<uint16_t>(dist / 0.005f);
+                        depthVal = (raw > 40000) ? 0 : raw;
+                    }
+                }
             }
-            float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
-            if (dist < 0.2f) {
-                dst[targetIdx] = 0;
-            } else {
-                uint16_t raw = static_cast<uint16_t>(dist / 0.005f);
-                dst[targetIdx] = (raw > 40000) ? 0 : raw;
+            // Write the value into the upsampled block (invert vertically).
+            for (size_t dy = 0; dy < scaleH; ++dy) {
+                size_t targetRow = (RS_AC1_DEPTH_HEIGHT - 1 - rowLow) * scaleH + dy; // vertical flip
+                for (size_t dx = 0; dx < scaleW; ++dx) {
+                    size_t targetCol = colLow * scaleW + dx;
+                    size_t targetIdx = targetRow * f.width + targetCol;
+                    dst[targetIdx] = depthVal;
+                }
             }
-        } else {
-            dst[targetIdx] = 0;
         }
     }
 
