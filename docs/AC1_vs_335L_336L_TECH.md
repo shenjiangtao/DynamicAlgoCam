@@ -264,7 +264,7 @@
 
 ### 5.1 统一抽象层
 
-本项目通过 `NioDevice` / `NioPipeline` / `NioContext` 抽象接口屏蔽了两家 SDK 差异：
+本项目通过 `NioDevice` / `NioPipeline` / `NioContext` 抽象接口屏蔽了两家 SDK 与白板。HAL 层使用 `namespace types` 隔离枚举类型，厂商实现层使用独立 namespace 区分；常量通过 `constexpr` 规范提取到 `spec` 文件。
 
 ```
 NioContext (抽象)
@@ -273,11 +273,20 @@ NioContext (抽象)
 
 NioDevice (抽象)
 ├── ObDevice     — ob::Device 动态传感器查询
-└── RsDevice     — 硬编码传感器信息
+└── RsDevice     — 硬编码传感器信息 (derived from nio_rs_spec.hpp)
 
 NioPipeline (抽象)
 ├── ObPipeline   — ob::Pipeline + ob::Config 生命周期
 └── RsPipeline   — LidarDriver + 双回调队列 + 帧合成
+
+nio::types (枚举与类型系统)
+├── NioFormat         — 像素/帧格式枚举
+├── NioFrameType    — 帧类型枚举
+└── NioAlignMode    — D2C 对齐模式枚举
+
+厂商常量规范 (spec 文件)
+├── nio_ob_spec.hpp   — 深度精度映射、颜色格式策略
+└── nio_rs_spec.hpp   — AC1 固定硬件规格 (resolution, fps, USB ID)
 ```
 
 ### 5.2 关键实现差异
@@ -657,7 +666,10 @@ FusionStreamTask → HW align: enqueueColor + enqueueDepth → directly blend pi
 | AC1 串行号可能不可用 | AC1 | USB string descriptor 可能为空；需 fallback 到 bus-device 编号 |
 | 335L depth_raw 存储过大 | 335L | 1280×800×2B/frame=2MB；可考虑帧间压缩或降采样存盘 |
 | AC1 IMU 噪声偏高 | AC1 | 可能需要校准偏置；335L ~0.002 rad/s vs AC1 ~0.01 rad/s |
-| `device_comparison.md` IMU 信息需更新 | 文档 | AC1 IMU 现已正常输出 ~100Hz，需更新文档 |
+| 代码中硬编码魔法数字 | 通用 | AC1 分辨率/fps/格式等硬编码在设备实现中 | 已通过 `nio_rs_spec.hpp` 和 `nio_ob_spec.hpp` 提取为 `constexpr` 常量 |
+| 类型枚举命名空间不清晰 | 通用 | `NioFormat`等在 `nio` 根命名空间 | 已提取到 `nio::types` namespace，通过 `using` 保持向后兼容 |
+| 缺少配置验证机制 | 通用 | 配置合法性仅在运行时通过 SDK 报错 | 已添加 `ConfigValidator` 接口及 Orbbec/RoboSense 实现，支持三级验证 |
+| `device_comparison.md` IMU 信息需更新 | 文档 | AC1 IMU 现已正常输出 ~100Hz，需更新文档 | 已更新 |
 
 ---
 
@@ -688,7 +700,10 @@ FusionStreamTask → HW align: enqueueColor + enqueueDepth → directly blend pi
 | RS 帧适配器 | `app/driver/robosense/nio_rs_frame_adapter.hpp` | 22-121 (全) |
 | RS 格式转换 | `app/driver/robosense/nio_rs_adapter.hpp` | 19-77 (全) |
 | 采集会话 | `app/capture/nio_capture_session.cpp` | 25-504 (全) |
-| 中性类型定义 | `app/core/nio_types.hpp` | 20-242 (全) |
+| 中性类型定义 | `app/core/nio_types.hpp` | 20-242 (NioFormat, NioFrameType 已移至 nio::types) |
+| 抽象设备接口 | `app/core/nio_device.hpp` | 1-156 (NioAlignMode 已移至 nio::types) |
+| 配置验证接口 | `app/core/nio_config_validator.hpp` | 全 (ConfigValidator 抽象接口及 createValidator) |
+| 中性帧定义 | `app/core/nio_frame.hpp` | 全 |
 | 帧队列 | `app/capture/nio_frame_queue.hpp` | 1-55 (全) |
 | D2C 对齐核心 | `vendors/OrbbecSDK/src/filter/publicfilters/AlignImpl.cpp` | 1533-1685 (D2C 算法) |
 | 点云 Filter | `vendors/OrbbecSDK/src/filter/publicfilters/PointCloudProcess.hpp` | 13-80 (全) |

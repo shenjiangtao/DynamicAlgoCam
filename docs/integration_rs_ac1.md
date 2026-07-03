@@ -183,7 +183,11 @@ app/driver/robosense/
   ├── nio_rs_adapter.hpp       # RS frame_format ↔ NioFormat / ImuData ↔ NioImuSample
   ├── nio_rs_frame_adapter.hpp # PointCloudMsg+ImageData+ImuData → NioFrameSet
   ├── nio_rs_device.hpp        # RsDevice, RsPipeline, RsContext 实现 NioDevice/NioPipeline/NioContext
-  └── nio_rs_device.cpp        # 上述实现
+  ├── nio_rs_device.cpp        # 上述实现
+  └── nio_rs_spec.hpp          # AC1 硬件规格常量（Resolution、SensorSpec、USB_ID）
+
+app/driver/orbbec/
+  └── nio_ob_spec.hpp          # Orbbec 深度精度映射、颜色格式策略
 ```
 
 ### 6.2 类图
@@ -335,18 +339,21 @@ RS-AC1 的"深度"是 3D 点云（`PointXYZIRT`），不是 OB 的 2D depth map�
 ```diff
  class NioPipeline {
  public:
-+    // RS-AC1: 无独立 IR 传感器
-+    virtual bool hasIRSensor() const { return true; }
-+
-+    // RS-AC1: 点云分辨率（而非 2D depth 分辨率）
-+    virtual bool isPointCloudDepth() const { return false; }
-+
-+    // RS-AC1: D2C 模式 — 始终 HW
-+    virtual NioAlignMode getAlignMode() const = 0;
-+
+ +    // RS-AC1: 无独立 IR 传感器
+ +    virtual bool hasIRSensor() const { return true; }
+ +
+ +    // RS-AC1: 点云分辨率（而非 2D depth 分辨率）
+ +    virtual bool isPointCloudDepth() const { return false; }
+ +
+ +    // RS-AC1: D2C 模式 — 始终 HW
+ +    virtual NioAlignMode getAlignMode() const = 0;
+ +
      // ... 现有接口 ...
  };
 ```
+
+**类型系统升级（2025-03 实现）**：
+`NioFormat`、`NioFrameType` 和 `NioAlignMode` 已从 `nio` 命名空间提取到 `nio::types` 子命名空间，通过 `using` 保持向后兼容，不影响现有代码引用。迁移路径：直接使用 `nio::types::NioFormat` 即可访问。
 
 `RsPipeline` 覆盖:
 - `hasIRSensor() → false`
@@ -820,3 +827,83 @@ RS-AC1 的输出文件与 OB 完全一致:
 | FusionStreamTask | `app/capture/nio_stream_tasks.hpp/.cpp` |
 | Driver factory | `app/driver/nio_driver_factory.hpp/.cpp` |
 | app 入口 | `app/nio_multi_capture/nio_multi_capture.cpp` |
+
+## 最新代码变更（2025-03）
+
+本次更新包含以下架构改进：
+
+### 1. HAL层常量规范提取
+
+将厂商特定的硬件常量提取到独立的 `spec` 文件中，实现零运行时开销的编译期常量管理：
+
+- `app/driver/robosense/nio_rs_spec.hpp` — RoboSense AC1 的 `constexpr` 硬件常量（分辨率、fps、格式、USB ID）
+- `app/driver/orbbec/nio_ob_spec.hpp` — Orbbec 的深度精度映射表、颜色格式策略等 `constexpr` 常量
+
+所有常量使用 `constexpr` 定义，编译期确定，零运行时开销。
+
+### 2. 类型系统提取到 `types` namespace
+
+`NioFormat`、`NioFrameType`、`NioAlignMode` 已从 `nio` 命名空间提取到 `nio::types` 子命名空间，通过 `using` 保持向后兼容：
+
+```cpp
+namespace nio {
+    namespace types {
+        enum class NioFormat { ... };
+        enum class NioFrameType { ... };
+        enum class NioAlignMode { ... };
+    }
+    using types::NioFormat;
+    using types::NioFrameType;
+    using types::NioAlignMode;
+}
+```
+
+### 3. DriverFactory 完善（DriverVendor 筛选）
+
+`discoverDevices()` 增加 `DriverConfig` 参数，支持按厂商筛选设备：
+
+```cpp
+nio::DriverConfig cfg;
+cfg.vendor = nio::DriverVendor::ROBOSENSE;  // 可选 ALL / ORBBEC / ROBOSENSE
+auto devices = nio::discoverDevices(cfg);
+```
+
+- `DriverVendor::ALL`（默认）：发现所有厂商设备
+- `DriverVendor::ORBBEC`：仅发现 Orbbec 设备
+- `DriverVendor::ROBOSENSE`：仅发现 RoboSense 设备
+
+### 4. 配置验证机制
+
+引入 `ConfigValidator` 接口及厂商实现，在设备创建前验证配置合法性：
+
+```cpp
+auto validator = nio::createValidator(nio::DriverVendor::ORBBEC);
+if (validator && !validator->validateStream(config)) {
+    std::cerr << "Validation failed: " << validator->lastError() << std::endl;
+    return false;
+}
+```
+
+验证级别：
+- **流配置验证**：分辨率、帧率、格式是否合法
+- **传感器信息验证**：检查是否支持请求的传感器类型
+- **设备信息验证**：VID/PID 匹配、固件版本检查
+
+实现文件：
+- `app/core/nio_config_validator.hpp/.cpp` — 抽象接口 + 工厂函数
+- `app/driver/orbbec/nio_ob_validator.hpp/.cpp` — Orbbec 验证实现
+- `app/driver/robosense/nio_rs_validator.hpp/.cpp` — RoboSense AC1 验证实现
+
+### 5. SDL 窗口退出修复
+
+修复了 SDL 窗口关闭时程序不退出问题。在 `SDL_QUIT` 事件处理器中设置 `g_running = false`，使主循环正确退出：
+
+```cpp
+case SDL_QUIT:
+    g_running = false;
+    break;
+```
+
+### 6. AC1 显示修复
+
+修复了多设备共存时 AC1 深度图显示被裁剪的问题。通过动态计算 `scale` 参数，确保所有设备的预览图都能正确显示在 SDL 窗口中。

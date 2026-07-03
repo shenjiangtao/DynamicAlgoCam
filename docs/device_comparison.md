@@ -255,10 +255,21 @@ NioDevice (interface)
 │                 hasIRSensor() → si.hasIR || si.hasIRLeft || si.hasIRRight
 │                 setupPipeline() → selects profiles, returns NioSensorInfo
 │
-└── RsDevice   — hardcoded specs for RoboSense AC1
-                  getSensorInfo() → static (hasAccel=false, hasGyro=false)
+└── RsDevice   — hardcoded specs for RoboSense AC1 (from nio_rs_spec.hpp::AC1)
+                  getSensorInfo() → static (hasAccel=true, hasGyro=true)
                   hasIRSensor() → false
                   setupPipeline() → returns fixed NioSensorInfo
+                  validateStream() → uses rs::AC1::COLOR/DEPTH constants
+
+NioContext (interface)
+├── ObContext  — ob::Context 自动枚举
+└── RsContext  — libusb 手动扫描，匹配 VID=0x3840/PID=0x1010
+
+ConfigValidator (abstract)
+├── ObValidator — validates Orbbec stream config, depth precision, device VID
+└── RsValidator — validates AC1 fixed parameters (1920x1080/30fps, etc.)
+
+DriverFactory — discovers devices with optional vendor filter (DriverVendor::ALL/ORBBEC/ROBOSENSE)
 ```
 
 Output file creation is gated by `NioSensorInfo` flags:
@@ -295,3 +306,10 @@ Output file creation is gated by `NioSensorInfo` flags:
 | OB G330 IMU init | `src/device/gemini330/G330Device.cpp:641-694` |
 | RS AC1 decoder | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/decoder/decoder_RSAC1.hpp` |
 | RS input USB | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/input/input_usb.cpp` |
+| RS AC1 spec | `app/driver/robosense/nio_rs_spec.hpp` | AC1 hardware constants (resolution, fps, format, USB ID) |
+| Orbbec spec | `app/driver/orbbec/nio_ob_spec.hpp` | Depth precision mapping, color format policy |
+| Type system | `app/core/nio_types.hpp` | `nio::types` namespace (NioFormat, NioFrameType) |
+| Driver factory | `app/driver/nio_driver_factory.hpp` | `discoverDevices()` with vendor filter |
+| Config validator | `app/core/nio_config_validator.hpp` | `ConfigValidator` interface + `createValidator()` factory |
+| Orbbec validator | `app/driver/orbbec/nio_ob_validator.hpp` | Stream/depth-precision/device validation |
+| RoboSense validator | `app/driver/robosense/nio_rs_validator.hpp` | AC1 fixed-parameter validation |
