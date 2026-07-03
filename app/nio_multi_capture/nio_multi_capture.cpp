@@ -44,14 +44,15 @@ int main(int argc, char** argv) try {
 
     CaptureConfig cfg = parseArgs(argc, argv);
 
-    NIO_LOG_INIT("nio_multi_capture", cfg.saveDir.empty() ? "capture_output" : cfg.saveDir);
+    // Initialize logger after determining the actual output directory (outputRootDir).
+    // This ensures logs are stored alongside captured data.
+    // (Logger will be initialized later, after outputRootDir is computed.)
     NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
-    NIO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
+    // Note: NIO_LOG_INIT will be called after outputRootDir is defined.
     std::cout << "Git commit: " << GIT_COMMIT_HASH << std::endl;
-    NIO_LOG_INFO_S("Process started, camera_filter_count="
-                   << cfg.cameraFilter.size() << " saveDir=" << (cfg.saveDir.empty() ? "capture_output" : cfg.saveDir)
-                   << " alpha=" << cfg.alpha << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
-                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+    // Log statements will be emitted after logger init.
+    // NIO_LOG_INFO_S will be called later when outputRootDir is ready.
+
     for (size_t i = 0; i < cfg.cameraFilter.size(); i++) {
         NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
@@ -70,6 +71,15 @@ int main(int argc, char** argv) try {
     std::string outputBaseDir = cfg.saveDir.empty() ? "capture_output" : cfg.saveDir;
     std::string outputRootDir = outputBaseDir + "/" + sessionTimestamp;
     mkdirp(outputRootDir);
+    // Initialize logger now that we have the final output directory.
+    NIO_LOG_INIT("nio_multi_capture", outputRootDir);
+    NIO_LOG_INFO_S("Logger initialized to directory: " << outputRootDir);
+    // Log build and run information now that logger is ready.
+    NIO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
+    NIO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
+                   << " saveDir=" << outputRootDir << " alpha=" << cfg.alpha
+                   << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
+                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
     NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
     // Check USB memory for multi-device

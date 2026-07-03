@@ -84,25 +84,29 @@ public:
     }
 
     bool init(const std::string& processName, const std::string& outputDir) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (initialized_)
-            return true;
-        processName_ = processName;
-        outputDir_ = outputDir;
-        mkdirp(outputDir_);
-        auto ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count();
-        logFilePath_ = outputDir_ + "/" + processName_ + "_log_" + std::to_string(ms) + ".log";
-        logFile_.open(logFilePath_, std::ios::out | std::ios::app);
-        if (!logFile_.is_open()) {
-            std::cerr << "[NIO_LOG] FATAL: Cannot open log file: " << logFilePath_ << std::endl;
-            return false;
-        }
-        initialized_ = true;
-        logFile_ << "# NIO Log Start | process=" << processName_ << " | log_file=" << logFilePath_ << "\n";
-        logFile_.flush();
-        return true;
+        // Ensure initialization runs only once, even if called from multiple threads.
+        // The once_flag guarantees thread‑safe one‑time execution without a lock.
+        static std::once_flag initFlag;
+        std::call_once(initFlag, [this, &processName, &outputDir]() {
+            processName_ = processName;
+            outputDir_ = outputDir;
+            mkdirp(outputDir_);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+            logFilePath_ = outputDir_ + "/" + processName_ + "_log_" + std::to_string(ms) + ".log";
+            logFile_.open(logFilePath_, std::ios::out | std::ios::app);
+            if (!logFile_.is_open()) {
+                std::cerr << "[NIO_LOG] FATAL: Cannot open log file: " << logFilePath_ << std::endl;
+                // If opening fails, we leave initialized_ false so future attempts can retry.
+                return;
+            }
+            initialized_ = true;
+            logFile_ << "# NIO Log Start | process=" << processName_ << " | log_file=" << logFilePath_ << "\n";
+            logFile_.flush();
+        });
+        // If the earlier call failed to open the file, initialized_ will be false.
+        return initialized_;
     }
 
     void setLevel(LogLevel level) {
