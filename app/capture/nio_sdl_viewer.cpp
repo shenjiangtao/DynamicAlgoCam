@@ -10,6 +10,7 @@
 //
 
 #include "nio_sdl_viewer.hpp"
+#include "nio_common.hpp"
 #include "nio_log.hpp"
 #include <algorithm>
 #include <cmath>
@@ -877,6 +878,7 @@ void SDLViewer::renderLoop() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) {
                 running_ = false;
+                g_running = false;
                 return;
             }
         }
