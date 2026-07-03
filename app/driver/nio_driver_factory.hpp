@@ -17,12 +17,24 @@
 
 namespace nio {
 
+// Enum for selecting which vendor(s) to probe.
+enum class DriverVendor {
+    ALL = 0, // probe both Orbbec and RoboSense
+    ORBBEC,
+    ROBOSENSE
+};
+
+struct DriverConfig
+{
+    DriverVendor vendor = DriverVendor::ALL;
+};
+
 struct DiscoveredDevice
 {
     std::shared_ptr<NioDevice> device;
     std::shared_ptr<NioPipeline> pipeline;
 };
 
-std::vector<DiscoveredDevice> discoverDevices();
+std::vector<DiscoveredDevice> discoverDevices(const DriverConfig& cfg = DriverConfig{});
 
 } // namespace nio

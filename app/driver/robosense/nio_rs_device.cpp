@@ -23,8 +23,8 @@ RsDevice::RsDevice(uint32_t deviceIndex, const std::string& deviceUuid)
 NioDeviceInfo RsDevice::getDeviceInfo() const {
     if (!deviceInfoQueried_) {
         cachedDevInfo_.name = "RoboSense_AC1";
-        cachedDevInfo_.vid = 0x3840;
-        cachedDevInfo_.pid = 0x1010;
+        cachedDevInfo_.vid = rs::AC1::USB_ID.vid;
+        cachedDevInfo_.pid = rs::AC1::USB_ID.pid;
         cachedDevInfo_.connectionType = "USB3.0";
         if (!deviceUuid_.empty())
             cachedDevInfo_.serialNumber = deviceUuid_;
@@ -51,15 +51,15 @@ NioSensorInfo RsDevice::getSensorInfo() const {
     si.hasAccel = true;
     si.hasGyro = true;
 
-    si.colorFormat = NioFormat::NV12;
-    si.colorW = 1920;
-    si.colorH = 1080;
-    si.colorFps = 30;
+    si.colorFormat = rs::AC1::COLOR.format;
+    si.colorW = rs::AC1::COLOR.resolution.width;
+    si.colorH = rs::AC1::COLOR.resolution.height;
+    si.colorFps = rs::AC1::COLOR.fps;
 
-    si.depthFormat = NioFormat::Y16;
-    si.depthW = si.colorW;
-    si.depthH = si.colorH;
-    si.depthFps = 10;
+    si.depthFormat = rs::AC1::DEPTH.format;
+    si.depthW = rs::AC1::DEPTH.resolution.width;
+    si.depthH = rs::AC1::DEPTH.resolution.height;
+    si.depthFps = rs::AC1::DEPTH.fps;
 
     return si;
 }
@@ -70,7 +70,7 @@ int32_t RsDevice::getIntProperty(int) {
 
 NioSensorInfo RsDevice::setupPipeline(NioPipeline& /*pipeline*/) {
     NioSensorInfo si = getSensorInfo();
-    si.depthScale = RS_AC1_DEPTH_SCALE;
+    si.depthScale = rs::AC1::DEPTH_SCALE;
     return si;
 }
 
@@ -301,8 +301,8 @@ void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& i
 
 // === RsContext ===
 
-static constexpr uint16_t RS_AC1_VID = 0x3840;
-static constexpr uint16_t RS_AC1_PID = 0x1010;
+static constexpr uint16_t RS_AC1_VID = rs::AC1::USB_ID.vid;
+static constexpr uint16_t RS_AC1_PID = rs::AC1::USB_ID.pid;
 
 RsContext::RsContext() {
     libusb_init(&usbCtx_);

@@ -8,6 +8,7 @@
 #include "nio_device.hpp"
 #include "nio_ob_adapter.hpp"
 #include "nio_ob_frame_adapter.hpp"
+#include "nio_ob_spec.hpp"
 
 #include <libobsensor/ObSensor.hpp>
 

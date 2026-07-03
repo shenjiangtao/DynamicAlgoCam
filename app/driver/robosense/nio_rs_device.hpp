@@ -12,6 +12,7 @@
 #include "nio_device.hpp"
 #include "nio_rs_adapter.hpp"
 #include "nio_rs_frame_adapter.hpp"
+#include "nio_rs_spec.hpp"
 
 #include <rs_driver/api/lidar_driver.hpp>
 #include <rs_driver/driver/driver_param.hpp>
@@ -110,11 +111,11 @@ private:
     RsLidarDriver driver_;
 
     // Stream configuration (set via enableStream before start).
-    NioFormat imageFormat_ = NioFormat::NV12;
-    int imageWidth_ = 1920;
-    int imageHeight_ = 1080;
-    int imageFps_ = 30;
-    int imuFps_ = 100;
+    NioFormat imageFormat_ = rs::AC1::COLOR.format;
+    int imageWidth_ = rs::AC1::COLOR.resolution.width;
+    int imageHeight_ = rs::AC1::COLOR.resolution.height;
+    int imageFps_ = rs::AC1::COLOR.fps;
+    int imuFps_ = rs::AC1::IMU_FPS;
     bool enableImage_ = true;
 
     // Dual get/put callback queues.  The "stuffed" queues receive data

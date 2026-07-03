@@ -7,6 +7,8 @@
 #include "nio_common.hpp"
 #include "nio_log.hpp"
 
+using namespace nio::orbbec;
+
 namespace nio {
 
 ObDevice::ObDevice(std::shared_ptr<ob::Device> device) : obDevice_(std::move(device)) {}
@@ -96,7 +98,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
     auto vid = devInfo->getVid();
     bool is305 = nio::isGemini305Device(vid, pid);
     bool is335L336L = nio::isGemini335L336LDevice(vid, pid);
-    NioFormat colorPreferredFmt = (is305 || is335L336L) ? NioFormat::YUYV : NioFormat::MJPG;
+    NioFormat colorPreferredFmt = getPreferredColorFormat(is305, is335L336L);
 
     NioSensorInfo si;
     auto sensorList = obDevice_->getSensorList();
@@ -186,26 +188,10 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
                 // Depth scale
                 try {
                     int32_t level = obDevice_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
-                    switch (level) {
-                    case 0:
-                        si.depthScale = 0.001f;
-                        break;
-                    case 1:
-                        si.depthScale = 0.0005f;
-                        break;
-                    case 2:
-                        si.depthScale = 0.00025f;
-                        break;
-                    case 3:
-                        si.depthScale = 0.0001f;
-                        break;
-                    default:
-                        si.depthScale = 0.001f;
-                        break;
-                    }
+                    si.depthScale = depthLevelToScale(level);
                     std::cout << " Depth scale: " << si.depthScale << " (precision level " << level << ")" << std::endl;
                 } catch (...) {
-                    si.depthScale = 0.001f;
+                    si.depthScale = DEFAULT_DEPTH_SCALE;
                 }
                 break;
             }

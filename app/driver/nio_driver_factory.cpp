@@ -8,8 +8,8 @@
 #include "utils.hpp"
 
 #ifdef ENABLE_ORBBEC
-#include "nio_ob_device.hpp"
 #include "libobsensor/hpp/Context.hpp"
+#include "nio_ob_device.hpp"
 #include <unistd.h>
 #endif
 
@@ -58,39 +58,43 @@ static std::string resolveOrbbecConfigPath() {
 }
 #endif
 
-std::vector<DiscoveredDevice> discoverDevices() {
+std::vector<DiscoveredDevice> discoverDevices(const DriverConfig& cfg) {
     std::vector<DiscoveredDevice> result;
 
 #ifdef ENABLE_ORBBEC
-    std::string extensionsDir = resolveOrbbecExtensionsDir();
-    std::string configPath = resolveOrbbecConfigPath();
-    ObContext::initSDK(extensionsDir);
-    ObContext obCtx(configPath);
-    uint32_t obCount = obCtx.getDeviceCount();
-    for (uint32_t i = 0; i < obCount; i++) {
-        auto nioDev = obCtx.getDevice(i);
-        auto obDev = std::dynamic_pointer_cast<ObDevice>(nioDev);
-        if (!obDev)
-            continue;
-        DiscoveredDevice dd;
-        dd.device = nioDev;
-        dd.pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
-        result.push_back(std::move(dd));
+    if (cfg.vendor == DriverVendor::ALL || cfg.vendor == DriverVendor::ORBBEC) {
+        std::string extensionsDir = resolveOrbbecExtensionsDir();
+        std::string configPath = resolveOrbbecConfigPath();
+        ObContext::initSDK(extensionsDir);
+        ObContext obCtx(configPath);
+        uint32_t obCount = obCtx.getDeviceCount();
+        for (uint32_t i = 0; i < obCount; i++) {
+            auto nioDev = obCtx.getDevice(i);
+            auto obDev = std::dynamic_pointer_cast<ObDevice>(nioDev);
+            if (!obDev)
+                continue;
+            DiscoveredDevice dd;
+            dd.device = nioDev;
+            dd.pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
+            result.push_back(std::move(dd));
+        }
     }
 #endif
 
 #ifdef ENABLE_RS_AC1
-    RsContext rsCtx;
-    uint32_t rsCount = rsCtx.getDeviceCount();
-    for (uint32_t i = 0; i < rsCount; i++) {
-        auto nioDev = rsCtx.getDevice(i);
-        auto rsDev = std::dynamic_pointer_cast<RsDevice>(nioDev);
-        if (!rsDev)
-            continue;
-        DiscoveredDevice dd;
-        dd.device = nioDev;
-        dd.pipeline = std::make_shared<RsPipeline>(rsDev);
-        result.push_back(std::move(dd));
+    if (cfg.vendor == DriverVendor::ALL || cfg.vendor == DriverVendor::ROBOSENSE) {
+        RsContext rsCtx;
+        uint32_t rsCount = rsCtx.getDeviceCount();
+        for (uint32_t i = 0; i < rsCount; i++) {
+            auto nioDev = rsCtx.getDevice(i);
+            auto rsDev = std::dynamic_pointer_cast<RsDevice>(nioDev);
+            if (!rsDev)
+                continue;
+            DiscoveredDevice dd;
+            dd.device = nioDev;
+            dd.pipeline = std::make_shared<RsPipeline>(rsDev);
+            result.push_back(std::move(dd));
+        }
     }
 #endif
 

@@ -149,6 +149,11 @@ struct PcdLayout
     }
 };
 
+// ---------------------------------------------------------------------------
+// SDK-neutral type system — kept in a dedicated namespace for clarity.
+// ---------------------------------------------------------------------------
+namespace types {
+
 // Pixel / frame format — SDK-independent.
 enum class NioFormat {
     UNKNOWN = 0,
@@ -242,6 +247,11 @@ enum class NioFrameType {
     POINT,
     COUNT
 };
+
+} // namespace types
+
+using types::NioFormat;
+using types::NioFrameType;
 
 // Camera intrinsic parameters (3×3 pinhole model).
 struct NioIntrinsic

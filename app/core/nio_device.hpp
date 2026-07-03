@@ -53,12 +53,18 @@ struct NioStreamConfig
     bool enabled = true;
 };
 
+namespace types {
+
 // D2C alignment mode.
 enum class NioAlignMode {
     NONE,
     HW,
     SW
 };
+
+} // namespace types
+
+using types::NioAlignMode;
 
 // Callback type: called when a new FrameSet arrives from the pipeline.
 using NioVideoCallback = std::function<void(std::shared_ptr<NioFrameSet>)>;
