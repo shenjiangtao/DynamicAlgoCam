@@ -716,18 +716,27 @@ bool SDLViewer::decodePointSlot(ViewerSlot& slot, const std::vector<uint8_t>& ra
     float offX = (w - rangeX * sc) * 0.5f;
     float offY = (h - rangeY * sc) * 0.5f;
 
+    // Perspective‑like scaling: start from orthographic layout and shrink points with distance
+    // Points behind the camera (z <= 0) are skipped.
     for (const auto& pt : valid) {
-        float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
-        float norm = (dist - minDist) / (maxDist - minDist);
-        norm = std::max(0.0f, std::min(1.0f, norm));
-        uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-        uint8_t cr, cg, cb;
-        jetColormap(v, cr, cg, cb);
-
+        if (pt.z <= 0.0f) continue; // skip points behind camera
+        // Orthographic projection to pixel coordinates
         int px = static_cast<int>((pt.x - minX) * sc + offX);
         int py = static_cast<int>((pt.y - minY) * sc + offY);
+        // Apply simple perspective scaling based on depth (farther points appear smaller)
+        float depthFactor = 1.0f / (pt.z * 2.0f + 1.0f);
+        px = static_cast<int>((px - w / 2) * depthFactor + w / 2);
+        py = static_cast<int>((py - h / 2) * depthFactor + h / 2);
+        // Flip Y axis for SDL coordinate system (origin top-left)
         py = h - 1 - py;
         if (px >= 0 && px < w && py >= 0 && py < h) {
+            // Color based on distance for visual cue (same as previous jet colormap)
+            float dist = std::sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);
+            float norm = (dist - minDist) / (maxDist - minDist);
+            norm = std::max(0.0f, std::min(1.0f, norm));
+            uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+            uint8_t cr, cg, cb;
+            jetColormap(v, cr, cg, cb);
             int idx = (py * w + px) * 3;
             rgb[idx + 0] = cr;
             rgb[idx + 1] = cg;
