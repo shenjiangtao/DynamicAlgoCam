@@ -108,7 +108,6 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
     }
 
     file.write(reinterpret_cast<const char*>(data), size);
-    file.flush();
 }
 
 // === Section 2b: PCD file writer ===
@@ -312,9 +311,8 @@ bool writePcdStreamFrame(PcdStream& stream, const uint8_t* wireData, uint32_t wi
 
     auto converted = convertPcdPoints(stream.layout, pointCount, pointData);
     stream.file->write(reinterpret_cast<const char*>(converted.data()), static_cast<std::streamsize>(converted.size()));
-    stream.file->flush();
 
-    stream.index.push_back({deviceTsUs, frameOffset});
+    stream.index.push_back({ deviceTsUs, frameOffset });
     return true;
 }
 
@@ -402,7 +400,6 @@ void writeStreamFrame(StreamEncoder* se, const uint8_t* data, uint32_t size, uin
     } else {
         std::lock_guard<std::mutex> lock(se->mtx);
         se->file->write(reinterpret_cast<const char*>(data), size);
-        se->file->flush();
     }
 }
 

@@ -27,9 +27,20 @@ namespace nio {
 // === Section 1: MjpgDecoderRes — RAII MJPEG decoder + lazy sws ===
 
 MjpgDecoderRes::MjpgDecoderRes()
-: ctx(nullptr), pkt(nullptr), decFrame(nullptr), sws(nullptr), decFmt(AV_PIX_FMT_NONE), swsInitialized(false) {}
+: ctx(nullptr)
+, pkt(nullptr)
+, decFrame(nullptr)
+, sws(nullptr)
+, decFmt(AV_PIX_FMT_NONE)
+, swsInitialized(false)
+, yuvSws(nullptr)
+, yuvSwsSrcFmt(AV_PIX_FMT_NONE)
+, yuvSwsW(0)
+, yuvSwsH(0) {}
 
 MjpgDecoderRes::~MjpgDecoderRes() {
+    if (yuvSws)
+        sws_freeContext(yuvSws);
     if (sws)
         sws_freeContext(sws);
     if (decFrame)
@@ -242,25 +253,30 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int 
         else if (format == NioFormat::I420)
             srcPixFmt = AV_PIX_FMT_YUV420P;
 
-        SwsContext* tmpSws =
-            sws_getContext(w, h, srcPixFmt, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!tmpSws)
-            return false;
-        const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-        const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
-        sws_setColorspaceDetails(tmpSws, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+        if (!mjpg->yuvSws || mjpg->yuvSwsSrcFmt != srcPixFmt || mjpg->yuvSwsW != w || mjpg->yuvSwsH != h) {
+            if (mjpg->yuvSws)
+                sws_freeContext(mjpg->yuvSws);
+            mjpg->yuvSws =
+                sws_getContext(w, h, srcPixFmt, w, h, AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (!mjpg->yuvSws)
+                return false;
+            const int* srcCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+            const int* dstCoeffs = sws_getCoefficients(SWS_CS_ITU709);
+            sws_setColorspaceDetails(mjpg->yuvSws, srcCoeffs, 1, dstCoeffs, 1, 0, 1 << 16, 1 << 16);
+            mjpg->yuvSwsSrcFmt = srcPixFmt;
+            mjpg->yuvSwsW = w;
+            mjpg->yuvSwsH = h;
+        }
+        SwsContext* sws = mjpg->yuvSws;
 
         AVFrame* tmpFrame = av_frame_alloc();
-        if (!tmpFrame) {
-            sws_freeContext(tmpSws);
+        if (!tmpFrame)
             return false;
-        }
         tmpFrame->format = AV_PIX_FMT_RGB24;
         tmpFrame->width = w;
         tmpFrame->height = h;
         if (av_frame_get_buffer(tmpFrame, 0) < 0) {
             av_frame_free(&tmpFrame);
-            sws_freeContext(tmpSws);
             return false;
         }
 
@@ -282,7 +298,7 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int 
             srcSlice[2] = data + w * h * 5 / 4;
         }
 
-        sws_scale(tmpSws, srcSlice, srcStride, 0, h, tmpFrame->data, tmpFrame->linesize);
+        sws_scale(sws, srcSlice, srcStride, 0, h, tmpFrame->data, tmpFrame->linesize);
 
         int stride = w * 3;
         if (tmpFrame->linesize[0] == stride) {
@@ -292,7 +308,6 @@ bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int 
                 memcpy(rgbBuf + row * stride, tmpFrame->data[0] + row * tmpFrame->linesize[0], stride);
             }
         }
-        sws_freeContext(tmpSws);
         av_frame_free(&tmpFrame);
         return true;
     }

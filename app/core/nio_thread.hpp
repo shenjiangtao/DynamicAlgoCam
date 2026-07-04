@@ -45,7 +45,7 @@ class StreamTask
 {
 public:
     explicit StreamTask(const std::string& name, size_t queueCapacity = 2);
-    virtual ~StreamTask() override;
+    virtual ~StreamTask();
 
     void start();
     void stop();

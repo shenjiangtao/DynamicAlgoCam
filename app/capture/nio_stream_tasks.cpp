@@ -44,9 +44,8 @@ void DepthRawTask::processFrame(const FrameBlob& blob) {
 
 FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, NioFormat colorFormat,
                                    int /*fusedFps*/, std::shared_ptr<H264Encoder> fusedEncoder,
-                                   std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx,
-                                   bool hwD2CMode, float alpha,
-                                   float depthMinM, float depthMaxM, float depthScale,
+                                   std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx, bool hwD2CMode,
+                                   float alpha, float depthMinM, float depthMaxM, float depthScale,
                                    std::shared_ptr<MjpgDecoderRes> mjpgRes)
 : StreamTask(name, 4)
 , colorW_(colorW)
@@ -281,7 +280,6 @@ void ImuStreamTask::processFrame(const FrameBlob& blob) {
     std::string line(reinterpret_cast<const char*>(blob.data.data()), blob.size);
     std::lock_guard<std::mutex> lock(fileMtx_);
     *imuFile_ << line;
-    imuFile_->flush();
 }
 
 void ImuStreamTask::enqueueLine(std::string line) {

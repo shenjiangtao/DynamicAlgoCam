@@ -346,6 +346,7 @@ void ObPipeline::enableFrameSync() {
 }
 
 bool ObPipeline::start(NioVideoCallback callback) {
+    videoCallback_ = std::move(callback);
     try {
         obPipeline_->start(obConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
             if (obFs) {
@@ -371,10 +372,10 @@ bool ObPipeline::start(NioVideoCallback callback) {
                 videoCallback_(nioFs);
             }
         });
-        videoCallback_ = callback;
         return true;
     } catch (ob::Error& e) {
         NIO_LOG_ERROR_S("Pipeline start failed: " << e.what());
+        videoCallback_ = nullptr;
         return false;
     }
 }

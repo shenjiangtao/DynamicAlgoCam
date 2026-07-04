@@ -37,14 +37,24 @@ namespace nio {
 // Sws is NOT created in init() — it is lazily created in decodeColorToRGB()
 // after the first frame is decoded, because the actual decoder output format
 // (e.g. YUVJ422P) may differ from the requested YUV420P.
+//
+// yuvSws + yuvSwsSrcFmt/yuvSwsW/yuvSwsH: cached sws context for the
+// stable-format YUV paths (YUYV/UYVY/YUY2/NV12/NV21/I420).  These formats
+// don't change between frames, so the sws context is created once and
+// reused to avoid the per-frame sws_getContext/freeContext overhead.
 struct MjpgDecoderRes
 {
     AVCodecContext* ctx;  // MJPEG decoder context
     AVPacket* pkt;        // reuse packet for each decode call
     AVFrame* decFrame;    // reuse decoded frame buffer
-    SwsContext* sws;      // lazily created YUV→RGB sws context
+    SwsContext* sws;      // lazily created YUV→RGB sws context (MJPEG path)
     AVPixelFormat decFmt; // actual decoder output pixel format
     bool swsInitialized;  // true after first-frame lazy init
+
+    SwsContext* yuvSws;         // cached sws for YUYV/UYVY/NV12/NV21/I420 → RGB24
+    AVPixelFormat yuvSwsSrcFmt; // source format of the cached yuvSws (AV_PIX_FMT_NONE if none)
+    int yuvSwsW;                // width of the cached yuvSws
+    int yuvSwsH;                // height of the cached yuvSws
 
     MjpgDecoderRes();
     ~MjpgDecoderRes();

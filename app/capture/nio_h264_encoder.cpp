@@ -414,7 +414,6 @@ bool H264Encoder::writeFrame(std::ofstream& outFile, std::mutex& mtx, uint64_t d
         {
             std::lock_guard<std::mutex> lock(mtx);
             outFile.write(reinterpret_cast<const char*>(pkt_->data), pkt_->size);
-            outFile.flush();
         }
         wrote = true;
         av_packet_unref(pkt_);
@@ -507,8 +506,8 @@ bool H264Encoder::swsConvertFrame(const uint8_t* data, uint32_t /*size*/) {
         } else {
             for (int i = 0; i < uvHeight; i++) {
                 memcpy(frame_->data[1] + i * frame_->linesize[1], data + width_ * height_ + i * uvWidth, uvWidth);
-                memcpy(frame_->data[2] + i * frame_->linesize[2],
-                       data + width_ * height_ + uvPlaneSize + i * uvWidth, uvWidth);
+                memcpy(frame_->data[2] + i * frame_->linesize[2], data + width_ * height_ + uvPlaneSize + i * uvWidth,
+                       uvWidth);
             }
         }
     }
