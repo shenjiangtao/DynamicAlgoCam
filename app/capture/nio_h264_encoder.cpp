@@ -92,7 +92,6 @@ bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
 
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
     if (!codec) {
-        std::cerr << "H264 encoder not found" << std::endl;
         NIO_LOG_ERROR_S("H264 encoder not found, " << width << "x" << height);
         return false;
     }
@@ -116,7 +115,6 @@ bool H264Encoder::initEncoder(int width, int height, int fps, int bitRate) {
     setupEncoderVui();
 
     if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
-        std::cerr << "Failed to open H264 encoder" << std::endl;
         NIO_LOG_ERROR_S("Failed to open H264 encoder, " << width << "x" << height);
         avcodec_free_context(&codecCtx_);
         codecCtx_ = nullptr;
@@ -134,7 +132,6 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
     if (srcFmt != dstFmt) {
         swsCtx_ = sws_getContext(width, height, srcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!swsCtx_) {
-            std::cerr << "Failed to create sws context" << std::endl;
             NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder");
             close();
             return false;
@@ -215,7 +212,6 @@ bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int 
 
     AVPixelFormat srcFmt = mapNioFormatToAV(srcFormat);
     if (srcFmt == AV_PIX_FMT_NONE) {
-        std::cerr << "Unsupported format for H264 encoding" << std::endl;
         NIO_LOG_ERROR_S("Unsupported format for H264 encoding: " << nioFormatToStr(srcFormat) << " " << width << "x"
                                                                  << height);
         close();
@@ -231,7 +227,6 @@ bool H264Encoder::init(int width, int height, int fps, NioFormat srcFormat, int 
         swsCtx_ =
             sws_getContext(width, height, swsSrcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!swsCtx_) {
-            std::cerr << "Failed to create sws context" << std::endl;
             NIO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << nioFormatToStr(srcFormat));
             close();
             return false;

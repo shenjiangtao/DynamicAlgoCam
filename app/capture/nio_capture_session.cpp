@@ -26,7 +26,6 @@ bool CaptureSession::setup() {
     try {
         device_->timerSyncWithHost();
     } catch (std::exception& e) {
-        std::cerr << "Timer sync warning: " << e.what() << std::endl;
         NIO_LOG_WARN_S("Timer sync failed for " << safeName_ << ": " << e.what());
     }
 
@@ -34,6 +33,7 @@ bool CaptureSession::setup() {
         try {
             device_->enableGlobalTimestamp(true);
         } catch (...) {
+            NIO_LOG_WARN_S("enableGlobalTimestamp threw for " << safeName_);
         }
     }
 
@@ -156,13 +156,11 @@ void CaptureSession::createPcdTask() {
         pcdTask_->start();
         frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
         NIO_LOG_INFO_S("PCD point cloud output (single): " << pcdDir << "/");
-        std::cout << "  PCD point cloud (per-frame): " << pcdDir << "/" << std::endl;
     } else {
         pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
         pcdTask_->start();
         frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
         NIO_LOG_INFO_S("PCD point cloud output (stream): " << pcdDir << "/" << pcdBase << ".pcs");
-        std::cout << "  PCD point cloud (stream): " << pcdDir << "/" << pcdBase << ".pcs" << std::endl;
     }
 }
 
@@ -174,9 +172,9 @@ void CaptureSession::setupFusion() {
     canFuse_ = cfg_.enableFusion && sensorInfo_.hasColor && sensorInfo_.hasDepth;
     if (!canFuse_) {
         if (cfg_.enableFusion && !sensorInfo_.hasColor) {
-            std::cout << " D2C Fusion: skipped (no color sensor)" << std::endl;
+            NIO_LOG_WARN_S("D2C Fusion: skipped (no color sensor) for " << safeName_);
         } else if (cfg_.enableFusion && !sensorInfo_.hasDepth) {
-            std::cout << " D2C Fusion: skipped (no depth sensor)" << std::endl;
+            NIO_LOG_WARN_S("D2C Fusion: skipped (no depth sensor) for " << safeName_);
         }
         return;
     }
@@ -190,7 +188,7 @@ void CaptureSession::setupFusion() {
 
     auto fusedEncoder = std::make_shared<H264Encoder>();
     if (!fusedEncoder->initRGB(sensorInfo_.colorW, sensorInfo_.colorH, fusedFps_)) {
-        std::cerr << "  Failed to init fused H264 encoder for " << safeName_ << std::endl;
+        NIO_LOG_ERROR_S("Failed to init fused H264 encoder for " << safeName_);
         canFuse_ = false;
         return;
     }
@@ -201,9 +199,6 @@ void CaptureSession::setupFusion() {
         devId_ + "_fusion", sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFormat, fusedFps_, fusedEncoder,
         fusedFile, fusedMtx_, hwD2CMode_, cfg_.alpha, cfg_.depthMinM, cfg_.depthMaxM, depthScale_, mjpgRes_);
     fusionTask_->start();
-    std::cout << "  D2C Fusion: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@" << fusedFps_
-              << " alpha=" << cfg_.alpha << " depth=[" << cfg_.depthMinM << "m, " << cfg_.depthMaxM << "m]"
-              << " mode=" << (hwD2CMode_ ? "HW" : "SW") << std::endl;
     NIO_LOG_INFO_S("D2C Fusion enabled: " << sensorInfo_.colorW << "x" << sensorInfo_.colorH << "@" << fusedFps_
                                           << " alpha=" << cfg_.alpha << " depthRange=" << cfg_.depthMinM << "m-"
                                           << cfg_.depthMaxM << "m"
@@ -250,7 +245,7 @@ void CaptureSession::writeIntrinsicJson() {
 
         jf << "  \"device\":\"" << safeName_ << "\"\n";
         jf << "}\n";
-        std::cout << " Intrinsic: " << intrinsicPath << std::endl;
+        NIO_LOG_INFO_S("Intrinsic saved: " << intrinsicPath);
     }
 }
 
@@ -366,12 +361,18 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
     videoConsumerThread_ = std::thread(&CaptureSession::videoConsumerLoop, this);
 
     bool ok = pipeline_->start([this](std::shared_ptr<NioFrameSet> nioFs) {
-        if (nioFs)
+        if (nioFs) {
             videoQueue_.push(std::move(nioFs));
+            // Notify start-video caller that the pipeline is delivering frames.
+            {
+                std::lock_guard<std::mutex> lk(firstFrameMtx_);
+                firstFrameSeen_ = true;
+            }
+            firstFrameCv_.notify_one();
+        }
     });
 
     if (!ok) {
-        std::cerr << " Pipeline start failed for " << safeName_ << std::endl;
         NIO_LOG_ERROR_S("Pipeline start failed for " << safeName_);
         consumersRunning_ = false;
         videoQueue_.shutdown();
@@ -381,7 +382,17 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
         return;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Wait until the SDK callback delivers its first frame (event-driven),
+    // or 2s safety-net timeout if the device is slow to initialize.
+    // Replaces the prior unconditional std::this_thread::sleep_for(500ms).
+    {
+        std::unique_lock<std::mutex> lk(firstFrameMtx_);
+        firstFrameCv_.wait_for(lk, std::chrono::seconds(2),
+                               [this]() { return firstFrameSeen_; });
+    }
+    if (!firstFrameSeen_)
+        NIO_LOG_WARN_S("First-frame wait timed out (2s) for " << safeName_
+                          << " — continuing; pipeline may still be warming up");
 }
 
 void CaptureSession::startImuPipeline() {
@@ -448,7 +459,6 @@ void CaptureSession::stop() {
 
     mjpgRes_.reset();
 
-    std::cout << "Stopped: " << safeName_ << std::endl;
     NIO_LOG_INFO_S("Stopped device: " << safeName_);
 }
 
@@ -483,25 +493,26 @@ void CaptureSession::reportFps(uint64_t reportDurationMs) {
         }
     }
 
-    std::cout << "[" << safeName_ << "] ";
+    std::ostringstream fpsLine;
+    fpsLine << "[" << safeName_ << "] ";
     if (tempCounts.empty() && !fusionTask_) {
-        std::cout << "Recording... waiting for frames";
+        fpsLine << "Recording... waiting for frames";
     } else {
-        std::cout << "Recording... FPS: ";
+        fpsLine << "Recording... FPS: ";
         std::string sep;
         for (const auto& item : tempCounts) {
             auto name = nioFrameTypeToStr(item.first);
             float rate = (reportDurationMs > 0) ? (item.second / (reportDurationMs / 1000.0f)) : 0.0f;
-            std::cout << std::fixed << std::setprecision(1) << sep << name << "=" << rate;
+            fpsLine << std::fixed << std::setprecision(1) << sep << name << "=" << rate;
             sep = ", ";
         }
         if (fusionTask_) {
             uint64_t fusedCount = fusionTask_->frameCount.exchange(0);
             float fusedRate = (reportDurationMs > 0) ? (fusedCount / (reportDurationMs / 1000.0f)) : 0.0f;
-            std::cout << sep << "fused=" << std::fixed << std::setprecision(1) << fusedRate;
+            fpsLine << sep << "fused=" << std::fixed << std::setprecision(1) << fusedRate;
         }
     }
-    std::cout << std::endl;
+    NIO_LOG_INFO_S(fpsLine.str());
 }
 
 } // namespace nio

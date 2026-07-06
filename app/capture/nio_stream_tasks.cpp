@@ -75,7 +75,14 @@ void FusionStreamTask::enqueueNioFrameSet(std::shared_ptr<NioFrameSet> frameSet)
         latestFrameSet_ = std::move(frameSet);
         frameSetReady_ = true;
     }
-    wakeup();
+    // Push a 0-size sentinel blob into the StreamTask queue so run()'s cv_.wait_for
+    // predicate (count_ > 0) becomes true and the worker wakes immediately, rather
+    // than waiting for the 100ms wait_for timeout.  processFrame() forwards to
+    // onIdle() which performs the actual doBlend.  Use a non-null pointer to
+    // stay within std::memcpy's defined behavior (nullptr+0 is UB even though
+    // the size is zero).
+    static const uint8_t zeroSentinel = 0;
+    enqueue(&zeroSentinel, 0, 0);
 }
 
 void FusionStreamTask::enqueueColor(const uint8_t* data, uint32_t size, uint64_t timestampUs) {
@@ -88,7 +95,8 @@ void FusionStreamTask::enqueueColor(const uint8_t* data, uint32_t size, uint64_t
         latestColor_.timestampUs = timestampUs;
         colorReady_ = true;
     }
-    wakeup();
+    static const uint8_t zeroSentinel = 0;
+    enqueue(&zeroSentinel, 0, 0);
 }
 
 void FusionStreamTask::enqueueDepth(const uint8_t* data, uint32_t size, uint64_t timestampUs, float depthScale) {
@@ -102,33 +110,32 @@ void FusionStreamTask::enqueueDepth(const uint8_t* data, uint32_t size, uint64_t
         latestDepth_.depthScale = depthScale;
         depthReady_ = true;
     }
-    wakeup();
+    static const uint8_t zeroSentinel = 0;
+    enqueue(&zeroSentinel, 0, 0);
 }
 
 void FusionStreamTask::processFrame(const FrameBlob&) {
     onIdle();
 }
 
-// onIdle for hardware D2C mode: blend from latest color+depth buffers
-// 硬件D2C模式空闲回调：从最新color+depth缓冲进行融合
+// onIdle for hardware D2C mode: blend from latest color+depth buffers.
+// Holds colorMtx_ + depthMtx_ across the whole doBlend (~1-2ms) instead of
+// copying each ~2MB frame out under the lock — saves ~4MB/frame of memcpy.
+// Producer paces at ~33ms (30fps), so 1-2ms hold is below frame interval.
+// Lock order (color → depth) matches constructor init order — no inversion.
 void FusionStreamTask::onIdleHwD2C() {
     if (!colorReady_.load() || !depthReady_.load())
         return;
 
-    FrameBuf colorBuf, depthBuf;
-    {
-        std::lock_guard<std::mutex> lock(colorMtx_);
-        colorBuf = latestColor_;
-        colorReady_ = false;
-    }
-    {
-        std::lock_guard<std::mutex> lock(depthMtx_);
-        depthBuf = latestDepth_;
-        depthReady_ = false;
-    }
+    std::lock(colorMtx_, depthMtx_);
+    std::lock_guard<std::mutex> colorLk(colorMtx_, std::adopt_lock);
+    std::lock_guard<std::mutex> depthLk(depthMtx_, std::adopt_lock);
 
-    doBlend(colorBuf.data.data(), colorBuf.size, colorBuf.timestampUs, depthBuf.data.data(), depthBuf.size,
-            depthBuf.timestampUs, depthBuf.depthScale);
+    doBlend(latestColor_.data.data(), latestColor_.size, latestColor_.timestampUs, latestDepth_.data.data(),
+            latestDepth_.size, latestDepth_.timestampUs, latestDepth_.depthScale);
+
+    colorReady_ = false;
+    depthReady_ = false;
 }
 
 // onIdle for software D2C mode: frames are already aligned in the driver,
@@ -183,6 +190,32 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
     float minDist = depthMinM_;
     float maxDist = depthMaxM_;
     float al = alpha_;
+    float rangeM = maxDist - minDist;
+    if (rangeM <= 0.0f)
+        rangeM = 1.0f;
+
+    // Per-pixel fusion: rawVal==0 keeps color, else alpha-blend color + jet(depth).
+    auto blendPixel = [&](uint16_t rawVal, int idx) {
+        if (rawVal == 0) {
+            (*fusedRGBBuf_)[idx + 0] = (*colorRGBBuf_)[idx + 0];
+            (*fusedRGBBuf_)[idx + 1] = (*colorRGBBuf_)[idx + 1];
+            (*fusedRGBBuf_)[idx + 2] = (*colorRGBBuf_)[idx + 2];
+        } else {
+            float distM = rawVal * scale / 1000.0f;
+            float norm = (distM - minDist) / rangeM;
+            if (norm < 0.0f)
+                norm = 0.0f;
+            else if (norm > 1.0f)
+                norm = 1.0f;
+            uint8_t v = static_cast<uint8_t>(norm * 255.0f);
+            uint8_t cr, cg, cb;
+            jetColormap(v, cr, cg, cb);
+            float inv = 1.0f - al;
+            (*fusedRGBBuf_)[idx + 0] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 0] + al * cr);
+            (*fusedRGBBuf_)[idx + 1] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 1] + al * cg);
+            (*fusedRGBBuf_)[idx + 2] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 2] + al * cb);
+        }
+    };
 
     if (depthSize >= static_cast<uint32_t>(w * h * 2)) {
         const uint16_t* depthPtr = reinterpret_cast<const uint16_t*>(depthData);
@@ -190,22 +223,7 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
             for (int x = 0; x < w; x++) {
                 uint16_t rawVal = depthPtr[y * w + x];
                 int idx = (y * w + x) * 3;
-                if (rawVal == 0) {
-                    (*fusedRGBBuf_)[idx + 0] = (*colorRGBBuf_)[idx + 0];
-                    (*fusedRGBBuf_)[idx + 1] = (*colorRGBBuf_)[idx + 1];
-                    (*fusedRGBBuf_)[idx + 2] = (*colorRGBBuf_)[idx + 2];
-                } else {
-                    float distM = rawVal * scale / 1000.0f;
-                    float norm = (distM - minDist) / (maxDist - minDist);
-                    norm = std::max(0.0f, std::min(1.0f, norm));
-                    uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-                    uint8_t cr, cg, cb;
-                    jetColormap(v, cr, cg, cb);
-                    float inv = 1.0f - al;
-                    (*fusedRGBBuf_)[idx + 0] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 0] + al * cr);
-                    (*fusedRGBBuf_)[idx + 1] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 1] + al * cg);
-                    (*fusedRGBBuf_)[idx + 2] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 2] + al * cb);
-                }
+                blendPixel(rawVal, idx);
             }
         }
     } else if (depthSize >= 2) {
@@ -240,22 +258,7 @@ void FusionStreamTask::doBlend(const uint8_t* colorData, uint32_t colorSize, uin
                         sx = dw - 1;
                     uint16_t rawVal = depthPtr[sy * dw + sx];
                     int idx = (y * w + x) * 3;
-                    if (rawVal == 0) {
-                        (*fusedRGBBuf_)[idx + 0] = (*colorRGBBuf_)[idx + 0];
-                        (*fusedRGBBuf_)[idx + 1] = (*colorRGBBuf_)[idx + 1];
-                        (*fusedRGBBuf_)[idx + 2] = (*colorRGBBuf_)[idx + 2];
-                    } else {
-                        float distM = rawVal * scale / 1000.0f;
-                        float norm = (distM - minDist) / (maxDist - minDist);
-                        norm = std::max(0.0f, std::min(1.0f, norm));
-                        uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-                        uint8_t cr, cg, cb;
-                        jetColormap(v, cr, cg, cb);
-                        float inv = 1.0f - al;
-                        (*fusedRGBBuf_)[idx + 0] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 0] + al * cr);
-                        (*fusedRGBBuf_)[idx + 1] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 1] + al * cg);
-                        (*fusedRGBBuf_)[idx + 2] = static_cast<uint8_t>(inv * (*colorRGBBuf_)[idx + 2] + al * cb);
-                    }
+                    blendPixel(rawVal, idx);
                 }
             }
         } else {
@@ -286,31 +289,28 @@ void ImuStreamTask::enqueueLine(std::string line) {
     enqueue(reinterpret_cast<const uint8_t*>(line.data()), static_cast<uint32_t>(line.size()), 0);
 }
 
-// === PcdSingleTask ===
+// === PcdWriterTask ===
 
-PcdSingleTask::PcdSingleTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
-: StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
+PcdWriterTask::PcdWriterTask(const std::string& name, const std::string& outputDir, const std::string& baseName,
+                             Mode mode)
+: StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName), mode_(mode) {}
 
-void PcdSingleTask::processFrame(const FrameBlob& blob) {
-    writePcdFile(outputDir_, baseName_, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
-    frameCount++;
-}
-
-// === PcdStreamTask ===
-
-PcdStreamTask::PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
-: StreamTask(name, 4), outputDir_(outputDir), baseName_(baseName) {}
-
-PcdStreamTask::~PcdStreamTask() {
-    if (pcdStream_.file && pcdStream_.file->is_open()) {
+PcdWriterTask::~PcdWriterTask() {
+    if (mode_ == Mode::Stream && pcdStream_.file && pcdStream_.file->is_open()) {
         std::lock_guard<std::mutex> lock(fileMtx_);
         writePcdStreamIndex(pcdStream_);
     }
 }
 
-void PcdStreamTask::processFrame(const FrameBlob& blob) {
-    std::lock_guard<std::mutex> lock(fileMtx_);
+void PcdWriterTask::processFrame(const FrameBlob& blob) {
+    if (mode_ == Mode::Single) {
+        writePcdFile(outputDir_, baseName_, blob.data.data(), blob.size, fileMtx_, blob.timestampUs);
+        frameCount++;
+        return;
+    }
 
+    // Stream mode: lazy-open the .pcs file, append frames + index entries.
+    std::lock_guard<std::mutex> lock(fileMtx_);
     if (!pcdStream_.file || !pcdStream_.file->is_open()) {
         mkdirRecursive(outputDir_);
         std::string path = outputDir_ + "/" + baseName_ + ".pcs";
@@ -318,12 +318,13 @@ void PcdStreamTask::processFrame(const FrameBlob& blob) {
         if (!pcdStream_.file || !pcdStream_.file->is_open())
             return;
     }
-
     writePcdStreamFrame(pcdStream_, blob.data.data(), blob.size, blob.timestampUs);
     frameCount++;
 }
 
-void PcdStreamTask::onStop() {
+void PcdWriterTask::onStop() {
+    if (mode_ != Mode::Stream)
+        return;
     std::lock_guard<std::mutex> lock(fileMtx_);
     if (pcdStream_.file && pcdStream_.file->is_open())
         writePcdStreamIndex(pcdStream_);

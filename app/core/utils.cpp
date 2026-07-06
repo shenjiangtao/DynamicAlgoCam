@@ -3,6 +3,7 @@
 
 #include "utils.hpp"
 #include "utils_c.h"
+#include "nio_common.hpp"
 
 #include <chrono>
 #include <linux/limits.h>
@@ -13,9 +14,9 @@ char waitForKeyPressed(uint32_t timeout_ms) {
     return nio_wait_for_key_press(timeout_ms);
 }
 
+// Forward to the single canonical time provider in nio_common.cpp.
 uint64_t getNowTimesMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
+    return nio::getTimestampMsInt();
 }
 
 int getInputOption() {

@@ -12,6 +12,7 @@
 
 #include "nio_frame.hpp"
 #include "nio_ob_adapter.hpp"
+#include "nio_log.hpp"
 
 #include <libobsensor/ObSensor.hpp>
 
@@ -38,6 +39,8 @@ inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
                 nf.height = vf->getHeight();
             }
         } catch (...) {
+            NIO_LOG_WARN_S("obFrameSetToNio: VideoFrame cast/size query threw for "
+                           << static_cast<int>(nioType));
         }
 
         // Depth scale
@@ -47,6 +50,7 @@ inline NioFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
                 if (df)
                     nf.depthScale = df->getValueScale();
             } catch (...) {
+                NIO_LOG_WARN_S("obFrameSetToNio: DepthFrame getValueScale threw");
             }
         }
 
@@ -119,6 +123,7 @@ inline std::vector<NioImuSample> obImuToNioSamples(std::shared_ptr<ob::FrameSet>
                 samples.push_back(s);
             }
         } catch (...) {
+            NIO_LOG_WARN_S("obImuToNioSamples: AccelFrame parse threw");
         }
     }
 
@@ -138,6 +143,7 @@ inline std::vector<NioImuSample> obImuToNioSamples(std::shared_ptr<ob::FrameSet>
                 samples.push_back(s);
             }
         } catch (...) {
+            NIO_LOG_WARN_S("obImuToNioSamples: GyroFrame parse threw");
         }
     }
 

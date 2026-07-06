@@ -3,6 +3,7 @@
 
 #include "utils_opencv.hpp"
 #include "nio_types.hpp"
+#include "nio_log.hpp"
 #include "utils.hpp"
 
 #if defined(__has_include)
@@ -125,7 +126,7 @@ void CVWindow::destroyWindow() {
         cv::waitKey(1);
         isWindowDestroyed_ = true;
     } else {
-        std::cout << "CVWindows has been destroyed!" << std::endl;
+        NIO_LOG_WARN_S("CVWindows has been destroyed!");
     }
 }
 
@@ -302,7 +303,7 @@ void CVWindow::arrangeFrames() {
             }
         }
     } catch (std::exception& e) {
-        std::cerr << e.what() << std::endl;
+        NIO_LOG_ERROR_S("CVWindow exception: " << e.what());
     }
 
     if (renderMat.empty()) {

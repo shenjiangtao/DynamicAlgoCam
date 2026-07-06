@@ -38,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -121,6 +122,14 @@ private:
     std::thread videoConsumerThread_;
     std::thread imuConsumerThread_;
     std::atomic<bool> consumersRunning_{ false };
+
+    // Replaces the previous hard-coded 500ms post-start sleep with an
+    // event-driven wait — the SDK callback notifies firstFrameCv_ as
+    // soon as the first frame arrives, or wait_for times out (2s) as a
+    // safety net for slow-starting devices.
+    std::mutex firstFrameMtx_;
+    std::condition_variable firstFrameCv_;
+    bool firstFrameSeen_ = false;
 
     SDLViewer* viewer_ = nullptr;
 };

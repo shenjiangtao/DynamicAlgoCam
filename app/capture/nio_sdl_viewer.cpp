@@ -226,7 +226,7 @@ SDLViewer::~SDLViewer() {
 
 bool SDLViewer::init() {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "SDL init failed: " << SDL_GetError() << std::endl;
+        NIO_LOG_ERROR_S("SDL init failed: " << SDL_GetError());
         return false;
     }
     running_ = true;
@@ -253,6 +253,7 @@ int SDLViewer::addViewerSlot(const std::string& label, NioFormat fmt, int w, int
     s.renderBuf.resize(w * h * 3, 0);
     if (fmt == NioFormat::MJPG || fmt == NioFormat::MJPEG)
         s.mjpgRes = std::make_shared<MjpgDecoderRes>();
+    s.decodeThread = std::thread(&SDLViewer::slotDecodeLoop, this, slots_.back().get());
     return idx;
 }
 
@@ -267,6 +268,7 @@ int SDLViewer::addPointSlot(const std::string& label, int w, int h) {
     s.h = h;
     s.rawBuf.resize(12 + 6 * sizeof(PcdFieldDesc) + 27648 * 24 + 4, 0);
     s.renderBuf.resize(w * h * 3, 0);
+    s.decodeThread = std::thread(&SDLViewer::slotDecodeLoop, this, slots_.back().get());
     return idx;
 }
 
@@ -332,7 +334,7 @@ bool SDLViewer::createWindow() {
 
     SDL_DisplayMode dm;
     if (SDL_GetCurrentDisplayMode(0, &dm) != 0) {
-        std::cerr << "SDL_GetCurrentDisplayMode failed: " << SDL_GetError() << std::endl;
+        NIO_LOG_ERROR_S("SDL_GetCurrentDisplayMode failed: " << SDL_GetError());
         return false;
     }
 
@@ -348,13 +350,13 @@ bool SDLViewer::createWindow() {
     window_ = SDL_CreateWindow("NIO Capture Monitor", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH,
                                SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!window_) {
-        std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+        NIO_LOG_ERROR_S("SDL_CreateWindow failed: " << SDL_GetError());
         return false;
     }
 
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
     if (!renderer_) {
-        std::cerr << "SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
+        NIO_LOG_ERROR_S("SDL_CreateRenderer failed: " << SDL_GetError());
         SDL_DestroyWindow(window_);
         window_ = nullptr;
         return false;
@@ -367,7 +369,6 @@ bool SDLViewer::createWindow() {
 
     rebuildLabelTextures(winW, winH);
 
-    decodeThread_ = std::thread(&SDLViewer::decodeThreadFunc, this);
     renderThread_ = std::thread(&SDLViewer::renderLoop, this);
     initialized_ = true;
     NIO_LOG_INFO_S("SDLViewer: window created " << winW << "x" << winH << " slots=" << slots_.size()
@@ -466,9 +467,18 @@ void SDLViewer::cleanupSlot(ViewerSlot& s) {
 
 void SDLViewer::close() {
     running_ = false;
-    decodeCv_.notify_all();
-    if (decodeThread_.joinable())
-        decodeThread_.join();
+    // Wake every slot's decode worker so they observe running_==false and exit.
+    for (auto& s : slots_) {
+        {
+            std::lock_guard<std::mutex> lk(s->decodeMtx);
+            s->decodeQueued = false;
+        }
+        s->decodeCv.notify_one();
+    }
+    for (auto& s : slots_) {
+        if (s->decodeThread.joinable())
+            s->decodeThread.join();
+    }
     if (renderThread_.joinable())
         renderThread_.join();
 
@@ -543,10 +553,10 @@ void SDLViewer::pushFrame(int devIdx, ViewerChannel ch, const uint8_t* data, uin
         slot.rawUpdated = true;
     }
     {
-        std::lock_guard<std::mutex> lk(decodeCvMtx_);
-        decodeWakeup_ = true;
+        std::lock_guard<std::mutex> lk(slot.decodeMtx);
+        slot.decodeQueued = true;
     }
-    decodeCv_.notify_one();
+    slot.decodeCv.notify_one();
 }
 
 // === Section 6: Decode thread (raw → RGB24 conversion) ===
@@ -558,20 +568,7 @@ bool SDLViewer::decodeY16Slot(ViewerSlot& slot, const std::vector<uint8_t>& rawC
     if (rawSz < static_cast<uint32_t>(w * h * 2))
         return false;
     const uint16_t* y16 = reinterpret_cast<const uint16_t*>(rawCopy.data());
-    for (int i = 0; i < w * h; i++) {
-        uint16_t raw = y16[i];
-        if (raw == 0) {
-            rgb[i * 3 + 0] = 0;
-            rgb[i * 3 + 1] = 0;
-            rgb[i * 3 + 2] = 0;
-        } else {
-            float distM = raw * slot.depthScale / 1000.0f;
-            float norm = (distM - slot.depthMinM) / (slot.depthMaxM - slot.depthMinM);
-            norm = std::max(0.0f, std::min(1.0f, norm));
-            uint8_t v = static_cast<uint8_t>(norm * 255.0f);
-            jetColormap(v, rgb[i * 3 + 0], rgb[i * 3 + 1], rgb[i * 3 + 2]);
-        }
-    }
+    depthY16ToJetRgb(y16, w, h, slot.depthScale, slot.depthMinM, slot.depthMaxM, rgb.data());
     return true;
 }
 
@@ -792,23 +789,19 @@ void SDLViewer::decodeSlot(ViewerSlot& slot) {
     }
 }
 
-void SDLViewer::decodeThreadFunc() {
-    setThreadName("nio-sdl-decode");
+void SDLViewer::slotDecodeLoop(ViewerSlot* slot) {
+    setThreadName("nio-sdl-dec");
     while (running_) {
         {
-            std::unique_lock<std::mutex> lk(decodeCvMtx_);
-            decodeCv_.wait_for(lk, std::chrono::milliseconds(50),
-                               [this]() { return decodeWakeup_.load() || !running_.load(); });
-            decodeWakeup_ = false;
+            std::unique_lock<std::mutex> lk(slot->decodeMtx);
+            slot->decodeCv.wait_for(lk, std::chrono::milliseconds(100),
+                                    [this, slot]() { return slot->decodeQueued.load() || !running_.load(); });
+            slot->decodeQueued = false;
         }
         if (!running_)
             break;
-
-        for (auto& slot : slots_) {
-            if (slot->rawUpdated) {
-                decodeSlot(*slot);
-            }
-        }
+        if (slot->rawUpdated)
+            decodeSlot(*slot);
     }
 }
 

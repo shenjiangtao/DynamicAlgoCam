@@ -64,6 +64,14 @@ struct MjpgDecoderRes
 
 void jetColormap(uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b);
 
+// depthY16ToJetRgb: convert Y16 depth plane to RGB24 jet colormap.
+//   rawVal==0  → black (invalid depth marker)
+//   rawVal>0   → normalize by (depthMinM, depthMaxM) and apply jetColormap.
+// rgbOut must hold w*h*3 bytes; scale is raw→millimeters (then /1000 to meters).
+// Layout: row-major, packed RGBRGB... with stride = w*3.
+void depthY16ToJetRgb(const uint16_t* y16, int w, int h, float scale, float depthMinM, float depthMaxM,
+                      uint8_t* rgbOut);
+
 bool decodeColorToRGB(const uint8_t* data, uint32_t size, NioFormat format, int w, int h, uint8_t* rgbBuf,
                       std::shared_ptr<MjpgDecoderRes> mjpg);
 

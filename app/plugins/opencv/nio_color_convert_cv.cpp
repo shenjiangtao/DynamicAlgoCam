@@ -10,6 +10,7 @@
 //   Zero-valued pixels (invalid/no-signal) are masked to black.
 
 #include "nio_color_convert_cv.hpp"
+#include "nio_log.hpp"
 
 #include <iostream>
 
@@ -87,7 +88,7 @@ cv::Mat frameToBGR(const NioFrame& frame) {
         return bgr;
     }
 
-    std::cerr << "Unsupported display format: " << nioFormatToStr(fmt) << std::endl;
+    NIO_LOG_WARN_S("Unsupported display format: " << nioFormatToStr(fmt));
     return cv::Mat();
 }
 

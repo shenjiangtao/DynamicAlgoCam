@@ -136,27 +136,16 @@ private:
     std::mutex fileMtx_;
 };
 
-// PcdSingleTask: writes one standalone PCD v0.7 file per frame.
-class PcdSingleTask : public StreamTask
+// PcdWriterTask: unified point-cloud writer driven by Mode.
+//   Mode::Single → one standalone PCD v0.7 file per frame (legacy).
+//   Mode::Stream → continuous .pcs stream with trailing index.
+class PcdWriterTask : public StreamTask
 {
 public:
-    PcdSingleTask(const std::string& name, const std::string& outputDir, const std::string& baseName);
-    std::atomic<uint64_t> frameCount{ 0 };
+    enum class Mode { Single, Stream };
 
-protected:
-    void processFrame(const FrameBlob& blob) override;
-
-private:
-    std::string outputDir_;
-    std::string baseName_;
-    std::mutex fileMtx_;
-};
-
-class PcdStreamTask : public StreamTask
-{
-public:
-    PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName);
-    ~PcdStreamTask();
+    PcdWriterTask(const std::string& name, const std::string& outputDir, const std::string& baseName, Mode mode);
+    ~PcdWriterTask();
     std::atomic<uint64_t> frameCount{ 0 };
 
 protected:
@@ -166,8 +155,26 @@ protected:
 private:
     std::string outputDir_;
     std::string baseName_;
+    Mode mode_;
     std::mutex fileMtx_;
-    PcdStream pcdStream_;
+    PcdStream pcdStream_;  // only used in Stream mode
+};
+
+// PcdSingleTask / PcdStreamTask: thin subclasses that select PcdWriterTask's
+// Mode in their constructor — preserves the existing 3-arg constructor
+// signature so existing call sites don't need to know about Mode.
+class PcdSingleTask : public PcdWriterTask
+{
+public:
+    PcdSingleTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
+    : PcdWriterTask(name, outputDir, baseName, Mode::Single) {}
+};
+
+class PcdStreamTask : public PcdWriterTask
+{
+public:
+    PcdStreamTask(const std::string& name, const std::string& outputDir, const std::string& baseName)
+    : PcdWriterTask(name, outputDir, baseName, Mode::Stream) {}
 };
 
 } // namespace nio

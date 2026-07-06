@@ -7,19 +7,26 @@
 
 namespace nio {
 
+namespace {
+inline size_t idx(NioFrameType t) { return static_cast<size_t>(t); }
+}
+
 NioFrame* NioFrameSet::getFrame(NioFrameType type) {
-    auto it = frames_.find(type);
-    return (it != frames_.end()) ? &it->second : nullptr;
+    if (!present_.test(idx(type)))
+        return nullptr;
+    return &frames_[idx(type)];
 }
 
 const NioFrame* NioFrameSet::getFrame(NioFrameType type) const {
-    auto it = frames_.find(type);
-    return (it != frames_.end()) ? &it->second : nullptr;
+    if (!present_.test(idx(type)))
+        return nullptr;
+    return &frames_[idx(type)];
 }
 
 void NioFrameSet::setFrame(NioFrameType type, NioFrame frame) {
     frame.type = type;
-    frames_[type] = std::move(frame);
+    frames_[idx(type)] = std::move(frame);
+    present_.set(idx(type));
 }
 
 } // namespace nio

@@ -17,8 +17,9 @@
 
 #include "nio_types.hpp"
 
+#include <array>
+#include <bitset>
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <vector>
 
@@ -41,10 +42,18 @@ struct NioFrame {
 
     // Convenience: raw pointer to pixel data.
     const uint8_t *rawData() const { return data.empty() ? nullptr : data.data(); }
+
+    // True when this slot has been populated by setFrame().
+    bool present = false;
 };
 
 // NioFrameSet: collection of frames from one synchronized capture.
 // Indexed by NioFrameType — replaces vendor-specific FrameSet for consumers.
+//
+// Backed by std::array<NioFrame, COUNT> (slot per NioFrameType) + a presence
+// bitset, replacing the previous std::map.  Hot path: getFrame is now O(1)
+// array index + bitset test (was O(log N) red-black tree + per-frame heap
+// allocation), setFrame is now in-place array assignment (was tree insert).
 struct NioFrameSet {
     // Get frame by type, or nullptr if absent.
     NioFrame *getFrame(NioFrameType type);
@@ -53,16 +62,14 @@ struct NioFrameSet {
     // Store a frame (takes ownership).
     void setFrame(NioFrameType type, NioFrame frame);
 
-    // Iterate all frames (non-owning).
-    const std::map<NioFrameType, NioFrame> &allFrames() const { return frames_; }
-
     // Number of frames in the set.
-    size_t size() const { return frames_.size(); }
+    size_t size() const { return present_.count(); }
 
-    bool empty() const { return frames_.empty(); }
+    bool empty() const { return !present_.any(); }
 
 private:
-    std::map<NioFrameType, NioFrame> frames_;
+    std::array<NioFrame, static_cast<size_t>(NioFrameType::COUNT)> frames_;
+    std::bitset<static_cast<size_t>(NioFrameType::COUNT)> present_;
 };
 
 // NioImuSample: single IMU measurement (accel or gyro).

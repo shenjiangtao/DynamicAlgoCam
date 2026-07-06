@@ -80,6 +80,16 @@ struct ViewerSlot
     AVFrame* yuyvSrcFrame = nullptr;
     AVFrame* yuyvDstFrame = nullptr;
     bool yuyvSwsInit = false;
+
+    // Per-slot decode worker — replaces the prior single global decode
+    // thread.  Each slot has its own thread so sws_scale/jet/point decode
+    // paths run in parallel across slots (was serialized before).  The
+    // worker waits on decodeCv until pushFrame signals, then calls
+    // SDLViewer::decodeSlot(*this).
+    std::mutex decodeMtx;
+    std::condition_variable decodeCv;
+    std::atomic<bool> decodeQueued{ false };
+    std::thread decodeThread;
 };
 
 class SDLViewer
@@ -114,7 +124,7 @@ public:
     };
 
 private:
-    void decodeThreadFunc();
+    void slotDecodeLoop(ViewerSlot* slot);
     void renderLoop();
     void renderDeviceRow(int di, int rowY, float scale, int colW, int winW);
     void renderSlotLabel(int slotIdx, int xOff, int videoY, int dstW, int dstH, float scale);
@@ -164,7 +174,6 @@ private:
     int cachedWinW_ = 0;
     int cachedWinH_ = 0;
 
-    std::thread decodeThread_;
     std::thread renderThread_;
     std::atomic<bool> running_{ false };
     bool initialized_ = false;
@@ -174,10 +183,6 @@ private:
     int maxSlotsPerRow_ = 0;
     int targetWinW_ = 1080;
     int targetWinH_ = 1920;
-
-    std::mutex decodeCvMtx_;
-    std::condition_variable decodeCv_;
-    std::atomic<bool> decodeWakeup_{ false };
 
     static const int RENDER_FPS = 30;
     static const int ROW_HEADER_H = 36;

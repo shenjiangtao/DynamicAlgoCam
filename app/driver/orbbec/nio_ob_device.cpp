@@ -128,6 +128,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
                                     break;
                                 }
                             } catch (...) {
+                                NIO_LOG_WARN_S("Color profile fallback getProfile(" << k << ") threw");
                             }
                         }
                     }
@@ -166,6 +167,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
                                     break;
                                 }
                             } catch (...) {
+                                NIO_LOG_WARN_S("Depth profile fallback getProfile(" << k << ") threw");
                             }
                         }
                     }
@@ -189,8 +191,10 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
                 try {
                     int32_t level = obDevice_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                     si.depthScale = depthLevelToScale(level);
-                    std::cout << " Depth scale: " << si.depthScale << " (precision level " << level << ")" << std::endl;
+                    NIO_LOG_INFO_S("Depth scale: " << si.depthScale << " (precision level " << level << ")");
                 } catch (...) {
+                    NIO_LOG_WARN_S("Depth precision level query threw — using default scale "
+                                   << DEFAULT_DEPTH_SCALE);
                     si.depthScale = DEFAULT_DEPTH_SCALE;
                 }
                 break;
@@ -261,7 +265,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
     if (nio::isGemini305gDevice(devInfo->getVid(), devInfo->getPid(), devInfo->getConnectionType())) {
         obPipe->disableStream(NioFrameType::IR_LEFT);
         si.hasIRLeft = false;
-        std::cout << "  Gemini 305g: disabled IR_LEFT" << std::endl;
+        NIO_LOG_INFO_S("Gemini 305g: disabled IR_LEFT");
     }
 
     // HW D2C check
@@ -269,7 +273,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
         bool hwD2CSupported = obPipe->checkHWD2CSupport(si.colorW, si.colorH, si.colorFormat, si.depthW, si.depthH,
                                                         si.depthFormat, si.depthFps);
         pipeline.setAlignMode(hwD2CSupported ? NioAlignMode::HW : NioAlignMode::SW);
-        std::cout << "  HW D2C: " << (hwD2CSupported ? "supported" : "not supported") << std::endl;
+        NIO_LOG_INFO_S("HW D2C: " << (hwD2CSupported ? "supported" : "not supported"));
     }
 
     cachedSensorInfo_ = si;
@@ -342,6 +346,7 @@ void ObPipeline::enableFrameSync() {
     try {
         obPipeline_->enableFrameSync();
     } catch (...) {
+        NIO_LOG_WARN_S("enableFrameSync threw — running unsynchronized");
     }
 }
 
@@ -357,6 +362,7 @@ bool ObPipeline::start(NioVideoCallback callback) {
                             obFs->pushFrame(pointFrame);
                         }
                     } catch (...) {
+                        NIO_LOG_WARN_S("pointCloudFilter_->process threw");
                     }
                 }
                 if (alignFilter_) {
@@ -366,6 +372,7 @@ bool ObPipeline::start(NioVideoCallback callback) {
                         if (alignedFS)
                             obFs = alignedFS;
                     } catch (...) {
+                        NIO_LOG_WARN_S("alignFilter_->process threw — using unaligned frames");
                     }
                 }
                 auto nioFs = std::make_shared<NioFrameSet>(obFrameSetToNio(obFs));
@@ -411,6 +418,7 @@ void ObPipeline::stop() {
         try {
             obPipeline_->stop();
         } catch (...) {
+            NIO_LOG_WARN_S("obPipeline_->stop() threw");
         }
     }
 }
@@ -420,6 +428,7 @@ void ObPipeline::stopImu() {
         try {
             imuPipeline_->stop();
         } catch (...) {
+            NIO_LOG_WARN_S("imuPipeline_->stop() threw");
         }
         imuStarted_ = false;
     }
@@ -446,7 +455,7 @@ void ObContext::initSDK(const std::string& extensionsDir) {
         return;
     if (!extensionsDir.empty()) {
         ob::Context::setExtensionsDirectory(extensionsDir.c_str());
-        std::cout << "ObContext::initSDK: extensions directory set to " << extensionsDir << std::endl;
+        NIO_LOG_INFO_S("ObContext::initSDK: extensions directory set to " << extensionsDir);
     }
     sdkInitialized_ = true;
 }

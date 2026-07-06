@@ -32,7 +32,10 @@
 namespace nio {
 
 // 4 MB file buffer — reduces syscall frequency for high-bitrate H.264 writes
-static const int NIO_FILE_BUF_SIZE = 4 * 1024 * 1024;
+// Defined in nio_stream_io.cpp (extern + single definition) so the value
+// lives in one TU only; avoids `inline constexpr` which would require C++17
+// (project standard is C++14).
+extern const int NIO_FILE_BUF_SIZE;
 
 // StreamEncoder: bundles encoder + output file + per-stream mutex + metadata.
 // For native H.264 streams (camera outputs H.264 directly), encoder is null

@@ -12,6 +12,7 @@
 #pragma once
 
 #include "nio_types.hpp"
+#include "nio_log.hpp"
 #include <libobsensor/ObSensor.hpp>
 
 namespace nio {
@@ -250,6 +251,7 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
                 best = vsp;
             }
         } catch (...) {
+            NIO_LOG_WARN_S("selectBestProfile: profile scoring threw, skipping candidate");
             continue;
         }
     }
@@ -259,6 +261,7 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
             auto sp = profiles->getProfile(0);
             best = sp->as<ob::VideoStreamProfile>();
         } catch (...) {
+            NIO_LOG_WARN_S("selectBestProfile: fallback getProfile(0) threw, no profile selected");
         }
     }
     return best;

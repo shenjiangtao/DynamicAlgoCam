@@ -5,7 +5,10 @@
 extern "C" {
 #endif
 
-#define ESC_KEY 27
+/* ESC_KEY: scan-code of the Escape key.  enum constant (instead of a
+ * #define) so it has a symbol entry, won't pollute the macro namespace,
+ * and obeys C/C++ scoping rules.  Works in both C and C++ translation units. */
+enum { ESC_KEY = 27 };
 
 #ifdef __cplusplus
 }

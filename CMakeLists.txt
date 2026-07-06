@@ -25,6 +25,29 @@ set(NIO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 option(ENABLE_ORBBEC "Enable Orbbec device support" ON)
 option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
 
+# Default to Release if user didn't specify — capture tool should ship
+# optimized. Developers wanting debug symbols pass -DCMAKE_BUILD_TYPE=Debug.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    message(STATUS "NIO: CMAKE_BUILD_TYPE not set — defaulting to Release")
+endif()
+
+# Release/RelWithDebInfo: replace CMake's default -O2 with -O3, fold in
+# -march=native + -DNDEBUG (the latter is already added by CMake for
+# Release, but explicit is better when overriding -O level). Bounded to
+# GCC/Clang — MSVC uses /O2 by default and is left alone.
+set(NIO_RELEASE_FLAGS "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(NIO_RELEASE_FLAGS "-O3;-march=native;-DNDEBUG")
+endif()
+foreach(_cfg RELEASE RELWITHDEBINFO)
+    foreach(_lang C CXX)
+        foreach(_flag IN LISTS NIO_RELEASE_FLAGS)
+            add_compile_options("$<$<AND:$<CONFIG:${_cfg}>,$<COMPILE_LANGUAGE:${_lang}>>:${_flag}>")
+        endforeach()
+    endforeach()
+endforeach()
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_DEFAULT_SOURCE")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_DEFAULT_SOURCE")
 

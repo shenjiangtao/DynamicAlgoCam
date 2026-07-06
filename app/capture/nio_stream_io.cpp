@@ -23,6 +23,10 @@
 #include <sys/types.h>
 #include <vector>
 
+// 4 MB file buffer — single definition backing the extern declaration in
+// the matching header.
+const int nio::NIO_FILE_BUF_SIZE = 4 * 1024 * 1024;
+
 namespace nio {
 
 // === Section 1: H.264 NAL handling ===
@@ -177,12 +181,7 @@ std::vector<uint8_t> convertPcdPoints(const PcdLayout& layout, uint32_t pointCou
 } // anonymous namespace
 
 void mkdirRecursive(const std::string& path) {
-    for (size_t pos = 0; pos < path.size();) {
-        pos = path.find('/', pos + 1);
-        if (pos == std::string::npos)
-            pos = path.size();
-        mkdir(path.substr(0, pos).c_str(), 0755);
-    }
+    mkdirp(path);
 }
 
 void writePcdFile(const std::string& outputDir, const std::string& baseName, const uint8_t* data, uint32_t size,
@@ -372,8 +371,6 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, 
 
     se->encoder = std::make_shared<H264Encoder>();
     if (!se->encoder->init(w, h, fps, format, 4000000, seiUuid)) {
-        std::cerr << " Failed to init H264 encoder for format=" << nioFormatToStr(format) << " " << w << "x" << h
-                  << std::endl;
         NIO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << nioFormatToStr(format)
                                                                  << " " << w << "x" << h << "@" << fps);
         se->encoder.reset();
