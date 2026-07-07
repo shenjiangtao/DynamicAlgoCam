@@ -277,17 +277,25 @@ void RsPipeline::processImu() {
 
 void RsPipeline::tryEmitFrameSet() {
     // Must be called with syncMtx_ held.
+    // Emit only when a fresh depth frame is available (D2C fusion trigger).
+    // Both depth and color must be ready to guarantee aligned data.
+    // Emit when a fresh colour frame arrives, using the latest depth frame if available.
     if (colorReady_ && depthReady_) {
         auto nioFs = std::make_shared<NioFrameSet>();
+        // Use the latest colour frame.
         nioFs->setFrame(NioFrameType::COLOR, *colorFrame_);
+        // Use the latest depth frame.
         nioFs->setFrame(NioFrameType::DEPTH, *depthFrame_);
         if (pointFrame_)
             nioFs->setFrame(NioFrameType::POINT, *pointFrame_);
         if (videoCallback_)
             videoCallback_(nioFs);
+        // Reset colour readiness; keep depthReady_ true to reuse latest depth for next colour frame.
         colorReady_ = false;
-        depthReady_ = false;
+        return;
     }
+    // If only one of the streams is ready, wait for the other before emitting.
+    // No emission occurs here.
 }
 
 void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& imu) {

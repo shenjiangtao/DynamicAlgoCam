@@ -299,7 +299,9 @@ void ObPipeline::disableStream(NioFrameType type) {
 }
 
 void ObPipeline::setAggregateAllTypeFrameRequire(bool /*require*/) {
-    obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
+    // Emit a FrameSet as soon as any stream arrives (colour, depth, IR, etc.).
+    // This mode keeps the fused FPS close to the colour sensor rate (≈30 fps).
+    obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION);
 }
 
 void ObPipeline::setAlignMode(NioAlignMode mode) {
