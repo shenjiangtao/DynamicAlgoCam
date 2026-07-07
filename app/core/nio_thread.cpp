@@ -84,7 +84,7 @@ void StreamTask::run() {
         FrameBlob blob;
         {
             std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait_for(lock, std::chrono::milliseconds(100), [this]() { return count_ > 0 || !running_.load(); });
+            cv_.wait_for(lock, std::chrono::milliseconds(5), [this]() { return count_ > 0 || !running_.load(); });
             if (count_ > 0) {
                 blob = std::move(queue_[head_]);
                 head_ = (head_ + 1) % queue_.size();

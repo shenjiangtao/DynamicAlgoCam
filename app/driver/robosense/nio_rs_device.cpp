@@ -224,7 +224,7 @@ void RsPipeline::processCloud() {
     setThreadName("rs_cloud");
     NIO_LOG_DEBUG("RS-AC1 cloud processing thread started");
     while (running_.load()) {
-        auto msg = stuffedCloudQueue_.popWait(100000);
+        auto msg = stuffedCloudQueue_.popWait(10000); // 10ms timeout for real-time
         if (!msg)
             continue;
         auto depthFrame = std::make_shared<NioFrame>(rsDepthToNioFrame(msg));
@@ -245,7 +245,7 @@ void RsPipeline::processImageData() {
     setThreadName("rs_image");
     NIO_LOG_DEBUG("RS-AC1 image processing thread started");
     while (running_.load()) {
-        auto msg = stuffedImageQueue_.popWait(100000);
+        auto msg = stuffedImageQueue_.popWait(10000); // 10ms timeout for real-time
         if (!msg)
             continue;
         auto colorFrame = std::make_shared<NioFrame>(rsImageToNioFrame(msg));
@@ -264,7 +264,7 @@ void RsPipeline::processImu() {
     setThreadName("rs_imu");
     NIO_LOG_DEBUG("RS-AC1 IMU processing thread started");
     while (running_.load()) {
-        auto msg = stuffedImuQueue_.popWait(100000);
+        auto msg = stuffedImuQueue_.popWait(10000); // 10ms timeout for real-time
         if (!msg)
             continue;
         emitImuData(msg);

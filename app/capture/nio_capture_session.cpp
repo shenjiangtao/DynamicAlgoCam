@@ -282,7 +282,7 @@ void CaptureSession::videoConsumerLoop() {
 
     while (consumersRunning_.load()) {
         std::shared_ptr<NioFrameSet> nioFs;
-        if (!videoQueue_.pop(nioFs))
+        if (!videoQueue_.pop(nioFs, 5))
             continue;
         if (!nioFs)
             continue;

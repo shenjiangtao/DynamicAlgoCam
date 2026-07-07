@@ -286,7 +286,7 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
 ObPipeline::ObPipeline(std::shared_ptr<ob::Device> device) : obDevice_(device) {
     obPipeline_ = std::make_shared<ob::Pipeline>(device);
     obConfig_ = std::make_shared<ob::Config>();
-    obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
+    obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION);
 }
 
 void ObPipeline::enableStream(const NioStreamConfig& /*cfg*/) {

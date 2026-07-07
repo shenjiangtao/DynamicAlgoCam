@@ -45,9 +45,9 @@ void DepthRawTask::processFrame(const FrameBlob& blob) {
 FusionStreamTask::FusionStreamTask(const std::string& name, int colorW, int colorH, NioFormat colorFormat,
                                    int /*fusedFps*/, std::shared_ptr<H264Encoder> fusedEncoder,
                                    std::shared_ptr<std::ofstream> fusedFile, std::mutex& fusedMtx, bool hwD2CMode,
-                                   float alpha, float depthMinM, float depthMaxM, float depthScale,
-                                   std::shared_ptr<MjpgDecoderRes> mjpgRes)
-: StreamTask(name, 4)
+float alpha, float depthMinM, float depthMaxM, float depthScale,
+                                 std::shared_ptr<MjpgDecoderRes> mjpgRes)
+: StreamTask(name, 8)
 , colorW_(colorW)
 , colorH_(colorH)
 , colorFormat_(colorFormat)
@@ -119,10 +119,9 @@ void FusionStreamTask::processFrame(const FrameBlob&) {
 }
 
 // onIdle for hardware D2C mode: blend from latest color+depth buffers.
-// Holds colorMtx_ + depthMtx_ across the whole doBlend (~1-2ms) instead of
-// copying each ~2MB frame out under the lock — saves ~4MB/frame of memcpy.
-// Producer paces at ~33ms (30fps), so 1-2ms hold is below frame interval.
-// Lock order (color → depth) matches constructor init order — no inversion.
+// Color-driven fusion: emit a fused frame whenever color is ready,
+// reusing the most-recent depth frame. Depth arrival wakes the loop
+// but does not reset readiness — only color consumption clears it.
 void FusionStreamTask::onIdleHwD2C() {
     if (!colorReady_.load() || !depthReady_.load())
         return;
@@ -134,8 +133,8 @@ void FusionStreamTask::onIdleHwD2C() {
     doBlend(latestColor_.data.data(), latestColor_.size, latestColor_.timestampUs, latestDepth_.data.data(),
             latestDepth_.size, latestDepth_.timestampUs, latestDepth_.depthScale);
 
+    // Reset only colour — keep depthReady_ so the next colour frame reuses it
     colorReady_ = false;
-    depthReady_ = false;
 }
 
 // onIdle for software D2C mode: frames are already aligned in the driver,
