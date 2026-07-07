@@ -81,7 +81,15 @@ void mkdirp(const std::string& path) {
 const char* SEI_COPYRIGHT = "Copyright jiangtao.shen@nio.com";
 
 void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mutex& mtx, const char* uuid) {
-    std::vector<uint8_t> rbsp;
+    // Reuse thread-local buffers across frames: each EncodeStreamTask runs
+    // on its own StreamTask thread, so thread_local gives one stable buffer
+    // per encoder thread. clear() preserves capacity — no per-frame malloc
+    // after the first call. Hot path: 30fps x N streams.
+    static thread_local std::vector<uint8_t> rbsp;
+    static thread_local std::vector<uint8_t> nal;
+    rbsp.clear();
+    nal.clear();
+
     for (int i = 0; i < 16; i++)
         rbsp.push_back(static_cast<uint8_t>(uuid[i]));
     for (size_t i = 0; i < payload.size(); i++)
@@ -89,7 +97,6 @@ void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mu
 
     size_t payloadSize = rbsp.size();
 
-    std::vector<uint8_t> nal;
     nal.push_back(0x00);
     nal.push_back(0x00);
     nal.push_back(0x00);
