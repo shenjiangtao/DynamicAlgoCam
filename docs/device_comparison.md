@@ -135,7 +135,7 @@ Parse with: `python3 app/tools/parse_point_raw.py <file.raw> [--frame N|--all|--
 | **HW D2C** | Yes (if profile matches) | Yes (if profile matches) | Yes (if profile matches) | Always HW |
 | **Fallback** | SW align via `ob::Align` | Same | Same | — |
 | **Fusion Resolution** | Color resolution | Color resolution | Color resolution | 1920×1080 |
-| **Fusion FPS** | `min(colorFps, depthFps)` | Same | Same | `min(30, 10) = 10` |
+| **Fusion FPS** | `colorFps` (≈30 fps) | `colorFps` (≈30 fps) | `colorFps` (≈30 fps) | `min(30, 10) = 10` |
 | **Alpha** | 0.5 (default) | 0.5 | 0.5 | 0.5 |
 | **Depth Range for Colormap** | 0.3–5 m | 0.3–5 m | 0.3–5 m | 0.3–5 m |
 | **Output** | `*_d2c_fused_*.h264` | Same | Same | `*_d2c_fused_*.h264` |
