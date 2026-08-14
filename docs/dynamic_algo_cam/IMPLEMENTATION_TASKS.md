@@ -249,7 +249,7 @@
 - [ ] **M3** Phase C 完成 — commit hash: `________` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列
 - [ ] **M4** Phase D 完成 — commit hash: `________` — 验证全量构建 + `--help` diff
 - [ ] **M5** 全工程验证：默认行为与 `85a193c` 一致 — 验证 commit 链清晰对应清单项
-- [ ] **M6** 工程命名重构 `nio::` → `dynalgo::` 完成 — commit hash: `________` — 验证见下方"T1 工程命名重构"段
+- [x] **M6** 工程命名重构 `nio::` → `dynalgo::` 完成 — commit hash: `25be197` — 验证见下方"T1 工程命名重构"段
 
 ---
 
@@ -258,7 +258,7 @@
 | Task ID | Commit | 完成日 | 备注 |
 |---|---|---|---|
 | A0-A5 | `ae23b1d` | 2026-08-14 | Phase A 实现 + 验证完成；commit `ae23b1d` 已 push 至 origin/main（`85a193c..ae23b1d`） |
-| T1 工程命名重构 | `<pending-push>` | 2026-08-14 | 见下方"T1 工程命名重构"段 |
+| T1 工程命名重构 | `25be197` | 2026-08-14 | 见下方"T1 工程命名重构"段；commit `25be197` 已 push 至 origin/main（`532f7ad..25be197`） |
 
 ---
 
@@ -303,8 +303,8 @@
 - [x] T1.6 **符号验证**：`nm build/lib/libdynalgo_core.a | grep -c "dynalgo::\\|Dynalgo"` 命中 20，`grep -c "nio::\\|Nio[A-Z]"` 命中 0 — 命名重构在 binary 符号层完全无残留
 - [x] T1.7 **端到端冒烟**：重写的 `/tmp/opencode/phaseA_smoke.cpp`（连入 `dynalgo_actuator.hpp`、`dynalgo_actuator_factory.hpp`、`dynalgo_log.hpp`）通过 `-Wl,--whole-archive libdynalgo_actuators.a -Wl,--no-whole-archive` 链接 `libdynalgo_core.a`，运行后 `load → open → aimAt → fire → close` 5 行日志可见，`name()=DUMMY`，`SMOKE-OK`，退出 0
 - [x] T1.8 **protected magic 完整性**：`dynalgo_stream_io.{hpp,cpp}` 内 `NIO_DEPTH_RAW` / `NIO_PCD_STREAM` 仍为原始字面字符串（保留旧文件兼容性）
-- [ ] T1.9 **commit & push**：待用户通知
-- [ ] T1.10 提交后回填 commit hash 到 §"实施记录区" 与本段 §M6
+- [ ] T1.9 **commit & push**：commit `25be197` 已 push；待 hash 回填
+- [x] T1.10 提交后回填 commit hash 到 §"实施记录区" 与本段 §M6（hash: `25be197`）
 
 ---
 
