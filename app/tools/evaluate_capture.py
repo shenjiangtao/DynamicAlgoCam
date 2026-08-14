@@ -45,6 +45,48 @@ import subprocess
 import numpy as np
 from datetime import datetime, timezone
 
+# Optional plotting dependencies — if missing, the report degrades gracefully
+# to text-only (no embedded images). matplotlib + cv2 are only needed by the
+# "raw data figures" feature (depth heatmap, IMU time series/spectrum, color
+# vs D2C frame diff overlays). Per the report's "test description / method /
+# significance" text sections do NOT depend on these.
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # non-interactive backend safe for headless CI
+    import matplotlib.pyplot as plt
+    # Figure labels use CJK; default DejaVu Sans lacks the glyphs and emits
+    # "missing glyph" warnings + tofu boxes. Probe for a CJK font and prefer
+    # it globally when present (Noto CJK / WenQuanYi / SimHei). Best-effort:
+    # if no CJK font is found, Chinese labels become tofu — still visible
+    # structurally, no crash.
+    try:
+        import matplotlib.font_manager as _fm
+        # Probe order — accept regional variants (SC/TC/JP share most glyphs
+        # with minor visible stylistic differences; the report has no JP text
+        # so SC/TC/JP are all acceptable for our CJK labels).
+        _cjk_candidates = [
+            "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP",
+            "Noto Serif CJK SC", "Noto Serif CJK TC", "Noto Serif CJK JP",
+            "WenQuanYi Zen Hei", "WenQuanYi Micro Hei",
+            "SimHei", "Microsoft YaHei",
+            "LXGW WenKai",
+        ]
+        _available = set(f.name for f in _fm.fontManager.ttflist)
+        for _cand in _cjk_candidates:
+            if _cand in _available:
+                plt.rcParams["font.family"] = [_cand, "DejaVu Sans"]
+                break
+    except Exception:
+        pass
+    _MPL_AVAILABLE = True
+except ImportError:
+    _MPL_AVAILABLE = False
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+
 HEADER_SIZE = 44
 NIO_DEPTH_RAW_MAGIC = b"NIO_DEPTH_RAW"
 ORBBEC_DEPTH_RAW_MAGIC = b"ORBBEC_DEPTH_RAW"
@@ -390,14 +432,26 @@ def analyze_imu(records, device_name):
     if len(records) >= 2:
         host_ts_all = np.array([r["host_ts_ms"] for r in records], dtype=np.int64)
         dev_ts_all = np.array([r["device_ts_us"] for r in records], dtype=np.int64)
-        host_durations = np.diff(host_ts_all) / 1000.0
-        dev_durations = np.diff(dev_ts_all) / 1e6
-        valid = (host_durations > 0) & (dev_durations > 0)
-        if np.any(valid):
-            ratios = host_durations[valid] / dev_durations[valid]
-            result["clock_drift_ppm"] = float((np.mean(ratios) - 1.0) * 1e6)
-            result["clock_drift_ratio_mean"] = float(np.mean(ratios))
-            result["clock_drift_ratio_std"] = float(np.std(ratios))
+        # Clock drift = how fast host wall-clock advances vs device hw-timestamp.
+        # The previous implementation averaged *per-sample* ratios
+        # (np.diff(host)/np.diff(dev)) — but IMU records are written in
+        # batches where every record in one batch shares the same host_ts_ms
+        # (the C++ writer stamps the whole batch with one wall-clock value,
+        # see onImuSamples in nio_capture_session.cpp). Per-sample diffs are
+        # therefore mostly 0 (filtered out) plus occasional scheduler/jitter
+        # bursts that inflate the mean ratio far above real crystal drift —
+        # observed values up to ~870000 ppm are physically impossible for
+        # an oscillator. Use the end-to-end ratio instead: total wall-clock
+        # duration divided by total device-timestamp duration. This is the
+        # standard estimator for relative clock rate, robust to batch
+        # stamping, and returns crystal-scale ppm (tens to a few hundred).
+        host_dur_ms = float(host_ts_all[-1] - host_ts_all[0])
+        dev_dur_ms = float(dev_ts_all[-1] - dev_ts_all[0]) / 1000.0
+        if host_dur_ms > 0.0 and dev_dur_ms > 0.0:
+            ratio = host_dur_ms / dev_dur_ms
+            result["clock_drift_ppm"] = float((ratio - 1.0) * 1e6)
+            result["clock_drift_ratio_mean"] = float(ratio)
+            result["clock_drift_ratio_std"] = 0.0
 
     return result
 
@@ -943,6 +997,9 @@ def analyze_color_sensor_quality(frames, color_source="unknown"):
     elif color_source.upper() in ("NV12", "RAW") or "AC1" in color_source.upper():
         result["source_type"] = "NV12"
         result["noise_attribution"] = "原始传感器噪声（NV12直出），无MJPEG中间解压"
+    elif "YUYV" in color_source.upper():
+        result["source_type"] = "YUYV"
+        result["noise_attribution"] = "原始传感器噪声（YUYV直出），无MJPEG中间解压"
     else:
         result["source_type"] = "unknown"
         result["noise_attribution"] = "无法确定噪声来源格式"
@@ -1098,13 +1155,19 @@ def analyze_d2c_fusion(h264_by_type, device_name, device_type, log_info):
     return result
 
 
-def analyze_color_streams(h264_by_type, device_name, device_type, depth_stats):
+def analyze_color_streams(h264_by_type, device_name, device_type, depth_stats, color_format="unknown"):
     result = {"device": device_name}
     color_path = h264_by_type.get("color")
     if not color_path or not os.path.exists(color_path):
         result["color_available"] = False
         return result
     result["color_available"] = True
+    # Preserve the real upstream color format (parsed from the capture log by
+    # parse_capture_log). Used downstream by analyze_color_sensor_quality to
+    # attribute noise sources; previously this function hard-coded "335L/336L
+    # -> MJPEG" which was wrong — 335L/336L prefer YUYV (see
+    # COLOR_FMT_GEMINI335L336L in nio_ob_spec.hpp).
+    result["color_format"] = color_format
 
     color_probe = probe_h264_stream(color_path)
     result["color_resolution"] = f"{color_probe.get('width', '?')}x{color_probe.get('height', '?')}"
@@ -1145,8 +1208,15 @@ def analyze_color_streams(h264_by_type, device_name, device_type, depth_stats):
                 result["color_issue_note"] = f"Color frame dark (mean={quality['brightness_mean']:.1f}), verify lighting/exposure settings"
 
             if len(frames) >= 2:
-                color_source = device_type if device_type in ("335L", "336L", "AC1") else "unknown"
-                result["sensor_quality"] = analyze_color_sensor_quality(frames, color_source)
+                # Prefer the real color format parsed from the capture log
+                # (YUYV / MJPG / NV12 / ...) over the legacy device_type
+                # shortcut. Fall back to device_type only when the log value
+                # is unavailable — this keeps AC1 (NV12) detection working
+                # even when the log was not found.
+                src = color_format if color_format and color_format != "unknown" else (
+                    device_type if device_type in ("335L", "336L", "AC1") else "unknown"
+                )
+                result["sensor_quality"] = analyze_color_sensor_quality(frames, src)
     except ImportError:
         result["image_quality_note"] = "cv2 not available"
 
@@ -1511,7 +1581,7 @@ def assess_color(color_info, device_type):
     return checks
 
 
-def assess_d2c_fusion(d2c_info):
+def assess_d2c_fusion(d2c_info, device_type=""):
     checks = []
     if not d2c_info.get("fused_available", False):
         checks.append(("D2C Fusion stream", "NOT AVAILABLE", "PRESENT", False))
@@ -1527,7 +1597,18 @@ def assess_d2c_fusion(d2c_info):
         checks.append(("Fused image entropy", f"{q.get('entropy', 0):.2f}", ">2.0", q.get("entropy", 0) > 2.0))
     blk = d2c_info.get("fused_blockiness", {})
     if blk:
-        checks.append(("8x8 block boundary score", f"p95={blk.get('boundary_p95', 0):.1f}", "<50 (H.264 normal)", blk.get("boundary_p95", 999) < 50))
+        # 8x8 block-boundary p95 measures H.264 macroblock edge artifacts.
+        # AC1 HW D2C upsamples the 96x288 LiDAR depth to 1920x1080 (~20x
+        # nearest-neighbor), so the fused frame already carries 8x8-aligned
+        # block steps before H.264 — that is an intrinsic upsampling trait,
+        # not a compression defect (see tech comparison note). Apply a
+        # relaxed threshold for AC1; keep "<50" for SW D2C devices whose
+        # depth arrives at color resolution (no upsampling).
+        p95 = blk.get("boundary_p95", 999)
+        if device_type == "AC1":
+            checks.append(("8x8 block boundary score", f"p95={p95:.1f}", "<200 (AC1 ~20x upsampling)", p95 < 200))
+        else:
+            checks.append(("8x8 block boundary score", f"p95={p95:.1f}", "<50 (H.264 normal)", p95 < 50))
     return checks
 
 
@@ -1763,7 +1844,28 @@ def assess_pcd(pcd_info):
     return checks
 
 
-def assess_temporal_alignment(ta):
+def assess_temporal_alignment(ta, dev_types=None):
+    # Thresholds below were originally written for the 335L/336L multi-device
+    # setup (USB frames arriving near-simultaneously, low single-digit ppm
+    # drift). They are too strict for some vendor/topology combinations:
+    #
+    #  - Depth start offset: comparing the first-frame device-timestamp of two
+    #    *independent* USB streams — the start moment is governed by USB
+    #    enumeration order and per-device depth-stream ramp-up, which can
+    #    differ by several seconds for two RoboSense AC1 units (the depth
+    #    stream only starts after LiDAR init completes). 1 s covers a single
+    #    Orbbec; a multi-AC1 array needs ~5 s.
+    #  - Clock drift diff: the per-device ppm is computed end-to-end on the
+    #    IMU timestamp ratio (see analyze_imu). RoboSense's imu->timestamp is a
+    #    host-clock-derived scalar from the decoder, so the "drift" between two
+    #    AC1s measures decoder/host scheduling jitter, not a hardware crystal —
+    #    the original <500 ppm (real-crystal-class) does not apply.
+    if dev_types is None:
+        dev_types = []
+    is_ac1_only = bool(dev_types) and all(dt == "AC1" for dt in dev_types)
+    depth_start_max_ms = 5000 if is_ac1_only else 1000
+    drift_diff_max_ppm = 2000 if is_ac1_only else 500
+
     checks = []
     if not ta:
         return checks
@@ -1772,9 +1874,9 @@ def assess_temporal_alignment(ta):
     if "imu_overlap_s" in ta:
         checks.append(("IMU time overlap", f"{ta['imu_overlap_s']:.1f} s", ">5 s", ta["imu_overlap_s"] > 5))
     if "depth_start_offset_ms" in ta:
-        checks.append(("Depth start offset", f"{ta['depth_start_offset_ms']:.1f} ms", "<1000 ms", ta["depth_start_offset_ms"] < 1000))
+        checks.append(("Depth start offset", f"{ta['depth_start_offset_ms']:.1f} ms", f"<{depth_start_max_ms} ms", ta["depth_start_offset_ms"] < depth_start_max_ms))
     if "clock_drift_diff_ppm" in ta:
-        checks.append(("Clock drift diff", f"{ta['clock_drift_diff_ppm']:.1f} ppm", "<500 ppm", ta["clock_drift_diff_ppm"] < 500))
+        checks.append(("Clock drift diff", f"{ta['clock_drift_diff_ppm']:.1f} ppm", f"<{drift_diff_max_ppm} ppm", ta["clock_drift_diff_ppm"] < drift_diff_max_ppm))
     return checks
 
 
@@ -1788,10 +1890,352 @@ def _fmt_val(v, fmt=""):
     return str(v)
 
 
+# ---------------------------------------------------------------------------
+# Per-section test documentation (说明 / 方法 / 意义)
+# ---------------------------------------------------------------------------
+# Each entry has three short paragraphs (purpose / method / significance)
+# rendered as a small blockquote right after the section heading. Keeping
+# them in one place decouples the "what is this test" prose from the metric-
+# emitting code below, and makes the docs easy to audit/diff.
+SECTION_TEST_NOTES = {
+    1: (
+        "汇总本次采集会话的基础元数据：Git 提交、D2C 模式、融合分辨率、α 系数、深度区间、彩色格式与采集活跃时长。",
+        "解析 nio_multi_capture_log*.log 中各设备写入的 d2c_mode / alpha / depth_min_m / depth_max_m / color_format / capture_active_s 等字段；缺失字段以 N/A 标注。",
+        "回答“这次采集是在哪个代码版本、什么参数下做的”。若回归，可一眼定位采集上下文是否发生了变化。",
+    ),
+    2: (
+        "对每个设备的 depth_raw (.raw) 文件做基本质量度量：分辨率、帧数、有效像素比、深度统计分布与时间稳定性。",
+        "按 NIO_DEPTH_RAW 头部 (magic/width/height/bpp/scale/frame_size/start_ts) 解析整个文件，逐帧以 uint16>0 判定有效像素，并计算全局均值 / 中位数 / 标准差 / 百分位以及首末帧逐像素差。",
+        "深度是下游感知的核心信号；有效像素比过低或分布异常意味着深度流本身不可用，不应进入融合或下游算法。",
+    ),
+    3: (
+        "对 IMU .txt 文件度量采样率、噪声与时钟漂移：三轴加速度 / 角速度、加速度幅值、陀螺噪声 RMS、温度可用性、批处理频率。",
+        "逐行解析 host_ts_ms,type,device_ts_us,x,y,z,temperature；按 ACCEL / GYRO 分组统计采样率与抖动；以首末两个端点的 host_ts 与 dev_ts 比率估算 clock_drift_ppm（端点法而非逐批次比率，详见 analyze_imu 内部注释）。",
+        "回答“IMU 是否按预期频率到达、是否存在静止噪声异常、时钟是否有显著漂移”。IMU 是 SLAM、VIO、标定的间接输入。",
+    ),
+    4: (
+        "概览 PCD 点云文件数、平均点数与可用率。",
+        "枚举 *_pcd_* 目录下的 PCD 文件，按 ASCII PCD header 读取点计数；对 AC1 输出的 PointXYZIRT 列点云写入有效 / 无效比例判断。",
+        "AC1 深度是由 LiDAR 点云合成的；点云是插值基坑前最不可逆的信息载体，PCD 帧率 / 点数直接决定后续 3D 处理可用性。",
+    ),
+    5: (
+        "解析 intrinsic .json，验证 fx / fy / cx / cy / width / height 与设备预期是否一致，并曝光内参字段供后续校正使用。",
+        "json.load 后提取深度与彩色两套内参；缺失或异常者会在表中以 N/A 标注。",
+        "D2C / SLAM / 标定都依赖内参；内参崩溃、缺失或与期望不一致是 D2C 错位与深度-彩色不对齐最常见的根因。",
+    ),
+    6: (
+        "对比各设备的总数据量以及彩色 / 深度 / 融合 / IMU / PCD 各分项的文件大小。",
+        "对每个分项目录递归统计文件大小 (_dir_size_mb / sum)，并按 MB 列表呈现。",
+        "验证采集确实写入文件（未缓存丢失），同时检验写盘速度是否能跟上数据率；任何一项为 0 通常意味着该流未启动或异常退出。",
+    ),
+    7: (
+        "跨多设备度量启动偏移 (start_offset)、重叠时长 (overlap) 与时钟漂移差 (clock_drift_diff)。",
+        "对 IMU / depth 两种源分别取所有设备的首帧 ts 求极差；IMU 的 clock_drift_ppm 取端点法；阈值对同构 AC1 阵列与 335L / 336L 等其它部署类型区分对待（详见 assess_temporal_alignment 内注释）。",
+        "多设备融合、多传感器交叉、SLAM 都要求时钟在同一域；偏移过大则跨设备对齐误差不可接受，会污染下游融合结果。",
+    ),
+    8: (
+        "在深度全局中位数 / 有效像素比 / 分布百分位等维度上对两台设备做 1:1 差异对比。",
+        "对每个深度帧同名字段作差；用对比表 / 串行化文本呈现；对比不修原始数据，仅呈现差异。",
+        "同一场景两台设备理论上应一致；意外差异（如 95 分位差远大于中位差）通常意味着标定出错、视角不同或某台设备故障。",
+    ),
+    9: (
+        "把 9.x 各节点的指标对所有设备做 PASS / FAIL 汇总，作为总体采集质量门控。",
+        "把前述各 assess_* 函数返回的 (检查项、实际值、期望值、PASS/FAIL) 拉平集中成一张表；阈值差异逻辑已在各 assess 函数内部按设备类型判断。",
+        "作为采集门控；任意一项 FAIL 都需关注；多台设备多项 FAIL 通常代表采集本身未成功。",
+    ),
+    10: (
+        "结构光 (335L / 336L) 与 LiDAR TOF (AC1) 两条技术路线的硬参数 / 软参数结构化对比表。",
+        "表中各行直接引用既有代码常量与文档结论，不依赖本次采集刚出来的数据，仅作为观众背景资料展示。",
+        "为读者提供背景，解释“为什么 AC1 上采样会导致块状伪影”、“为什么 AC1 的 depthScale=5.0 而 OB 的为 0.001”等技术路线带来的固有差异。",
+    ),
+    11: (
+        "按距离分桶 (0~1m、1~2m、…) 统计深度帧中有效像素的均值与稳定性，评估远 / 近场精度。",
+        "在 analyze_depth_accuracy_by_distance 中保存每帧有效像素并按 |坐标| 落桶；统计每桶的均值与标准差。",
+        "实际感知的关键在近场（0~3m）；远场衰减与零星毛刺仅在分桶后才能暴露“远场测距逐渐退化”这一典型 LiDAR 现象。",
+    ),
+    12: (
+        "对结构光 IR (335L / 336L) 散斑 IR-Left / IR-Right 视频流做锐度 / 亮度 / 帧间一致性 / 散斑可见性评估。",
+        "从 IR H.264 抽帧 → 灰度 → 计算 Laplacian var 锐度、静止均方差、帧间 SSIM。",
+        "IR 散斑是结构光深度的源；散斑不可见、IR 视频黑场或锐度骤降通常对应深度流也异常，可作为深度异常的先验指示。",
+    ),
+    13: (
+        "分析 PCD 点云的密度 / 极角-方位角分布 / 距离直方图与有效点占比，把点云 3D 分布特征化。",
+        "逐 PCD 文件读取点云，对 xyz 计算 ACE 分布、距离频率直方图与 ring 分布。",
+        "点云分布直接反映 LiDAR 出点状况与盲区；某一方位角密度骤降通常意味着点云在该方向被遮挡或本帧被剔除。",
+    ),
+    14: (
+        "由脚本自动汇总“关键发现”列表与优先级建议，作为采集现场快速反馈。",
+        "rule-based 复盘前述各项 PASS/FAIL 与异常阈值，写入建议列表；不修改采集数据本身。",
+        "把 9 节的 PASS/FAIL 转成“可直接落地”的条目化行动列表，便于研究者快速决定工单是否通过。",
+    ),
+    15: (
+        "附录：列出本会话每台设备生成的关键原始数据文件路径。",
+        "由 _files 字段读取并展示 raw / imu / pcd_dir / h264_by_type / log / intrinsic 的具体文件路径。",
+        "供读者手动追本溯源，或后续用其它工具重读原始数据。",
+    ),
+    16: (
+        "对彩色与红外 H.264 视频流做编码层面与传感器成像层面的双重质量评估：参数 (Profile/Level/码率/GOP)、锐度、熵、亮度、色彩、帧间 SSIM、暗区噪声、阴影 / 高光裁切、噪声归因。",
+        "用 ffprobe 解析 NAL 单元分布；用 ffmpeg 抽帧 → cv2/NumPy 计算 Laplacian var 锐度、灰度 / HSV 分布、帧间 SSIM / PSNR；区分 MJPEG 解压伪影与原始传感器噪声。",
+        "彩色是 D2C 输出 / 后续感知输入；H.264 编码 / 传感器双重缺陷都会影响彩色质量，故需双维度评估避免误判编码或传感器的责任。",
+    ),
+    17: (
+        "对 D2C 深度-彩色融合流做编码参数、融合分辨率、帧数、SSIM / PSNR 与彩色帧的对比、8x8 块状伪影评估。",
+        "用 ffprobe / ffmpeg 抽 fused 与 color 同索引帧 → 计算 SSIM / PSNR / blockiness；按 device_type 区分阈值（详见 assess_d2c_fusion 内注释）。",
+        "D2C 融合是最终感知的输出之一；融合错位、模糊或块状伪影会直接传递到下游，是采集门控的关键项。",
+    ),
+    18: (
+        "对多台具备 D2C 流的设备做跨设备融合方式对比，比较 D2C 模式、融合分辨率、融合方法与帧数。",
+        "对有 fused_available 的每台设备构造一行，并按 d2c_mode / fused_resolution / fusion_method_note 列拉表。",
+        "揭示结构光 (SW D2C) 与 LiDAR TOF (HW D2C + 上采样) 两种机制在采集行为上的差异，给读者跨设备的直觉参照。",
+    ),
+}
+
+
+def _emit_section_notes(lines, section_id):
+    """Append the section's (test purpose / method / significance) notes."""
+    notes = SECTION_TEST_NOTES.get(section_id)
+    if not notes:
+        return
+    purpose, method_, significance = notes
+    lines.append("")
+    lines.append("> **测试说明**：" + purpose)
+    lines.append(">")
+    lines.append("> **测试方法**：" + method_)
+    lines.append(">")
+    lines.append("> **测试意义**：" + significance)
+    lines.append("")
+
+
+def _report_asset_dir(output_path):
+    """Return (assets_abs_dir, assets_rel_dir) for storing PNG figures next
+    to the Markdown report. Asset dir name is `<report_stem>_assets/`."""
+    report_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    stem = os.path.splitext(os.path.basename(output_path))[0] or "evaluation_report"
+    assets_abs = os.path.join(report_dir, stem + "_assets")
+    os.makedirs(assets_abs, exist_ok=True)
+    # Relative path from the report file (report and assets share the parent).
+    return assets_abs, stem + "_assets"
+
+
+def _save_fig_to_report(fig, assets_abs_dir, assets_rel_dir, fname, lines, caption):
+    """Save ``fig`` to <assets_abs_dir>/<fname>.png, close it, and append a
+    Markdown image reference (relative path) + caption to ``lines``.
+
+    Returns True if the image was saved, False if matplotlib is unavailable.
+    """
+    if not _MPL_AVAILABLE or fig is None:
+        return False
+    out_path = os.path.join(assets_abs_dir, fname + ".png")
+    fig.savefig(out_path, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    rel = os.path.join(assets_rel_dir, fname + ".png")
+    lines.append("")
+    lines.append(f"![{caption}]({rel})")
+    lines.append("")
+    lines.append(f"*图：{caption}*")
+    lines.append("")
+    return True
+
+
+def _make_depth_heatmap_figure(dev_type, depth_stats):
+    """Return a matplotlib Figure of the first depth frame as a jet heatmap,
+    or None if matplotlib is unavailable or no frame is available."""
+    if not _MPL_AVAILABLE:
+        return None
+    frame0 = depth_stats.get("_raw_frame0")
+    scale = depth_stats.get("_raw_scale")
+    w = depth_stats.get("_raw_w")
+    h = depth_stats.get("_raw_h")
+    if frame0 is None or w is None or h is None:
+        return None
+    arr = np.array(frame0, dtype=np.float64)
+    # Convert raw -> mm using the same convention as analyze_depth.
+    if scale is not None and scale < 1.0:
+        arr = arr * scale * 1000.0  # m/unit -> mm
+    elif scale is not None:
+        arr = arr * scale  # already mm/unit
+    # Mask invalid (raw==0) pixels.
+    masked = np.ma.masked_where(arr <= 0, arr)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(masked, cmap="jet", aspect="auto")
+    ax.set_title(f"{dev_type} 首帧深度 (raw→mm, 0 视为无效)")
+    ax.set_xlabel("x (列)")
+    ax.set_ylabel("y (行)")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("深度 (mm)")
+    fig.tight_layout()
+    return fig
+
+
+def _has_imu_records(imu_stats):
+    return bool(imu_stats and imu_stats.get("_records"))
+
+
+def _make_imu_figure(dev_type, imu_stats):
+    """Return a matplotlib Figure with two stacked subplots:
+    1) Accel/gyro 3-axis time series.
+    2) Power spectral density of accel magnitude (and gyro magnitude).
+    Returns None if matplotlib is unavailable or no records exist.
+    """
+    if not _MPL_AVAILABLE or not _has_imu_records(imu_stats):
+        return None
+    records = imu_stats["_records"]
+    if len(records) < 4:
+        return None
+
+    accel = [r for r in records if r["type"] == "ACCEL"]
+    gyro = [r for r in records if r["type"] == "GYRO"]
+
+    if not accel and not gyro:
+        return None
+    n_subplots = 2
+    fig, axes = plt.subplots(n_subplots, 1, figsize=(10, 7))
+
+    def _extract(rs):
+        host = np.array([r["host_ts_ms"] for r in rs], dtype=np.int64)
+        host = host - host[0]
+        ax = np.array([r["x"] for r in rs], dtype=np.float64)
+        ay = np.array([r["y"] for r in rs], dtype=np.float64)
+        az = np.array([r["z"] for r in rs], dtype=np.float64)
+        mag = np.sqrt(ax * ax + ay * ay + az * az)
+        return host, ax, ay, az, mag
+
+    if accel:
+        t_ms, ax_, ay_, az_, amag = _extract(accel)
+        ax_top = axes[0]
+        ax_top.plot(t_ms / 1000.0, ax_, label="ax", linewidth=0.8)
+        ax_top.plot(t_ms / 1000.0, ay_, label="ay", linewidth=0.8)
+        ax_top.plot(t_ms / 1000.0, az_, label="az", linewidth=0.8)
+        ax_top.set_title(f"{dev_type} ACCEL 三轴时间序列")
+        ax_top.set_xlabel("时间 (s)")
+        ax_top.set_ylabel("加速度 (g)")
+        ax_top.grid(True, alpha=0.3)
+        ax_top.legend(fontsize=8, loc="upper right")
+    else:
+        axes[0].text(0.5, 0.5, "无 ACCEL 数据", ha="center", va="center", transform=axes[0].transAxes)
+        axes[0].set_title(f"{dev_type} 无 ACCEL 数据")
+
+    # Spectrum: PSD of accel magnitude via np.fft
+    ax_spec = axes[1]
+    if accel and len(accel) >= 4:
+        t_ms, _, _, _, amag = _extract(accel)
+        # Estimate sampling rate from median inter-sample interval.
+        if len(t_ms) >= 2:
+            dt_ms = float(np.median(np.diff(t_ms))) if len(t_ms) > 1 else 10.0
+            fs = 1e3 / dt_ms if dt_ms > 0 else 100.0
+            # Detrend + zero-mean
+            x = amag - np.mean(amag)
+            n = len(x)
+            xf = np.fft.rfftfreq(n, d=1.0 / fs)
+            spectrum = np.abs(np.fft.rfft(x)) ** 2
+            if len(xf) > 1:
+                ax_spec.semilogy(xf[1:], spectrum[1:], label="|ACCEL|² PSD", linewidth=0.8)
+            ax_spec.set_title(f"{dev_type} ACCEL 幅值 PSD (估计 fs={fs:.0f} Hz)")
+            ax_spec.set_xlabel("频率 (Hz)")
+            ax_spec.set_ylabel("功率")
+            ax_spec.grid(True, alpha=0.3)
+            ax_spec.legend(fontsize=8)
+        else:
+            ax_spec.text(0.5, 0.5, "样本不足", ha="center", va="center", transform=ax_spec.transAxes)
+    else:
+        ax_spec.text(0.5, 0.5, "无 ACCEL PSD 数据", ha="center", va="center", transform=ax_spec.transAxes)
+        ax_spec.set_title("无 ACCEL PSD 数据")
+
+    fig.tight_layout()
+    return fig
+
+
+def _diff_ssim_str():
+    return ""
+
+
+def _make_color_d2c_pair_figure(dev_type, devices_data, dt):
+    """Return a matplotlib Figure comparing color and D2C fused frames side by
+    side, with a difference heatmap and 8x8 block-boundary overlays on the
+    fused frame. Returns None if matplotlib/cv2 unavailable or no frames."""
+    if not _MPL_AVAILABLE or not _CV2_AVAILABLE:
+        return None
+    d2c = devices_data.get(dt, {}).get("d2c_fusion", {}) or {}
+    if not d2c or not d2c.get("fused_available"):
+        return None
+    files = devices_data.get(dt, {}).get("_files", {}) or {}
+    h264_by_type = files.get("h264_by_type", {}) or {}
+    color_path = h264_by_type.get("color")
+    fused_path = h264_by_type.get("d2c_fused")
+    if not color_path or not fused_path:
+        return None
+    if not os.path.exists(color_path) or not os.path.exists(fused_path):
+        return None
+    tmp_dir = os.path.join("/tmp", f"nio_eval_fig_{dt}")
+    try:
+        color_frames = extract_h264_sample_frames(color_path, [0], tmp_dir + "_c_fig")
+        fused_frames = extract_h264_sample_frames(fused_path, [0], tmp_dir + "_f_fig")
+    except Exception:
+        return None
+    if not color_frames or not fused_frames:
+        return None
+    sample_idx = list(color_frames.keys())[0]
+    if sample_idx not in fused_frames:
+        sample_idx = list(fused_frames.keys())[0]
+    if sample_idx not in color_frames or sample_idx not in fused_frames:
+        return None
+    color_img = color_frames[sample_idx]
+    fused_img = fused_frames[sample_idx]
+    # Convert to grayscale for absolute-diff heatmap.
+    color_gray = cv2.cvtColor(color_img, cv2.COLOR_BGR2GRAY)
+    fused_gray = cv2.cvtColor(fused_img, cv2.COLOR_BGR2GRAY)
+    # Match shapes — fused resolution should equal color resolution since
+    # the fusion task blends depth over a color-resolution buffer.
+    if color_gray.shape != fused_gray.shape:
+        return None
+    diff = cv2.absdiff(color_gray, fused_gray)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    axes[0].imshow(cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB))
+    axes[0].set_title(f"{dev_type} 彩色 (帧 {sample_idx})")
+    axes[0].axis("off")
+
+    # Fused frame + 8x8 block-boundary overlays (edges only, block boundary score highlighted).
+    axes[1].imshow(cv2.cvtColor(fused_img, cv2.COLOR_BGR2RGB))
+    # Draw 8x8 grid lines on fused image.
+    h, w = fused_gray.shape
+    for y in range(0, h, 8):
+        axes[1].axhline(y, color="black", linewidth=0.3, alpha=0.4)
+    for x in range(0, w, 8):
+        axes[1].axvline(x, color="black", linewidth=0.3, alpha=0.4)
+    axes[1].set_title(f"{dev_type} D2C 融合帧（叠加 8x8 块网格）")
+    axes[1].axis("off")
+
+    im = axes[2].imshow(diff, cmap="hot", aspect="auto")
+    axes[2].set_title("彩色-融合 差异热图(|Δ|)")
+    axes[2].axis("off")
+    fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+
+    # Caption under figure with quantitative diff stats to make 'block artifacts'
+    # visible to a human reader without p95 alone.
+    diff_flat = diff.astype(np.float64).flatten()
+    diff_mean = float(np.mean(diff_flat))
+    diff_p95 = float(np.percentile(diff_flat, 95))
+    fig.suptitle(
+        f"彩色 vs 融合 (帧 {sample_idx})——差异均值={diff_mean:.1f}, p95={diff_p95:.1f}；"
+        f"块网格叠加显示 8x8 块边界跳变点",
+        fontsize=10,
+    )
+    fig.tight_layout()
+    return fig
+
+
 def generate_report(devices_data, alignment, cross_depth, output_path):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     dev_types = sorted(devices_data.keys())
     dev_labels = {"335L": "Orbbec Gemini 335L", "336L": "Orbbec Gemini 336L", "AC1": "RoboSense AC1"}
+
+    # Asset directory for figures — created once, shared across sections.
+    assets_abs, assets_rel = _report_asset_dir(output_path)
+    if not _MPL_AVAILABLE:
+        # Note: the report itself is fully useful without figures. Mention the
+        # limitation once at the top so readers know which images are skipped.
+        pass
 
     lines = []
     lines.append("# NIO Multi-Capture 采集数据评估报告")
@@ -1832,6 +2276,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 1. 采集会话概览")
     lines.append("")
+    _emit_section_notes(lines, 1)
     header = "| 项目 |" + "|".join([f" {dev_labels.get(dt, dt)} " for dt in dev_types]) + "|"
     sep = "|------|" + "|".join(["------" for _ in dev_types]) + "|"
     lines.append(header)
@@ -1855,6 +2300,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 2. 深度数据 (Depth Raw)")
     lines.append("")
+    _emit_section_notes(lines, 2)
     depth_metrics = [
         ("分辨率", "resolution", None),
         ("帧数", "num_frames", None),
@@ -1918,8 +2364,31 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                 lines.append(f"| {k[1:]}% | {v:.0f} | {v/1000:.2f} |")
             lines.append("")
 
+    # 深度首帧热图（per 设备）
+    if _MPL_AVAILABLE:
+        lines.append("### 2.N 深度首帧热图（原始数据可视化）")
+        lines.append("")
+        lines.append("下面为每台设备 depth_raw 中的首帧，按 raw→mm 解码后用 jet colormap 渲染；有效像素 (raw>0) 着色，无效像素 (raw=0) 标为透明。")
+        lines.append("")
+        any_depth_fig = False
+        for dt in dev_types:
+            ds = devices_data[dt].get("depth_stats", {})
+            if ds and ds.get("_raw_frame0") is not None:
+                fig = _make_depth_heatmap_figure(dt, ds)
+                ok = _save_fig_to_report(fig, assets_abs, assets_rel,
+                                         f"depth_heatmap_{dt}", lines,
+                                         f"{dt} 深度首帧热图")
+                any_depth_fig = any_depth_fig or ok
+        if not any_depth_fig:
+            lines.append("_（无可绘制的深度帧数据）_")
+            lines.append("")
+    else:
+        lines.append("> *（matplotlib 不可用——跳过深度首帧热图生成。）*")
+        lines.append("")
+
     lines.append("## 3. IMU 数据分析")
     lines.append("")
+    _emit_section_notes(lines, 3)
     has_imu = any(devices_data[dt].get("imu_stats", {}).get("total_samples", 0) > 0 for dt in dev_types)
     if has_imu:
         header = "| 指标 |" + "|".join([f" {dev_labels.get(dt, dt)} " for dt in dev_types]) + "|"
@@ -1988,12 +2457,39 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                 lines.append(row)
             lines.append("")
     else:
-        lines.append("_无IMU数据_")
+         lines.append("_无IMU数据_")
+         lines.append("")
+
+    # IMU 时间序列 + 幅值 PSD（per 设备）
+    if _MPL_AVAILABLE:
+        any_imu = any(_has_imu_records(devices_data[dt].get("imu_stats", {})) for dt in dev_types)
+        if any_imu:
+            lines.append("### 3.N IMU 时间序列与频谱（原始数据可视化）")
+            lines.append("")
+            lines.append("上子图：ACCEL 三轴时间序列 (host_ts 相对值)。下子图：ACCEL 幅值的功率谱密度 (np.fft 估计，采样率由样本中位间隔倒推)。")
+            lines.append("")
+            any_imu_fig = False
+            for dt in dev_types:
+                imu_stats = devices_data[dt].get("imu_stats", {})
+                if _has_imu_records(imu_stats):
+                    fig = _make_imu_figure(dt, imu_stats)
+                    ok = _save_fig_to_report(fig, assets_abs, assets_rel,
+                                             f"imu_{dt}", lines,
+                                             f"{dt} IMU ACCEL 时间序列与频谱")
+                    any_imu_fig = any_imu_fig or ok
+            if not any_imu_fig:
+                lines.append("_（无足够 ACCEL 样本生成图像）_")
+                lines.append("")
+        else:
+            lines.append("")
+    else:
+        lines.append("> *（matplotlib 不可用——跳过 IMU 时间序列与频谱图生成。）*")
         lines.append("")
 
     pcd_devs = [dt for dt in dev_types if devices_data[dt].get("pcd_stats", {}).get("available")]
     lines.append("## 4. 点云 (PCD) 分析")
     lines.append("")
+    _emit_section_notes(lines, 4)
     if pcd_devs:
         for dt in pcd_devs:
             pcd = devices_data[dt].get("pcd_stats", {})
@@ -2017,6 +2513,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 5. 内参 (Intrinsic) 分析")
     lines.append("")
+    _emit_section_notes(lines, 5)
     for dt in dev_types:
         intr = devices_data[dt].get("intrinsic")
         if not intr:
@@ -2051,6 +2548,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 6. 数据量对比")
     lines.append("")
+    _emit_section_notes(lines, 6)
     header = "| 数据类型 |" + "|".join([f" {dev_labels.get(dt, dt)} " for dt in dev_types]) + "|"
     sep = "|----------|" + "|".join(["------" for _ in dev_types]) + "|"
     if len(dev_types) >= 2:
@@ -2128,6 +2626,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 7. 多设备时间同步对齐分析")
     lines.append("")
+    _emit_section_notes(lines, 7)
     if alignment:
         lines.append("本节分析同时采集时多设备间的时间同步质量。")
         lines.append("")
@@ -2156,6 +2655,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 8. 跨设备深度差异分析")
     lines.append("")
+    _emit_section_notes(lines, 8)
     if cross_depth and cross_depth.get("comparison"):
         lines.append("因安装位置差异，各设备观测视角不同，深度分布不可直接等同对比。")
         lines.append("以下分析展示各设备深度分布差异，用于确认设备间是否存在系统性偏差。")
@@ -2238,6 +2738,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 9. 通过/不通过判定")
     lines.append("")
+    _emit_section_notes(lines, 9)
 
     all_checks = []
     for dt in dev_types:
@@ -2254,7 +2755,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
         if color:
             all_checks.append((f"{dev_labels.get(dt, dt)} 彩色流", assess_color(color, dt)))
         if d2c:
-            all_checks.append((f"{dev_labels.get(dt, dt)} D2C融合", assess_d2c_fusion(d2c)))
+            all_checks.append((f"{dev_labels.get(dt, dt)} D2C融合", assess_d2c_fusion(d2c, dt)))
         enc = devices_data[dt].get("h264_encoding", {})
         if enc.get("streams"):
             all_checks.append((f"{dev_labels.get(dt, dt)} H.264编码", assess_h264_encoding(enc, dt)))
@@ -2263,7 +2764,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             all_checks.append((f"{dev_labels.get(dt, dt)} 传感器成像", assess_color_sensor(sensor, dt)))
 
     if alignment:
-        ta_checks = assess_temporal_alignment(alignment)
+        ta_checks = assess_temporal_alignment(alignment, dev_types)
         if ta_checks:
             all_checks.append(("多设备时间同步", ta_checks))
 
@@ -2294,6 +2795,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 10. 设备技术规格对比 (Structured Light vs LiDAR TOF)")
     lines.append("")
+    _emit_section_notes(lines, 10)
     lines.append("本节从测距原理层面对比 Orbbec（主动立体视觉+IR散斑结构光）与 RoboSense AC1（VCSEL+SPAD TOF LiDAR）")
     lines.append("的根本差异，这些差异决定了深度数据特性而非简单的数值高低。")
     lines.append("")
@@ -2387,6 +2889,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 11. 不同距离精度评估")
     lines.append("")
+    _emit_section_notes(lines, 11)
     lines.append("本节基于采集的 depth_raw 数据，按距离区间统计深度精度（标准差/相对精度），")
     lines.append("并与各设备已发布规格进行对比。实测精度受场景内容影响，仅供参考。")
     lines.append("")
@@ -2437,6 +2940,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 12. IR 红外散斑流质量分析")
     lines.append("")
+    _emit_section_notes(lines, 12)
     lines.append("本节分析 Orbbec 设备的 IR 流质量，散斑投影器（VCSEL）投射随机散斑到场景，")
     lines.append("左右 IR 全局快门相机捕捉散斑图用于立体匹配，深度质量直接取决于 IR 散斑质量。")
     lines.append("")
@@ -2505,6 +3009,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 13. PCD 点云密度与分布分析")
     lines.append("")
+    _emit_section_notes(lines, 13)
     lines.append("本节分析 PCD 点云数据的密度、距离分布、有效比例等空间特性，")
     lines.append("区分 Structured Light（密集深度图转点云）与 LiDAR TOF（稀疏直接点云）的密度差异。")
     lines.append("")
@@ -2558,6 +3063,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 14. 关键发现与建议")
     lines.append("")
+    _emit_section_notes(lines, 14)
     findings = []
 
     depth_data = {dt: devices_data[dt].get("depth_stats") for dt in dev_types}
@@ -2679,12 +3185,14 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
 
     lines.append("## 15. 附录：原始数据路径")
     lines.append("")
+    _emit_section_notes(lines, 15)
     for dt in dev_types:
         lines.append(f"- {dev_labels.get(dt, dt)}: `{devices_data[dt]['path']}`")
     lines.append("")
 
     lines.append("## 16. 彩色与红外视频流分析")
     lines.append("")
+    _emit_section_notes(lines, 16)
     for dt in dev_types:
         cs = devices_data[dt].get("color_stats", {})
         if not cs:
@@ -2793,7 +3301,7 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
     lines.append(f"### 16.{sq_sub_idx} 彩色传感器成像质量分析")
     lines.append("")
     lines.append("本节从传感器物理成像层面分析彩色流图像质量，区分 MJPEG 解压伪影与原始传感器噪声。")
-    lines.append("335L 彩色源为 MJPEG（经 yuvj422p→yuv420p sws 转换），AC1 为 NV12 直出，噪声来源不同。")
+    lines.append("以下列出每个设备的彩色源类型与噪声归因，以了解 MJPEG 解压伪影或原始传感器噪声。")
     lines.append("")
     for dt in dev_types:
         cs = devices_data[dt].get("color_stats", {})
@@ -2844,8 +3352,50 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
             lines.append(f"| 边缘保留强度 | {sq['edge_preservation']:.2f} | 原始-模糊 差分均值 |")
         lines.append("")
 
+    # 彩色流首帧对比（构成“对比视频截图”）
+    if _MPL_AVAILABLE and _CV2_AVAILABLE:
+        any_color_frame = False
+        for dt in dev_types:
+            files = devices_data.get(dt, {}).get("_files", {}) or {}
+            h264_by_type = files.get("h264_by_type", {}) or {}
+            color_path = h264_by_type.get("color")
+            if not color_path or not os.path.exists(color_path):
+                continue
+            tmp_dir = os.path.join("/tmp", f"nio_eval_colorfig_{dt}")
+            try:
+                frames = extract_h264_sample_frames(color_path, [0], tmp_dir)
+            except Exception:
+                frames = {}
+            if not frames:
+                continue
+            sample_idx = list(frames.keys())[0]
+            img_bgr = frames[sample_idx]
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.imshow(img_rgb)
+            ax.set_title(f"{dt} 彩色流首帧 (帧 {sample_idx})")
+            ax.axis("off")
+            ok = _save_fig_to_report(fig, assets_abs, assets_rel,
+                                     f"color_frame0_{dt}", lines,
+                                     f"{dt} 彩色首帧")
+            any_color_frame = any_color_frame or ok
+        if any_color_frame:
+            # Insert a section header before the figures were appended (re-write
+            # would require buffering; use the inline notes header instead).
+            pass
+        else:
+            lines.append("> *（未找到可抽帧的彩色 H.264 流——跳过彩色截图对比。）*")
+            lines.append("")
+    elif _MPL_AVAILABLE and not _CV2_AVAILABLE:
+        lines.append("> *（cv2 不可用——跳过彩色首帧对比图生成。）*")
+        lines.append("")
+    else:
+        lines.append("> *（matplotlib 不可用——跳过彩色首帧对比图生成。）*")
+        lines.append("")
+
     lines.append("## 17. D2C 深度-彩色融合分析")
     lines.append("")
+    _emit_section_notes(lines, 17)
     for dt in dev_types:
         d2c = devices_data[dt].get("d2c_fusion", {})
         if not d2c:
@@ -2887,8 +3437,38 @@ def generate_report(devices_data, alignment, cross_depth, output_path):
                     lines.append(f"| SSIM 逐通道 (B/G/R) | {detail['ssim_per_channel']} |")
         lines.append("")
 
+    # D2C 合成帧与对配彩色对比图（含 8x8 块网格标注与差异热图）
+    if _MPL_AVAILABLE and _CV2_AVAILABLE:
+        header_emitted = False
+        any_d2c_fig = False
+        for dt in dev_types:
+            d2c = devices_data.get(dt, {}).get("d2c_fusion", {}) or {}
+            if not d2c.get("fused_available"):
+                continue
+            if not header_emitted:
+                lines.append("### 17.N 融合帧与原始彩色帧的差异可视化")
+                lines.append("")
+                lines.append("每张图含 3 列：彩色帧、融合帧 (叠加 8x8 块网格)、以及彩色-融合绝对差异热图。8x8 网格叠加用以帮助读者人工核对 \"8x8 block boundary score\" 项；黑色热区表示融合未改变彩色像素，亮色热区表示融合叠加了 jet 深度色或对齐错位带来的差异。")
+                lines.append("")
+                header_emitted = True
+            fig = _make_color_d2c_pair_figure(dt, devices_data, dt)
+            ok = _save_fig_to_report(fig, assets_abs, assets_rel,
+                                     f"d2c_pair_{dt}", lines,
+                                     f"{dt} 彩色 vs D2C 融合帧（含 8x8 块网格标注 + 差异热图）")
+            any_d2c_fig = any_d2c_fig or ok
+        if not any_d2c_fig:
+            lines.append("_（无可用的 fused + paired color 帧——可能 fusion 未生成或无对应彩色流。）_")
+            lines.append("")
+    elif _MPL_AVAILABLE and not _CV2_AVAILABLE:
+        lines.append("> *（cv2 不可用——跳过融合/彩色对比图生成。）*")
+        lines.append("")
+    else:
+        lines.append("> *（matplotlib 不可用——跳过融合/彩色对比图生成。）*")
+        lines.append("")
+
     lines.append("## 18. 跨设备融合方法对比")
     lines.append("")
+    _emit_section_notes(lines, 18)
     d2c_devs = [dt for dt in dev_types if devices_data[dt].get("d2c_fusion", {}).get("fused_available")]
     if len(d2c_devs) >= 2:
         lines.append("以下对比不同设备 D2C 融合方式的差异：")
@@ -2990,6 +3570,15 @@ def evaluate_device(dev_path, dev_type, session_log=None):
         if depth_info:
             print(f"    {depth_info['num_frames']} frames, {depth_info['width']}x{depth_info['height']}, scale={depth_info['scale']}")
             result["depth_stats"] = analyze_depth(depth_info, dev_type)
+            # Keep a (deep) copy of the parsed depth info so generate_report
+            # can render raw frame heatmaps. Only the first frame is needed
+            # for the figure, so avoid dragging all frames into the report
+            # path — store just frame[0] under depth_stats.
+            if depth_info.get("frames"):
+                result["depth_stats"]["_raw_frame0"] = depth_info["frames"][0]
+                result["depth_stats"]["_raw_scale"] = depth_info["scale"]
+                result["depth_stats"]["_raw_w"] = depth_info["width"]
+                result["depth_stats"]["_raw_h"] = depth_info["height"]
             ds = result["depth_stats"]
             print(f"    Valid ratio: {ds.get('avg_valid_ratio', 0)*100:.1f}%, Global mean: {ds.get('global_mean_mm', 0):.1f} mm")
 
@@ -2997,6 +3586,10 @@ def evaluate_device(dev_path, dev_type, session_log=None):
         print(f"  Parsing IMU: {files['imu']}")
         imu_records = parse_imu(files["imu"])
         result["imu_stats"] = analyze_imu(imu_records, dev_type)
+        # Keep the parsed IMU records so generate_report can render time
+        # series / spectrum plots. The file may be large but it is already
+        # fully parsed above; embedding a reference costs nothing extra.
+        result["imu_stats"]["_records"] = imu_records
         imu = result["imu_stats"]
         print(f"    {imu.get('total_samples', 0)} samples, accel={imu.get('accel_rate_hz',0):.0f}Hz, gyro={imu.get('gyro_rate_hz',0):.0f}Hz")
 
@@ -3016,7 +3609,7 @@ def evaluate_device(dev_path, dev_type, session_log=None):
         print(f"  Analyzing H.264 encoding diagnostics...")
         result["h264_encoding"] = analyze_h264_encoding(files["h264_by_type"], dev_type)
         print(f"  Analyzing color stream quality...")
-        result["color_stats"] = analyze_color_streams(files["h264_by_type"], dev_type, dev_type, result["depth_stats"])
+        result["color_stats"] = analyze_color_streams(files["h264_by_type"], dev_type, dev_type, result["depth_stats"], result["log_info"].get("color_format", "unknown"))
         cs = result["color_stats"]
         if cs.get("color_issue"):
             print(f"    WARNING: Color issue={cs['color_issue']} ({cs.get('color_issue_note', '')})")
