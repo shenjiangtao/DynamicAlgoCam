@@ -31,6 +31,7 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <mutex>
 
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "unknown"
@@ -165,6 +166,39 @@ int main(int argc, char** argv) try {
     }
     std::cout << "Press Ctrl+C or 'q' to stop recording.\n" << std::endl;
 
+    // Event‑window recorder: defines a dynamic saving interval based on incoming events.
+    struct EventWindow {
+        uint64_t startTimeMs = 0;           // T0 of the first event
+        uint64_t endTimeMs = 0;             // Current deadline (T0+2s, extended by later events)
+        const uint64_t marginMs = 2000;     // ±2 s around each event
+        const uint64_t maxWindowMs = 60000; // Upper bound of 60 s
+        std::mutex mtx;
+        // Register a new event occurring at `eventTimeMs` (milliseconds since epoch).
+        void addEvent(uint64_t eventTimeMs) {
+            std::lock_guard<std::mutex> lk(mtx);
+            if (startTimeMs == 0) {
+                startTimeMs = eventTimeMs;
+                endTimeMs = startTimeMs + marginMs;
+            } else {
+                // If the new event falls inside the current window, simply keep the existing deadline.
+                if (eventTimeMs > endTimeMs) {
+                    // Event after current window – start a new window anchored at this event.
+                    startTimeMs = eventTimeMs;
+                    endTimeMs = startTimeMs + marginMs;
+                }
+            }
+            // Clamp to the maximum allowed total duration.
+            if (endTimeMs - startTimeMs > maxWindowMs) {
+                endTimeMs = startTimeMs + maxWindowMs;
+            }
+        }
+        // Determine whether recording should continue at the given moment.
+        bool shouldContinue(uint64_t nowMs) const {
+            if (startTimeMs == 0) return true; // No events yet – keep recording.
+            return nowMs <= endTimeMs && (endTimeMs - startTimeMs) <= maxWindowMs;
+        }
+    } eventWindow;
+
     auto lastReportTime = nio::getNowTimesMs();
     uint32_t waitTime = 1000;
 
@@ -175,7 +209,17 @@ int main(int argc, char** argv) try {
             break;
         }
 
+        // ---- Placeholder for actual event detection ----
+        // Replace the following block with real event source integration.
+        // Example: if (someCondition) eventWindow.addEvent(nio::getNowTimesMs());
+        // ------------------------------------------------
+
         auto currentTime = nio::getNowTimesMs();
+        if (!eventWindow.shouldContinue(currentTime)) {
+            std::cout << "\n=== Event window expired, stopping recording ===" << std::endl;
+            break;
+        }
+
         if (currentTime >= lastReportTime + waitTime) {
             uint64_t reportDuration = currentTime - lastReportTime;
             lastReportTime = currentTime;
@@ -186,7 +230,6 @@ int main(int argc, char** argv) try {
             waitTime = 2000;
         }
     }
-
     std::cout << "\n=== Stopping recording ===" << std::endl;
 
     for (auto& session : sessions)
