@@ -32,9 +32,12 @@ See [docs/device_comparison.md](docs/device_comparison.md) for detailed hardware
 │  nio_core            (SDK-neutral types)        │
 └─────────────────────────────────────────────────┘
   + nio_opencv_plugin (optional, if OpenCV found)
+  + app/models/         (algorithm / inference models, Python; NOT built by CMake)
 ```
 
 Vendor SDK headers (`libobsensor/`, `rs_driver/`) are **only** allowed in `app/driver/`. All other layers are SDK-agnostic, communicating through abstract `NioDevice` / `NioPipeline` / `NioContext` interfaces.
+
+Algorithm / inference model packages live under `app/models/<name>/` (e.g. `app/models/yolov8/`). These are standalone Python packages and are **not** part of the C++ build — see [`app/models/README.md`](app/models/README.md) for the layout convention and license disclosure.
 
 ## Build
 
@@ -200,6 +203,7 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 | [docs/dynamic_algo_cam/use_guide.md](docs/dynamic_algo_cam/use_guide.md) | Detailed usage guide (Chinese) |
 | [docs/dynamic_algo_cam/troubleshooting.md](docs/dynamic_algo_cam/troubleshooting.md) | Troubleshooting reference |
 | [docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md](docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md) | Technical reference (architecture, algorithms, data formats) |
+| [docs/dynamic_algo_cam/models_overview.md](docs/dynamic_algo_cam/models_overview.md) | Algorithm / inference model packages under `app/models/` (layout, usage, license disclosures) |
 
 ## Packaging
 
@@ -212,3 +216,15 @@ Creates a self-contained tar.gz with the binary, SDK libraries, udev rules, and 
 ## License
 
 MIT License. See vendor SDKs under `vendors/` for their respective licenses.
+
+### Embedded model packages — additional license disclosures
+
+This project vendors third-party algorithm / inference model packages under
+`app/models/`. Each subdirectory ships its upstream `LICENSE` and **is governed
+by that license, not the project MIT license**:
+
+| Subdir | License | Notes |
+|---|---|---|
+| `app/models/yolov8/` | **GPL-3.0** ([`app/models/yolov8/LICENSE`](app/models/yolov8/LICENSE)) | GPL-3.0 is **not compatible** with MIT. ANY distribution that incorporates YOLOv8 source code triggers GPL-3.0 obligations (corresponding source availability, notice propagation, copyleft terms). Removing or not exercising the YOLOv8 code avoids these obligations. |
+
+See [`app/models/README.md`](app/models/README.md) for the rationale and rules for adding further model packages.
