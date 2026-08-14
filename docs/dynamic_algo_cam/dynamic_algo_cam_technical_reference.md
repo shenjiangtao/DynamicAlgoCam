@@ -1,4 +1,4 @@
-# nio_multi_capture 技术参考文档
+# dynamic_algo_cam 技术参考文档
 
 > 基于源码 `app/` 目录实现分析。所有行为描述以实现代码为依据。
 
@@ -6,7 +6,7 @@
 
 ## 1. 概述
 
-`nio_multi_capture` 是基于 NioDevice/NioPipeline 抽象层的多厂商多设备并发采集工具。它自动发现所有已连接的 Orbbec 深度摄像头和 RoboSense RS-AC1 LiDAR，为每台设备建立独立的采集管道，将彩色、深度、红外流编码为 H.264 文件，深度原始数据写入 `.raw` 二进制文件，IMU 数据写入 CSV 文本文件。支持 D2C（深度对齐到彩色）融合：深度帧 jet colormap 着色后与彩色帧 alpha 混合，输出融合 H.264 文件。
+`dynamic_algo_cam` 是基于 NioDevice/NioPipeline 抽象层的多厂商多设备并发采集工具。它自动发现所有已连接的 Orbbec 深度摄像头和 RoboSense RS-AC1 LiDAR，为每台设备建立独立的采集管道，将彩色、深度、红外流编码为 H.264 文件，深度原始数据写入 `.raw` 二进制文件，IMU 数据写入 CSV 文本文件。支持 D2C（深度对齐到彩色）融合：深度帧 jet colormap 着色后与彩色帧 alpha 混合，输出融合 H.264 文件。
 
 **适用受众**：
 - **集成开发者**：需要将多设备采集嵌入自有数据管线
@@ -60,7 +60,7 @@
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  nio_multi_capture (executable)                  │  main, CLI (parseArgs),
+│  dynamic_algo_cam (executable)                  │  main, CLI (parseArgs),
 │  → nio::core + nio::drivers + nio::capture       │  signalHandler, 采集主循环
 ├─────────────────────────────────────────────────┤
 │  nio_capture (static lib, nio::capture)          │  CaptureSession,
@@ -160,7 +160,7 @@ SDK 回调线程 (ob::Pipeline / rs_driver)
 | `nio_core` | STATIC | `nio::core` | utils.c, utils.cpp, nio_common.cpp, nio_frame.cpp, nio_thread.cpp | `Threads::Threads` | — |
 | `nio_drivers` | STATIC | `nio::drivers` | dummy.cpp + 条件编译: orbbec/*.cpp, robosense/*.cpp, nio_driver_factory.cpp | `nio::core` + `ob::OrbbecSDK` / `usb-ac-static`+`uvc-ac-static` | `ENABLE_ORBBEC`, `ENABLE_RS_AC1`, `DISABLE_PCAP_PARSE`, `ENABLE_USB`, `ENABLE_IMU_PARSE`, `ENABLE_IMAGE_PARSE` |
 | `nio_capture` | STATIC | `nio::capture` | nio_h264_encoder.cpp, nio_stream_io.cpp, nio_color_convert.cpp, nio_sdl_viewer.cpp, nio_stream_tasks.cpp, nio_capture_session.cpp, nio_frame_queue.cpp, nio_frame_consumer.cpp | `nio::core`, FFmpeg (5 libs), SDL2 | — |
-| `nio_multi_capture` | EXEC | — | nio_multi_capture.cpp | `nio::core`, `nio::drivers`, `nio::capture` | `GIT_COMMIT_HASH` (PRIVATE) |
+| `dynamic_algo_cam` | EXEC | — | dynamic_algo_cam.cpp | `nio::core`, `nio::drivers`, `nio::capture` | `GIT_COMMIT_HASH` (PRIVATE) |
 | `nio_opencv_plugin` | STATIC (条件) | `nio::opencv_plugin` | utils_opencv.cpp, nio_color_convert_cv.cpp | `nio::core`, `nio::capture`, OpenCV | — |
 
 ### 4.1 根 CMakeLists.txt 厂商配置

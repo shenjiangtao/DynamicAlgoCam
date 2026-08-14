@@ -23,7 +23,7 @@ See [docs/device_comparison.md](docs/device_comparison.md) for detailed hardware
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  nio_multi_capture  (executable)                │
+│  dynamic_algo_cam  (executable)                │
 ├─────────────────────────────────────────────────┤
 │  nio_capture         (capture logic + encoding) │
 ├─────────────────────────────────────────────────┤
@@ -75,7 +75,7 @@ cmake .. -DENABLE_ORBBEC=OFF
 cmake --build . -j$(nproc)
 ```
 
-The executable is `build/nio_multi_capture`. Install with `cmake --install .` (installs to `bin/`).
+The executable is `buil./dynamic_algo_cam`. Install with `cmake --install .` (installs to `bin/`).
 
 ### Runtime Library Path
 
@@ -90,22 +90,22 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 
 ```bash
 # Record all connected devices
-./nio_multi_capture
+./dynamic_algo_cam
 
 # Filter by device name substring
-./nio_multi_capture -c "305" "336L"
+./dynamic_algo_cam -c "305" "336L"
 
 # Custom save directory
-./nio_multi_capture -s /HDD/nio_capture
+./dynamic_algo_cam -s /HDD/nio_capture
 
 # Adjust D2C fusion parameters
-./nio_multi_capture --alpha 0.7 --depth-min 0.2 --depth-max 3.0
+./dynamic_algo_cam --alpha 0.7 --depth-min 0.2 --depth-max 3.0
 
 # Headless (no SDL window)
-./nio_multi_capture --no-show
+./dynamic_algo_cam --no-show
 
 # Disable D2C fusion output
-./nio_multi_capture --no-fusion
+./dynamic_algo_cam --no-fusion
 ```
 
 ### CLI Parameters
@@ -197,9 +197,9 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 |---|---|
 | [docs/device_comparison.md](docs/device_comparison.md) | Hardware specs, stream profiles, output format differences per device |
 | [docs/VENDOR_DEVICE_PORTING_MANUAL.md](docs/VENDOR_DEVICE_PORTING_MANUAL.md) | How to add a new vendor device adapter |
-| [docs/nio_multi_capture/use_guide.md](docs/nio_multi_capture/use_guide.md) | Detailed usage guide (Chinese) |
-| [docs/nio_multi_capture/troubleshooting.md](docs/nio_multi_capture/troubleshooting.md) | Troubleshooting reference |
-| [docs/nio_multi_capture/nio_multi_capture_technical_reference.md](docs/nio_multi_capture/nio_multi_capture_technical_reference.md) | Technical reference (architecture, algorithms, data formats) |
+| [docs/dynamic_algo_cam/use_guide.md](docs/dynamic_algo_cam/use_guide.md) | Detailed usage guide (Chinese) |
+| [docs/dynamic_algo_cam/troubleshooting.md](docs/dynamic_algo_cam/troubleshooting.md) | Troubleshooting reference |
+| [docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md](docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md) | Technical reference (architecture, algorithms, data formats) |
 
 ## Packaging
 

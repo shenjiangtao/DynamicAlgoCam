@@ -2,14 +2,14 @@
 # package.sh — 一键打包 NIO Orbbec 采集工具，目标机器解压即用
 #
 # Usage:
-#   ./scripts/package.sh               # 打包 nio_multi_capture
+#   ./scripts/package.sh               # 打包 dynamic_algo_cam
 #   ./scripts/package.sh --output /tmp/my_pkg  # 自定义输出路径
 #   ./scripts/package.sh --skip-libs   # 不打包系统 .so（目标机已有）
 #
 # 输出: <output_dir>/nio_capture_tools_<arch>_<date>.tar.gz
 # 解压后目录结构:
 # nio_capture_tools/
-# ├── bin/                # nio_multi_capture 可执行文件
+# ├── bin/                # dynamic_algo_cam 可执行文件
 # ├── lib/                # libOrbbecSDK.so + 运行依赖 .so
 # ├── extensions/         # SDK extensions (frameprocessor, filters 等)
 # ├── OrbbecSDKConfig.xml # SDK 配置文件 (供 CWD 查找)
@@ -28,7 +28,7 @@ LIB_DIR="${BUILD_DIR}/linux_x86_64/lib"
 
 DEFAULT_OUTPUT_DIR="${PROJECT_ROOT}/dist"
 SKIP_SYSTEM_LIBS=false
-TARGET_BINARIES=("nio_multi_capture")
+TARGET_BINARIES=("dynamic_algo_cam")
 
 while [ $# -gt 0 ]; do
 case "$1" in
@@ -267,7 +267,7 @@ collect_system_libs
 echo ""
 echo "[6/8] 复制文档..."
 
-MULTI_CAPTURE_DIR="${PROJECT_ROOT}/docs/nio_multi_capture"
+MULTI_CAPTURE_DIR="${PROJECT_ROOT}/docs/dynamic_algo_cam"
 
 if [ -f "${MULTI_CAPTURE_DIR}/use_guide.md" ]; then
     cp -v "${MULTI_CAPTURE_DIR}/use_guide.md" "${STAGE_DIR}/docs/"
@@ -428,16 +428,16 @@ NIO Capture Tools (Orbbec + RoboSense)
 
 1. 快速开始
 -----------
-./run_nio_multi_capture                     # 默认录制所有摄像头
-./run_nio_multi_capture --help              # 查看参数
-./run_nio_multi_capture -c "305"            # 仅录制 305 型号
-./run_nio_multi_capture -s /data/cap        # 指定保存目录
-./run_nio_multi_capture --no-fusion         # 仅录制原始流
-./run_nio_multi_capture --no-show           # 无头模式 (无SDL窗口)
+./run_dynamic_algo_cam                     # 默认录制所有摄像头
+./run_dynamic_algo_cam --help              # 查看参数
+./run_dynamic_algo_cam -c "305"            # 仅录制 305 型号
+./run_dynamic_algo_cam -s /data/cap        # 指定保存目录
+./run_dynamic_algo_cam --no-fusion         # 仅录制原始流
+./run_dynamic_algo_cam --no-show           # 无头模式 (无SDL窗口)
 
 2. USB 配置（多摄像头必读）
 --------------------------
-run_nio_multi_capture 启动时会自动检测 Orbbec (VID=2bc5) 和
+run_dynamic_algo_cam 启动时会自动检测 Orbbec (VID=2bc5) 和
 RoboSense RS-AC1 (VID=3244) USB 设备数量,
 并自动计算和设置 usbfs_memory_mb (每设备 256MB):
   - 若当前值不足, 将自动通过 sudo 临时修改
@@ -447,10 +447,10 @@ RoboSense RS-AC1 (VID=3244) USB 设备数量,
   echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 
 自定义每设备内存 (默认 256MB):
-  NIO_USBFS_PER_DEV=512 ./run_nio_multi_capture
+  NIO_USBFS_PER_DEV=512 ./run_dynamic_algo_cam
 
 手动指定总内存:
-  NIO_USBFS_MB=1024 ./run_nio_multi_capture
+  NIO_USBFS_MB=1024 ./run_dynamic_algo_cam
 
 永久生效: 在 /etc/modprobe.d/ 创建文件:
   echo "options usbcore usbfs_memory_mb=1024" | sudo tee /etc/modprobe.d/usbcore.conf
@@ -488,7 +488,7 @@ H264 文件中每帧前有 SEI NAL 单元, dts= 字段为相机设备时间戳(�
 
 7. 权限
 -------
-run_nio_multi_capture 启动时会自动检查:
+run_dynamic_algo_cam 启动时会自动检查:
   a) /etc/udev/rules.d/99-obsensor-libusb.rules 是否已安装 (未安装则自动 sudo cp)
   b) 当前用户是否在 video 组 (udev 规则将 USB 设备权限授予 video 组)
 
@@ -530,5 +530,5 @@ echo ""
 echo "在目标机器上使用:"
 echo "  tar xzf ${PKG_NAME}.tar.gz"
 echo "  cd ${PKG_NAME}"
-echo "  ./run_nio_multi_capture --help"
+echo "  ./run_dynamic_algo_cam --help"
 echo "========================================="

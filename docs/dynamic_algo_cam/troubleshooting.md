@@ -1,4 +1,4 @@
-# nio_multi_capture 故障诊断
+# dynamic_algo_cam 故障诊断
 
 ## 1. 设备发现与连接
 

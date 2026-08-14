@@ -2,7 +2,7 @@
 
 > 基于源码 `app/core/`、`app/driver/`、`app/capture/` 实现分析。所有接口描述以实际代码签名为依据。
 
-**适用受众**：需要将新厂商深度摄像头接入 nio_multi_capture 采集框架的集成开发者。
+**适用受众**：需要将新厂商深度摄像头接入 dynamic_algo_cam 采集框架的集成开发者。
 
 ---
 
@@ -17,7 +17,7 @@ app/
 │   └── nio_driver_factory.hpp/cpp  # 设备发现工厂
 ├── capture/         # CaptureSession — 仅使用 NioDevice/NioPipeline 接口
 ├── plugins/opencv/  # OpenCV 工具 — 仅使用 NioFrame/NioFormat
-└── nio_multi_capture/ # 主程序 — 仅调用 discoverDevices()
+└── dynamic_algo_cam/ # 主程序 — 仅调用 discoverDevices()
 ```
 
 **硬性规则**：`ENABLE_*` 宏、厂商 SDK 头文件（`libobsensor/`、`rs_driver/` 等）、厂商特定常量（如 `OB_DEVICE_VID = 0x2bc5`）仅允许出现在 `app/driver/`。其余 `app/` 代码必须 SDK-agnostic。`app/core/` 零厂商 SDK 依赖编译。

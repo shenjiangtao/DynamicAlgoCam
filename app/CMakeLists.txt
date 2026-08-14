@@ -4,7 +4,7 @@
 # app/ — NIO multi-device capture application.
 #
 # Layered architecture (dependencies flow downward only):
-#   nio_multi_capture  →  nio_capture  →  nio_drivers  →  nio_core
+#   dynamic_algo_cam  →  nio_capture  →  nio_drivers  →  nio_core
 #                                         ↗               ↓
 #                                    rs_driver*        OrbbecSDK*
 #
@@ -20,4 +20,4 @@ add_subdirectory(capture)
 
 find_package(OpenCV QUIET)
 add_subdirectory(plugins/opencv)
-add_subdirectory(nio_multi_capture)
+add_subdirectory(dynamic_algo_cam)

@@ -1,6 +1,6 @@
 ### nio.multi_capture 简介
 
-**nio_multi_capture** 是一个多品牌深度摄像头同时采集与录制的工具。支持 **Orbbec**（Gemini 305/335L/336L）和 **RoboSense RS-AC1** 两种设备，自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，将采集到的流写入磁盘。同时支持 D2C 深度对齐到彩色后的 jet colormap 着色与 alpha 混合，输出融合 H.264 文件。
+**dynamic_algo_cam** 是一个多品牌深度摄像头同时采集与录制的工具。支持 **Orbbec**（Gemini 305/335L/336L）和 **RoboSense RS-AC1** 两种设备，自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，将采集到的流写入磁盘。同时支持 D2C 深度对齐到彩色后的 jet colormap 着色与 alpha 混合，输出融合 H.264 文件。
 
 ---
 
@@ -79,12 +79,12 @@ cmake --build . -j$(nproc)
 
 **运行示例**
 ```bash
-./nio_multi_capture                                      # 录制全部设备
-./nio_multi_capture -c "305" "336L"                      # 按设备名过滤
-./nio_multi_capture -s /HDD/nio_capture                  # 自定义保存目录
-./nio_multi_capture --alpha 0.7 --depth-min 0.2 --depth-max 3.0  # 自定义融合参数
-./nio_multi_capture --no-fusion                          # 仅录制原始流
-./nio_multi_capture --no-show                            # 无头模式
+./dynamic_algo_cam                                      # 录制全部设备
+./dynamic_algo_cam -c "305" "336L"                      # 按设备名过滤
+./dynamic_algo_cam -s /HDD/nio_capture                  # 自定义保存目录
+./dynamic_algo_cam --alpha 0.7 --depth-min 0.2 --depth-max 3.0  # 自定义融合参数
+./dynamic_algo_cam --no-fusion                          # 仅录制原始流
+./dynamic_algo_cam --no-show                            # 无头模式
 ```
 
 **输出目录**
@@ -115,7 +115,7 @@ cmake --build . -j$(nproc)
 | RS-AC1 uvcvideo 已 unbind | `lsusb -t \| grep uvcvideo` | RS-AC1 设备不应绑定 uvcvideo |
 | USB 缓冲区 | `cat /sys/module/usbcore/parameters/usbfs_memory_mb` | >= 128（多设备建议 256） |
 | 用户权限 | `groups $(whoami)` | 包含 `plugdev` 或有 USB 设备访问权限 |
-| OrbbecSDK 运行时库 | `ldd nio_multi_capture \| grep OrbbecSDK` | 能找到 `libOrbbecSDK.so` |
+| OrbbecSDK 运行时库 | `ldd dynamic_algo_cam \| grep OrbbecSDK` | 能找到 `libOrbbecSDK.so` |
 | 磁盘空间 | `df -h <saveDir>` | 每设备每分钟约 100–280 MB |
 
 ---
@@ -204,7 +204,7 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 
 ```
 ┌──────────────────────────────────────┐
-│  nio_multi_capture (executable)       │  main(), CLI 解析, 信号处理
+│  dynamic_algo_cam (executable)       │  main(), CLI 解析, 信号处理
 ├──────────────────────────────────────┤
 │  nio_capture (static lib)             │  CaptureSession, H264Encoder,
 │                                       │  StreamTask, FrameConsumer, SDLViewer

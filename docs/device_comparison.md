@@ -295,7 +295,7 @@ Output file creation is gated by `NioSensorInfo` flags:
 | Capture session (file creation) | `app/capture/nio_capture_session.cpp` |
 | Stream I/O (depth/point raw formats) | `app/capture/nio_stream_io.cpp` |
 | Stream tasks | `app/capture/nio_stream_tasks.cpp` |
-| Multi-capture main | `app/nio_multi_capture/nio_multi_capture.cpp` |
+| Multi-capture main | `app/dynamic_algo_cam/dynamic_algo_cam.cpp` |
 | Sensor info struct | `app/core/nio_types.hpp` |
 | RS driver CMake | `app/driver/CMakeLists.txt` |
 | Depth raw parser | `app/tools/parse_depth_raw.py` |

@@ -9,7 +9,7 @@
 
 ## 1 变更摘要
 
-当前 `nio_multi_capture` 应用仅支持 Orbbec 深度相机（Gemini 2/3 系列）。本方案将 RoboSense RS-AC1（基于 LiDAR 的主动深度相机）纳入同一采集框架，使下游消费者（编码、录文件、预览、融合）无需关心传感器 SDK 来源。
+当前 `dynamic_algo_cam` 应用仅支持 Orbbec 深度相机（Gemini 2/3 系列）。本方案将 RoboSense RS-AC1（基于 LiDAR 的主动深度相机）纳入同一采集框架，使下游消费者（编码、录文件、预览、融合）无需关心传感器 SDK 来源。
 
 **核心变更**:
 - 新增 `RsDevice` / `RsPipeline` 实现 `NioDevice` / `NioPipeline` 抽象接口
@@ -826,7 +826,7 @@ RS-AC1 的输出文件与 OB 完全一致:
 | CaptureSession | `app/capture/nio_capture_session.hpp/.cpp` |
 | FusionStreamTask | `app/capture/nio_stream_tasks.hpp/.cpp` |
 | Driver factory | `app/driver/nio_driver_factory.hpp/.cpp` |
-| app 入口 | `app/nio_multi_capture/nio_multi_capture.cpp` |
+| app 入口 | `app/dynamic_algo_cam/dynamic_algo_cam.cpp` |
 
 ## 最新代码变更（2025-03）
 

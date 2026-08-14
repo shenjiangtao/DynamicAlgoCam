@@ -49,6 +49,9 @@ namespace nio {
 class CaptureSession
 {
 public:
+    // Existing public members ...
+    // New method to set filename prefix (event‑driven)
+    void setFilePrefix(const std::string& prefix) { filePrefix_ = prefix; }
     CaptureSession(std::shared_ptr<NioDevice> device, std::shared_ptr<NioPipeline> pipeline,
                    const std::string& safeName, const std::string& deviceOutputDir, const CaptureConfig& cfg);
 
@@ -101,7 +104,9 @@ private:
 
     float depthScale_ = 0.001f;
     std::string startTs_;
-    std::string baseName_;
+    std::string baseName_; // base path without prefix
+    std::string filePrefix_; // e.g. "E0_1713145678901"
+
 
     std::mutex fusedMtx_;
     std::shared_ptr<MjpgDecoderRes> mjpgRes_;

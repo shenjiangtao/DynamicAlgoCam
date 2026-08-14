@@ -1,14 +1,20 @@
 # Copyright (c) NIO Inc. All Rights Reserved.
 # Licensed under the MIT License.
 #
-# nio_multi_capture — Multi-device capture application.
+# dynamic_algo_cam — Multi-device capture application.
 # Standalone application entry point (main).
 # Links against the layered libraries: nio_core, nio_drivers, nio_capture.
 
 cmake_minimum_required(VERSION 3.10)
-project(nio_multi_capture)
+project(dynamic_algo_cam)
 
-add_executable(${PROJECT_NAME} nio_multi_capture.cpp)
+add_executable(${PROJECT_NAME} dynamic_algo_cam.cpp)
+
+# event.hpp / event_simulator.hpp live in app/include, not in this folder.
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 14)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)

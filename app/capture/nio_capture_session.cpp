@@ -79,13 +79,13 @@ void CaptureSession::createColorEncoder() {
     if (!sensorInfo_.hasColor || sensorInfo_.colorFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
-    sf->color = createStreamEncoder(baseName_ + "_color_" + startTs_ + ".h264", sensorInfo_.colorFormat,
+    sf->color = createStreamEncoder((filePrefix_.empty()?baseName_:filePrefix_) + "_color_" + startTs_ + ".h264", sensorInfo_.colorFormat,
                                     sensorInfo_.colorW, sensorInfo_.colorH, sensorInfo_.colorFps, nullptr, false);
     auto task = std::make_shared<EncodeStreamTask>(devId_ + "_color_enc", sf->color);
     task->start();
     frameConsumers_.push_back(
         std::unique_ptr<FrameConsumer>(new ColorFrameConsumer(task, nullptr, -1, ViewerChannel::COLOR, sf)));
-    NIO_LOG_INFO_S("Color output: " << baseName_ + "_color_" + startTs_ + ".h264"
+    NIO_LOG_INFO_S("Color output: " << (filePrefix_.empty()?baseName_:filePrefix_) + "_color_" + startTs_ + ".h264"
                                     << " fmt=" << nioFormatToStr(sensorInfo_.colorFormat));
 }
 
@@ -93,9 +93,9 @@ void CaptureSession::createDepthEncoder() {
     if (!sensorInfo_.hasDepth || sensorInfo_.depthFormat == NioFormat::UNKNOWN)
         return;
     auto sf = sensorFiles_;
-    sf->depth = createStreamEncoder(baseName_ + "_depth_" + startTs_ + ".h264", NioFormat::RGB, sensorInfo_.depthW,
+    sf->depth = createStreamEncoder((filePrefix_.empty()?baseName_:filePrefix_) + "_depth_" + startTs_ + ".h264", NioFormat::RGB, sensorInfo_.depthW,
                                     sensorInfo_.depthH, sensorInfo_.depthFps, nullptr, false);
-    sf->depthRawFile = std::make_shared<std::ofstream>(baseName_ + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
+    sf->depthRawFile = std::make_shared<std::ofstream>((filePrefix_.empty()?baseName_:filePrefix_) + "_depth_raw_" + startTs_ + ".raw", std::ios::binary);
     auto encTask = std::make_shared<EncodeStreamTask>(devId_ + "_depth_enc", sf->depth);
     encTask->start();
     auto rawTask = std::make_shared<DepthRawTask>(devId_ + "_depth_raw", sf->depthRawFile, sensorInfo_.depthW,
@@ -104,7 +104,7 @@ void CaptureSession::createDepthEncoder() {
     frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
         new DepthFrameConsumer(encTask, rawTask, nullptr, -1, ViewerChannel::DEPTH, sf, depthScale_, cfg_.depthMinM,
                                cfg_.depthMaxM, sensorInfo_.depthW, sensorInfo_.depthH)));
-    NIO_LOG_INFO_S("Depth output: " << baseName_ + "_depth_" + startTs_ + ".h264" << " + raw (jet RGB encoded)");
+    NIO_LOG_INFO_S("Depth output: " << (filePrefix_.empty()?baseName_:filePrefix_) + "_depth_" + startTs_ + ".h264" << " + raw (jet RGB encoded)");
 }
 
 void CaptureSession::createIREncoder(NioFrameType type, const std::string& suffix, NioFormat fmt, int w, int h, int fps,
@@ -136,19 +136,19 @@ void CaptureSession::createImuTask() {
     if (!hasIMU())
         return;
     auto sf = sensorFiles_;
-    sf->imuFile = std::make_shared<std::ofstream>(baseName_ + "_imu_" + startTs_ + ".txt");
+    sf->imuFile = std::make_shared<std::ofstream>((filePrefix_.empty()?baseName_:filePrefix_) + "_imu_" + startTs_ + ".txt");
     *sf->imuFile << "# host_ts_ms,type,device_ts_us,x,y,z,temperature\n";
     sf->imuFile->flush();
     imuTask_ = std::make_shared<ImuStreamTask>(devId_ + "_imu", sf->imuFile);
     imuTask_->start();
-    NIO_LOG_INFO_S("IMU output: " << baseName_ + "_imu_" + startTs_ + ".txt");
+    NIO_LOG_INFO_S("IMU output: " << (filePrefix_.empty()?baseName_:filePrefix_) + "_imu_" + startTs_ + ".txt");
 }
 
 void CaptureSession::createPcdTask() {
     if (!pipeline_ || !pipeline_->isPcdEnabled())
         return;
 
-    std::string pcdDir = baseName_ + "_pcd_" + startTs_;
+    std::string pcdDir = (filePrefix_.empty()?baseName_:filePrefix_) + "_pcd_" + startTs_;
     std::string pcdBase = safeName_;
 
     if (cfg_.pcdMode == PcdMode::Single) {
@@ -183,7 +183,7 @@ void CaptureSession::setupFusion() {
 
     fusedFps_ = std::min(sensorInfo_.colorFps, sensorInfo_.depthFps);
 
-    std::string fusedPath = baseName_ + "_d2c_fused_" + startTs_ + ".h264";
+    std::string fusedPath = (filePrefix_.empty()?baseName_:filePrefix_) + "_d2c_fused_" + startTs_ + ".h264";
     auto fusedFile = std::make_shared<std::ofstream>(fusedPath, std::ios::binary);
 
     auto fusedEncoder = std::make_shared<H264Encoder>();
@@ -213,7 +213,7 @@ void CaptureSession::writeIntrinsicJson() {
     if (!sensorInfo_.hasDepth)
         return;
 
-    std::string intrinsicPath = baseName_ + "_depth_intrinsic_" + startTs_ + ".json";
+    std::string intrinsicPath = (filePrefix_.empty()?baseName_:filePrefix_) + "_depth_intrinsic_" + startTs_ + ".json";
     std::ofstream jf(intrinsicPath);
     if (jf.is_open()) {
         bool isPointDepth = pipeline_ && pipeline_->isPcdEnabled();

@@ -152,7 +152,7 @@ def discover_devices(data_root):
     log_file = None
     for dirpath, dirnames, filenames in os.walk(data_root):
         for fn in filenames:
-            if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+            if fn.startswith("dynamic_algo_cam_log") and fn.endswith(".log"):
                 log_file = os.path.join(dirpath, fn)
         for dn in dirnames:
             dev_type, safe_name = identify_device(dn)
@@ -183,7 +183,7 @@ def find_files(data_root):
             if "_depth_intrinsic_" in fn and fn.endswith(".json"):
                 if result["intrinsic"] is None:
                     result["intrinsic"] = fp
-            if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+            if fn.startswith("dynamic_algo_cam_log") and fn.endswith(".log"):
                 if result["log"] is None:
                     result["log"] = fp
             if fn.endswith(".h264"):
@@ -205,7 +205,7 @@ def find_files(data_root):
                      os.path.dirname(os.path.dirname(data_root.rstrip("/")))]:
             if _dir and os.path.isdir(_dir):
                 for fn in os.listdir(_dir):
-                    if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+                    if fn.startswith("dynamic_algo_cam_log") and fn.endswith(".log"):
                         result["log"] = os.path.join(_dir, fn)
                         break
                 if result["log"]:
@@ -1900,7 +1900,7 @@ def _fmt_val(v, fmt=""):
 SECTION_TEST_NOTES = {
     1: (
         "汇总本次采集会话的基础元数据：Git 提交、D2C 模式、融合分辨率、α 系数、深度区间、彩色格式与采集活跃时长。",
-        "解析 nio_multi_capture_log*.log 中各设备写入的 d2c_mode / alpha / depth_min_m / depth_max_m / color_format / capture_active_s 等字段；缺失字段以 N/A 标注。",
+        "解析 dynamic_algo_cam_log*.log 中各设备写入的 d2c_mode / alpha / depth_min_m / depth_max_m / color_format / capture_active_s 等字段；缺失字段以 N/A 标注。",
         "回答“这次采集是在哪个代码版本、什么参数下做的”。若回归，可一眼定位采集上下文是否发生了变化。",
     ),
     2: (
@@ -3650,7 +3650,7 @@ def main():
             parent = os.path.dirname(root.rstrip("/"))
             if parent and os.path.isdir(parent):
                 for fn in os.listdir(parent):
-                    if fn.startswith("nio_multi_capture_log") and fn.endswith(".log"):
+                    if fn.startswith("dynamic_algo_cam_log") and fn.endswith(".log"):
                         log_file = os.path.join(parent, fn)
                         break
         if discovered:

@@ -11,7 +11,7 @@ app/
 │   └── nio_driver_factory.hpp/cpp  # Device discovery factory
 ├── capture/         # CaptureSession — uses NioDevice/NioPipeline only
 ├── plugins/opencv/  # OpenCV utilities — uses NioFrame/NioFormat only
-└── nio_multi_capture/ # Main app — uses discoverDevices() only
+└── dynamic_algo_cam/ # Main app — uses discoverDevices() only
 ```
 
 **Hard rule:** `ENABLE_ORBBEC` / `ENABLE_RS_AC1` macros, vendor SDK headers
