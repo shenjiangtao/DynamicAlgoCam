@@ -209,9 +209,13 @@ inline OBCameraIntrinsic nioIntrinsicToOb(const NioIntrinsic& n) {
 // Prefers the requested format (+1000), then favors 1280w (+120) /
 // 640w (+100) / 848w (+90), 800h (+110) / 720h (+100) / 480h (+80),
 // and 30fps (+50) / 25fps (+45) / 15fps (+30).
+// When `hwD2CSupportedProfiles` is non-null, profiles that appear in it
+// receive an extra +800 so depth selection prefers HW-D2C-capable profiles,
+// reducing software-align fallbacks.
 // Falls back to first profile if no match.
 inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
-                                                                 OBFormat preferredFormat) {
+                                                                 OBFormat preferredFormat,
+                                                                 std::shared_ptr<ob::StreamProfileList> hwD2CSupportedProfiles = nullptr) {
     std::shared_ptr<ob::VideoStreamProfile> best;
     int bestScore = -1;
 
@@ -245,6 +249,21 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
                 score += 45;
             else if (vsp->getFps() == 15)
                 score += 30;
+
+            if (hwD2CSupportedProfiles) {
+                for (uint32_t j = 0; j < hwD2CSupportedProfiles->getCount(); j++) {
+                    try {
+                        auto hp = hwD2CSupportedProfiles->getProfile(j)->as<ob::VideoStreamProfile>();
+                        if (hp && hp->getWidth() == vsp->getWidth() && hp->getHeight() == vsp->getHeight() &&
+                            hp->getFormat() == vsp->getFormat() && hp->getFps() == vsp->getFps()) {
+                            score += 800;
+                            break;
+                        }
+                    } catch (...) {
+                        continue;
+                    }
+                }
+            }
 
             if (score > bestScore) {
                 bestScore = score;

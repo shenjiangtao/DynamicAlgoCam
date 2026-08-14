@@ -310,6 +310,21 @@ SDK 回调线程 (ob::Pipeline / rs_driver)
 | Depth | `OB_FORMAT_Y16` | 首个非 UNKNOWN |
 | IR / IR_LEFT / IR_RIGHT | `OB_FORMAT_Y8` | 强制 Y8 |
 
+#### 7.1.1 Depth profile 的 D2C-HW 优先选择
+
+选深度 profile 时，`ObDevice::setupPipeline()` 先调用
+`ob::Pipeline::getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE)` 获得
+该设备在硬件 D2C 模式下支持的深度 profile 列表，再把它作为
+`selectBestProfile()` 的第三个参数 `hwD2CSupportedProfiles` 传入：
+
+| 条件 | 分数 |
+|------|------|
+| profile 出现在 `getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE)` 返回列表中 (宽度/高度/格式/帧率四项全等) | +800 |
+
+这样 800 分权重高于 800 以下的格式/分辨率项之和，使深度 profile **最大化命中硬件 D2C 支持集合**、减少软件对齐降级。
+若设备本身无 HW D2C 能力，`getD2CDepthProfileList` 返回空列表，加分项退化为 0，照旧按基础分选择、随后由
+`checkHWD2CSupport` + `setAlignMode` 自动回退到 `SW` 对齐。
+
 ### 7.2 深度精度映射 (Orbbec)
 
 | `OB_PROP_DEPTH_PRECISION_LEVEL_INT` | Scale | 说明 |
@@ -344,6 +359,31 @@ else:
     jetColormap(norm × 255 → cr, cg, cb)
     fused = (1 - alpha) × color + alpha × jet
 ```
+
+### 7.5 三维点云：Driver 优先 + 自实现反投影双轨
+
+`PointcloudFrameConsumer::consume()` 对每帧 `NioFrameSet` 应用三条策略，确保数据来源清晰、可降级：
+
+1. **Driver 已产出 POINT 帧**（`ObPipeline::start()` 内 `pointCloudFilter_->process(obFs)` 已对齐坐标，adv 部分请见 §4.1）：**主路径直接使用**，`pcdTask_`
+   enqueue 该帧 wire 数据 → `PcdWriterTask` 写 PCD/PCS。后续算法消费的也是这条帧。
+2. **Driver 未产出 POINT 帧**（设备/SDK 不支持点云，或当帧 filter 失败）：在 `PointcloudFrameConsumer` 内用针孔模型自反投影：
+   ```
+   Z = rawDepth × depthScale       (rawDepth ∈ uint16 Y16 像素值)
+   X = (u − cx) × Z / fx
+   Y = (v − cy) × Z / fy
+   ```
+   跳过 `Z ≤ 0` 无效像素，把有效点封装为 `PcdLayout::obXyz()` 自描述 wire 格式
+   （`12B 头 + 1×24B PcdFieldDesc + N×12B float3`）后 enqueue 给 `pcdTask_`，**PcdWriterTask
+   无需区分数据来源**。
+3. **Driver 与自反投影都存在**：Driver 帧优先（步骤 1），同时用 `NIO_LOG_DEBUG_S` 输出双轨对比：
+   - 双方点数（`driverPts` vs `ownPts`）
+   - 前 8 个点的 XYZ 均值（`sample-mean[driver]=(dx,dy,dz)` vs `sample-mean[own]=(ox,oy,oz)`）
+
+   对比仅做日志校验，不替代主路径、不污染 PCD 输出（与需求"后续算法使用驱动数据"一致）。
+
+构造时由 `CaptureSession::createPcdTask()` 传入 `sensorInfo_.depthIntrinsic` 与 `depthScale_`；二者均未配置
+(`fx == 0` 或 `depthScale == 0`) 时，自反投影与对比均被跳过，行为退化为原有"仅消费 Driver POINT 帧"路径。
+
 
 ---
 

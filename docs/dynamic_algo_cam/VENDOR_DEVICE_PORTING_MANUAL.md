@@ -281,6 +281,14 @@ private:
 5. Populate `NioSensorInfo` with resolved values.
 6. Apply any device-specific quirks (disable broken streams, etc.).
 7. Check D2C alignment capability → call `pipeline.setAlignMode()`.
+
+   **D2C-HW-aware depth profile selection (Orbbec reference):** before picking the
+   depth profile, call the vendor equivalent of `getD2CDepthProfileList(colorProfile,
+   ALIGN_D2C_HW_MODE)` to obtain the HW-D2C-supported depth profile set and pass it
+   to `selectBestProfile()`'s `hwD2CSupportedProfiles` parameter — profiles appearing
+   in that set get +800 score, maximising the chance HW alignment kicks in instead of
+   falling back to software. See Technical Reference §7.1.1.
+
 8. Return the fully populated `NioSensorInfo`.
 
 #### XyzPipeline : NioPipeline

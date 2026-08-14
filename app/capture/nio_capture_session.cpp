@@ -154,12 +154,14 @@ void CaptureSession::createPcdTask() {
     if (cfg_.pcdMode == PcdMode::Single) {
         pcdTask_ = std::make_shared<PcdSingleTask>(devId_ + "_pcd", pcdDir, pcdBase);
         pcdTask_->start();
-        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
+            new PointcloudFrameConsumer(pcdTask_, sensorFiles_, sensorInfo_.depthIntrinsic, depthScale_)));
         NIO_LOG_INFO_S("PCD point cloud output (single): " << pcdDir << "/");
     } else {
         pcdTask_ = std::make_shared<PcdStreamTask>(devId_ + "_pcd", pcdDir, pcdBase);
         pcdTask_->start();
-        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(new PointcloudFrameConsumer(pcdTask_, sensorFiles_)));
+        frameConsumers_.push_back(std::unique_ptr<FrameConsumer>(
+            new PointcloudFrameConsumer(pcdTask_, sensorFiles_, sensorInfo_.depthIntrinsic, depthScale_)));
         NIO_LOG_INFO_S("PCD point cloud output (stream): " << pcdDir << "/" << pcdBase << ".pcs");
     }
 }

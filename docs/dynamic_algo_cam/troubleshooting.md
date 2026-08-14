@@ -89,6 +89,24 @@ echo "options usbcore usbfs_memory_mb=256" | sudo tee /etc/modprobe.d/usbcore.co
 3. 检查分辨率组合是否在设备的 D2C 支持列表中
 
 **说明**：程序自动检测 HW D2C 支持情况。RS-AC1 始终为 HW D2C。
+自本次改动起，`ObDevice::setupPipeline()` 在选深度 profile 时已优先在
+`getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE)` 返回的 HW-D2C 支持集合内挑选
+（详见技术参考 §7.1.1），进一步降低软件对齐发生率。若设备的 HW D2C 支持列表为空，
+打分项等价于不加分，按原行为回退 SW 最佳 profile 选择。
+
+### 现象：日志显示 "PCD fallback: self-computed back-projection fed pcdTask"
+
+**原因**：本帧 SDK 未产出 `OB_FRAME_POINTS`（未启用 `setPointCloudEnabled(true)` 或
+当帧 `pointCloudFilter_->process()` 抛出/返回空），`PointcloudFrameConsumer` 退路用针孔
+反投影自算点云。详见技术参考 §7.5。
+
+**排查**：
+1. 若希望走 Driver 点云：确认 `ObPipeline::setPointCloudEnabled(true)` 被调用
+   （`CaptureSession::createPcdTask()` 仅在 `pipeline_->isPcdEnabled()` 时启用 PCD 任务，
+   Driver pipeline 必须已置 `pcdEnabled_=true`）。
+2. Fallback 路径需要 `sensorInfo_.depthIntrinsic.fx != 0 && depthScale > 0`；缺失时该帧不写 PCD。
+3. 双轨对比日志 `PCD dual-track: driverPts=... ownPts=...` 仅在 Driver 与自反投影同时存在时输出，
+   用于校验，不替代主路径输出。
 
 ### 现象：RS-AC1 D2C 融合画面有明显块效应
 

@@ -153,7 +153,16 @@ NioSensorInfo ObDevice::setupPipeline(NioPipeline& pipeline) {
         case OB_SENSOR_DEPTH:
             {
                 si.hasDepth = true;
-                auto profile = selectBestProfile(profileList, OB_FORMAT_Y16);
+                std::shared_ptr<ob::StreamProfileList> hwD2CProfiles;
+                auto colorProfile = obPipe->colorProfile();
+                if (colorProfile) {
+                    try {
+                        hwD2CProfiles = obPipe->obPipeline()->getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE);
+                    } catch (...) {
+                        NIO_LOG_WARN_S("getD2CDepthProfileList threw — depth selection without HW-D2C preference");
+                    }
+                }
+                auto profile = selectBestProfile(profileList, OB_FORMAT_Y16, hwD2CProfiles);
                 NioFormat resolvedFmt = NioFormat::UNKNOWN;
                 if (profile) {
                     resolvedFmt = obFormatToNio(profile->getFormat());

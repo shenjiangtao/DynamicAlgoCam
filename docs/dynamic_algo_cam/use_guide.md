@@ -149,6 +149,25 @@ cmake --build . -j$(nproc)
 `NIO_POINT_CLOUD_RAW` 容器格式：68B 文件头 + 每帧 32B 帧头 + pointCount × 26B 数据。
 单点结构：float x + float y + float z + float intensity + uint16 ring + double timestamp。
 
+#### Orbbec PCD 点云 (Driver 优先 + 自反投影双轨)
+
+Orbbec 设备启用 `pipeline->setPointCloudEnabled(true)` 后，`ObPipeline::start()` 内
+`ob::PointCloudFilter` 产生 `OB_FRAME_POINTS`（`OB_FORMAT_POINT`，每点 `float3` 12B），
+经 `obFrameSetToNio` 包装为 `PcdLayout::obXyz()` 自描述 wire 格式
+（`12B 头 + 1×24B PcdFieldDesc + N×12B float3`）。
+
+`PointcloudFrameConsumer::consume()` 对每帧按以下优先级输出 PCD：
+1. **Driver POINT 帧存在 → 直接使用**（主路径，后续算法消费）。
+2. **Driver POINT 缺失 → 自反投影 fallback**：用 `Z = rawDepth × depthScale`、
+   `X = (u−cx) × Z / fx`、`Y = (v−cy) × Z / fy` 计算有效像素（`Z > 0`），按
+   `PcdLayout::obXyz()` 拼成 wire 格式喂给 `PcdWriterTask`。
+3. **同时存在**：Driver 优先；自反投影用作双轨对数校验，不替代主路径输出。
+
+启动日志或 DEBUG 输出里：
+- `PCD fallback: self-computed back-projection fed pcdTask (ownPts=N)` → 走了反投影 fallback
+- `PCD dual-track: driverPts=N ownPts=M | sample-mean[driver]=(...) vs own=(...)` → 双轨对比
+  (默认 DEBUG 级日志，`NIO_LOG_SET_LEVEL(TRACE)` 下可见)
+
 #### IMU CSV 文件
 
 ```

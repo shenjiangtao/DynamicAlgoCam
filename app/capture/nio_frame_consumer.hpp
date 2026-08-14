@@ -138,13 +138,19 @@ private:
 class PointcloudFrameConsumer : public FrameConsumer
 {
 public:
-    PointcloudFrameConsumer(std::shared_ptr<StreamTask> pcdTask, std::shared_ptr<SensorFiles> sensorFiles);
+    // depthIntrinsic / depthScale: used for the self-computed back-projection
+    // cross-check against the SDK-produced POINT frame. When depthIntrinsic.fx
+    // is 0 the cross-check is skipped silently.
+    PointcloudFrameConsumer(std::shared_ptr<StreamTask> pcdTask, std::shared_ptr<SensorFiles> sensorFiles,
+                            NioIntrinsic depthIntrinsic = {}, float depthScale = 0.0f);
 
     void consume(std::shared_ptr<NioFrameSet> frameSet) override;
     void stopTask() override;
 
 private:
     std::shared_ptr<StreamTask> pcdTask_;
+    NioIntrinsic depthIntrinsic_;
+    float depthScale_;
 };
 
 } // namespace nio

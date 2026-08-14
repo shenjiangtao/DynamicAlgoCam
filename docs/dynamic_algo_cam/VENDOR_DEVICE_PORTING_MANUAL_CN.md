@@ -274,6 +274,12 @@ private:
 5. 用解析后的值填充 `NioSensorInfo`。
 6. 应用设备特殊处理（禁用故障流等）。
 7. 检查 D2C 对齐能力 → 调用 `pipeline.setAlignMode()`。
+
+   **D2C-HW 感知的深度 profile 选择（Orbbec 参考）：** 选深度 profile 前，先调用等价于
+   `getD2CDepthProfileList(colorProfile, ALIGN_D2C_HW_MODE)` 的厂商接口拿到 HW-D2C 支持集合，
+   作为 `selectBestProfile()` 的 `hwD2CSupportedProfiles` 参数传入——出现在该集合中的 profile
+   加 +800 分，最大化命中硬件对齐、减少软件对齐降级。详见技术参考 §7.1.1。
+
 8. 返回完整填充的 `NioSensorInfo`。
 
 #### XyzPipeline : NioPipeline
