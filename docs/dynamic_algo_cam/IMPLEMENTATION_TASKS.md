@@ -90,7 +90,7 @@
   - `docs/dynamic_algo_cam/DEVELOPMENT_PLAN.md`（§5 风险表追加 `--whole-archive` 静态库链接约束）
 - [x] A6.2 `git commit` message 沿用 `feat: add SDK-neutral actuator abstraction layer + DUMMY backend in nio_core/app/actuator`
 - [x] A6.3 `git push origin main`
-- [ ] A6.4 owner 通知后回填 commit hash 到 §"实施记录区" 与 §"验收里程碑 M1"
+- [ ] A6.4 commit hash `ae23b1d` 已回填至 §"实施记录区" 与 §"验收里程碑 M1"
 
 ---
 
@@ -244,7 +244,7 @@
 
 ## 验收里程碑
 
-- [x] **M1** Phase A 完成 — commit hash: `<pending-push>` — 验证 `nm build/lib/libnio_core.a | grep createActuator` 命中
+- [x] **M1** Phase A 完成 — commit hash: `ae23b1d` — 验证 `nm build/lib/libnio_core.a | grep createActuator` 命中
 - [ ] **M2** Phase B 完成 — commit hash: `________` — 验证 GTest skip 或通过，header install 列表更新
 - [ ] **M3** Phase C 完成 — commit hash: `________` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列
 - [ ] **M4** Phase D 完成 — commit hash: `________` — 验证全量构建 + `--help` diff
@@ -256,7 +256,7 @@
 
 | Task ID | Commit | 完成日 | 备注 |
 |---|---|---|---|
-| A0-A5 | `<pending-push>` | 2026-08-14 | Phase A 实现 + 验证完成；commit 待 push 后回填 |
+| A0-A5 | `ae23b1d` | 2026-08-14 | Phase A 实现 + 验证完成；commit `ae23b1d` 已 push 至 origin/main（`85a193c..ae23b1d`） |
 
 ---
 
