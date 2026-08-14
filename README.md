@@ -1,6 +1,12 @@
-# NIO Multi-Device Capture
+# DynamicAlgoCam
 
-Multi-vendor depth camera capture tool. Simultaneously records from **Orbbec** depth cameras (Gemini 305/335L/336L) and **RoboSense RS-AC1** solid-state LiDAR, encoding all streams to H.264 and raw depth/point-cloud binary files.
+DynamicAlgoCam 表示相机驱动的动态算法加载框架。DynamicAlgoCam 是一个基于 双目相机 和 激光雷达相机 的动态算法加载平台，旨在为多种任务提供统一的感知与执行框架。
+
+目标包括：
+
+- 提供 模块化算法加载机制，支持在运行时切换或添加任务算法。
+- 利用 视觉 + 激光雷达融合，实现高精度目标检测与环境感知。
+- 面向 特定任务场景（如灭蚊、除草、巡检），快速部署与验证。
 
 ## Supported Devices
 
