@@ -27,6 +27,8 @@ add_library(nio_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_model.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_model_factory.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_model_factory.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_kalman_tracker.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_kalman_tracker.cpp
 )
 
 find_package(Threads REQUIRED)

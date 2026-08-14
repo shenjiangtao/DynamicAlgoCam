@@ -135,3 +135,51 @@ if (backend->load(cfg)) {
 - `cmake --build build --target dynamic_algo_cam` 通过；
 - `nm build/lib/libnio_core.a | grep nio::` 显示 `createModelBackend` 与 `registerModelBackend`
   符号已编入静态库。
+
+## C++ 卡尔曼轨迹滤波器
+
+工程以"先有 abstract infrastructure，不耦合采集主流程"为原则，新增了一个**单目标 2D
+bbox 卡尔曼滤波器**，用于后续模型推理输出框的轨迹平滑与下一帧位置预测。
+
+| 文件 | 作用 |
+|------|------|
+| `app/core/nio_kalman_tracker.hpp` | `NioKalmanTracker` 类：状态 `[cx,cy,w,h,vx,vy]`、匀速运动模型、`init/update/predict` 接口 |
+| `app/core/nio_kalman_tracker.cpp` | 完整 KF predict/update 实现，固定 6 维（用 `std::array<double,...>` 手写线性代数，**不引入 Eigen**），已编入 `libnio_core.a` |
+
+### 接口契约
+
+```cpp
+class NioKalmanTracker {
+    void   init(const NioDetectionResult& det);                              // 显式初始化（可选；首帧 update 会自动初始化）
+    NioDetectionResult update(const NioDetectionResult& det);               // 吃测量并返回后验平滑 bbox
+    NioDetectionResult predict();                                           // 时间推进，给出下一帧先验 bbox
+    bool   initialised() const;                                             // T 表示已 init 或已收到首帧测量
+    // 可调参：dt_, processNoise_, measNoise_（成员变量，构造时给默认值）
+};
+```
+
+### 使用模式
+
+```cpp
+nio::NioKalmanTracker trk;                // 每个被跟踪目标一个实例
+trk.init(firstDetection);                 // 显式初始化（可选）
+for (auto& det : frameDetections) {        // frameDetections 来自 NioModelBackend::infer
+    nio::NioDetectionResult smoothed = trk.update(det);  // 平滑当前帧
+    nio::NioDetectionResult next     = trk.predict();    // 预测下一帧位置
+}
+```
+
+### 范围与边界（与"集成卡尔曼滤波"请求严格匹配）
+
+- **单目标**：本阶段实现的是单目标 KF，不包含多目标数据关联（Hungarian / Greedy 匹配、轨迹生命周期
+  管理）。多目标跟踪需要上层业务模块在 `NioModelBackend::infer` 输出与多个 `NioKalmanTracker` 实例
+  之间做匹配，属后续工作。
+- **不接入采集主流程**：`NioKalmanTracker` 当前不被 `app/dynamic_algo_cam.cpp` 或
+  `PointcloudFrameConsumer` 等任何采集主路径代码调用；它是预留给"算法线程/上层业务模块"的基础设施。
+- **无外部依赖**：nio_core 保持 SDK-neutral，KF 用 `std::array` 手写线性代数，未拉 Eigen / OpenCV。
+
+### 已验证
+
+- `cmake --build build --target dynamic_algo_cam` 通过；
+- `nm build/lib/libnio_core.a | grep NioKalmanTracker` 显示
+  `init`、`update`、`predict`、构造函数符号已编入静态库。
