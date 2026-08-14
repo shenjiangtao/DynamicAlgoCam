@@ -1,15 +1,15 @@
-# Copyright (c) NIO Inc. All Rights Reserved.
+# Copyright (c) shenjiangtao. All Rights Reserved.
 # Licensed under the MIT License.
 #
-# app/ — NIO multi-device capture application.
+# app/ — DynamicAlgoCam multi-device capture application.
 #
 # Layered architecture (dependencies flow downward only):
-#   dynamic_algo_cam  →  nio_capture  →  nio_drivers  →  nio_core
+#   dynamic_algo_cam  →  dynalgo_capture  →  dynalgo_drivers  →  dynalgo_core
 #                                         ↗               ↓
 #                                    rs_driver*        OrbbecSDK*
 #   Optional:
-#     nio_actuators    →  nio_core            (--engage-actuator)
-#     nio_opencv_plugin →  nio_capture, nio_core, OpenCV
+#     dynalgo_actuators    →  dynalgo_core            (--engage-actuator)
+#     dynalgo_opencv_plugin →  dynalgo_capture, dynalgo_core, OpenCV
 
 add_subdirectory(core)
 add_subdirectory(driver)

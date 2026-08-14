@@ -40,11 +40,11 @@
 | **Default Resolution** | 848×530 | 1280×720 | 1280×720 | 1920×1080 |
 | **Format** | YUYV | MJPG | MJPG | NV12 |
 | **FPS** | 10 (USB2) / 30 (GMSL) | 10 (USB2) / 30 (GMSL) | 10 (USB2) / 30 (GMSL) | 30 |
-| **NioFormat** | `YUYV` | `MJPG` | `MJPG` | `NV12` |
+| **DynalgoFormat** | `YUYV` | `MJPG` | `MJPG` | `NV12` |
 
-- 305 prefers YUYV on both USB and GMSL (`app/driver/orbbec/nio_ob_device.cpp:85`).
+- 305 prefers YUYV on both USB and GMSL (`app/driver/orbbec/dynalgo_ob_device.cpp:85`).
 - 335L/336L prefer MJPG on USB (higher compression at 1280×720).
-- AC1 NV12 is decoded via sws_scale before H.264 encode (`app/capture/nio_capture_session.cpp:83`).
+- AC1 NV12 is decoded via sws_scale before H.264 encode (`app/capture/dynalgo_capture_session.cpp:83`).
 
 ### 3.2 Depth
 
@@ -73,7 +73,7 @@
 | **FPS** | 10 (USB2) / 30 (GMSL) | 10 (USB2) / 30 (GMSL) | 10 (USB2) / 30 (GMSL) | — |
 | **Output** | `*_ir_left_*.h264` + `*_ir_right_*.h264` | Same | Same | — |
 
-- 305g (GMSL) may disable IR_LEFT as a hardware quirk (`app/driver/orbbec/nio_ob_device.cpp:224-228`).
+- 305g (GMSL) may disable IR_LEFT as a hardware quirk (`app/driver/orbbec/dynalgo_ob_device.cpp:224-228`).
 
 ### 3.4 IMU
 
@@ -221,16 +221,16 @@ lsusb -v -d 3840:1010 | grep bcdUSB
 
 | Symptom | Device | Cause | Fix |
 |---|---|---|---|
-| "Device is not found, please check!" | AC1 | `device_uuid` mismatch (bus-device instead of serial) | Use USB serial number descriptor as UUID (`app/driver/robosense/nio_rs_device.cpp:323`) |
+| "Device is not found, please check!" | AC1 | `device_uuid` mismatch (bus-device instead of serial) | Use USB serial number descriptor as UUID (`app/driver/robosense/dynalgo_rs_device.cpp:323`) |
 | "Device is not found, please check!" | AC1 | USB permissions (`crw-rw-r-- root root`) | Add udev rule with `MODE="0666"` |
 | "Wrong Input Type 4" | AC1 | `ENABLE_USB` not defined at compile time | Ensure `-DENABLE_USB` in compile definitions (`app/driver/CMakeLists.txt:44`) |
 | All AC1 output files 0-byte | AC1 | Pipeline init failed (above errors) | Fix above issues first |
 | IMU temperature=0.0 | AC1 | rs_driver does not expose temperature data | Expected — temperature field always 0.0 |
-| Core dump on exit | AC1 | `stop()` called on uninitialized driver | Fixed: `running_=false` before thread joins (`app/driver/robosense/nio_rs_device.cpp:202`) |
+| Core dump on exit | AC1 | `stop()` called on uninitialized driver | Fixed: `running_=false` before thread joins (`app/driver/robosense/dynalgo_rs_device.cpp:202`) |
 | Block artifacts in D2C | AC1 | 96×288 upsampled to 1920×1080 | Inherent limitation; accept or adjust alpha/depth range |
 | IR files empty | AC1 | AC1 has no IR sensors | Expected — IR file creation is skipped (`hasIR=false`) |
 | Depth raw magic mismatch | AC1 | Old 16B magic truncation in writer | Fixed: magic renamed to `NIO_DEPTH_RAW` (vendor-neutral); parsers accept both old `ORBBEC_DEPTH_RAW` and new `NIO_DEPTH_RAW` |
-| MJPEG format warnings | OB | `yuvj422p` deprecated pixel format | Harness auto-recreates sws context with correct range (`app/capture/nio_h264_encoder.cpp:326`) |
+| MJPEG format warnings | OB | `yuvj422p` deprecated pixel format | Harness auto-recreates sws context with correct range (`app/capture/dynalgo_h264_encoder.cpp:326`) |
 
 ## 8. Typical Output Sizes (15 s capture)
 
@@ -249,19 +249,19 @@ lsusb -v -d 3840:1010 | grep bcdUSB
 ## 9. Device Schema in Code
 
 ```
-NioDevice (interface)
+DynalgoDevice (interface)
 ├── ObDevice   — wraps ob::Device, queries OrbbecSDK sensor list
 │                 getSensorInfo() → dynamic from SDK
 │                 hasIRSensor() → si.hasIR || si.hasIRLeft || si.hasIRRight
-│                 setupPipeline() → selects profiles, returns NioSensorInfo
+│                 setupPipeline() → selects profiles, returns DynalgoSensorInfo
 │
-└── RsDevice   — hardcoded specs for RoboSense AC1 (from nio_rs_spec.hpp::AC1)
+└── RsDevice   — hardcoded specs for RoboSense AC1 (from dynalgo_rs_spec.hpp::AC1)
                   getSensorInfo() → static (hasAccel=true, hasGyro=true)
                   hasIRSensor() → false
-                  setupPipeline() → returns fixed NioSensorInfo
+                  setupPipeline() → returns fixed DynalgoSensorInfo
                   validateStream() → uses rs::AC1::COLOR/DEPTH constants
 
-NioContext (interface)
+DynalgoContext (interface)
 ├── ObContext  — ob::Context 自动枚举
 └── RsContext  — libusb 手动扫描，匹配 VID=0x3840/PID=0x1010
 
@@ -272,7 +272,7 @@ ConfigValidator (abstract)
 DriverFactory — discovers devices with optional vendor filter (DriverVendor::ALL/ORBBEC/ROBOSENSE)
 ```
 
-Output file creation is gated by `NioSensorInfo` flags:
+Output file creation is gated by `DynalgoSensorInfo` flags:
 
 | File | Gate |
 |---|---|
@@ -288,15 +288,15 @@ Output file creation is gated by `NioSensorInfo` flags:
 
 | Component | Path |
 |---|---|
-| OB device adapter | `app/driver/orbbec/nio_ob_device.cpp` |
-| OB format adapter | `app/driver/orbbec/nio_ob_adapter.hpp` |
-| RS device adapter | `app/driver/robosense/nio_rs_device.cpp` |
-| RS frame adapter | `app/driver/robosense/nio_rs_frame_adapter.hpp` |
-| Capture session (file creation) | `app/capture/nio_capture_session.cpp` |
-| Stream I/O (depth/point raw formats) | `app/capture/nio_stream_io.cpp` |
-| Stream tasks | `app/capture/nio_stream_tasks.cpp` |
+| OB device adapter | `app/driver/orbbec/dynalgo_ob_device.cpp` |
+| OB format adapter | `app/driver/orbbec/dynalgo_ob_adapter.hpp` |
+| RS device adapter | `app/driver/robosense/dynalgo_rs_device.cpp` |
+| RS frame adapter | `app/driver/robosense/dynalgo_rs_frame_adapter.hpp` |
+| Capture session (file creation) | `app/capture/dynalgo_capture_session.cpp` |
+| Stream I/O (depth/point raw formats) | `app/capture/dynalgo_stream_io.cpp` |
+| Stream tasks | `app/capture/dynalgo_stream_tasks.cpp` |
 | Multi-capture main | `app/dynamic_algo_cam/dynamic_algo_cam.cpp` |
-| Sensor info struct | `app/core/nio_types.hpp` |
+| Sensor info struct | `app/core/dynalgo_types.hpp` |
 | RS driver CMake | `app/driver/CMakeLists.txt` |
 | Depth raw parser | `app/tools/parse_depth_raw.py` |
 | Point raw parser | `app/tools/parse_point_raw.py` |
@@ -306,10 +306,10 @@ Output file creation is gated by `NioSensorInfo` flags:
 | OB G330 IMU init | `src/device/gemini330/G330Device.cpp:641-694` |
 | RS AC1 decoder | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/decoder/decoder_RSAC1.hpp` |
 | RS input USB | `RoboSense/rs_driver-dev_opt_AC1/src/rs_driver/driver/input/input_usb.cpp` |
-| RS AC1 spec | `app/driver/robosense/nio_rs_spec.hpp` | AC1 hardware constants (resolution, fps, format, USB ID) |
-| Orbbec spec | `app/driver/orbbec/nio_ob_spec.hpp` | Depth precision mapping, color format policy |
-| Type system | `app/core/nio_types.hpp` | `nio::types` namespace (NioFormat, NioFrameType) |
-| Driver factory | `app/driver/nio_driver_factory.hpp` | `discoverDevices()` with vendor filter |
-| Config validator | `app/core/nio_config_validator.hpp` | `ConfigValidator` interface + `createValidator()` factory |
-| Orbbec validator | `app/driver/orbbec/nio_ob_validator.hpp` | Stream/depth-precision/device validation |
-| RoboSense validator | `app/driver/robosense/nio_rs_validator.hpp` | AC1 fixed-parameter validation |
+| RS AC1 spec | `app/driver/robosense/dynalgo_rs_spec.hpp` | AC1 hardware constants (resolution, fps, format, USB ID) |
+| Orbbec spec | `app/driver/orbbec/dynalgo_ob_spec.hpp` | Depth precision mapping, color format policy |
+| Type system | `app/core/dynalgo_types.hpp` | `dynalgo::types` namespace (DynalgoFormat, DynalgoFrameType) |
+| Driver factory | `app/driver/dynalgo_driver_factory.hpp` | `discoverDevices()` with vendor filter |
+| Config validator | `app/core/dynalgo_config_validator.hpp` | `ConfigValidator` interface + `createValidator()` factory |
+| Orbbec validator | `app/driver/orbbec/dynalgo_ob_validator.hpp` | Stream/depth-precision/device validation |
+| RoboSense validator | `app/driver/robosense/dynalgo_rs_validator.hpp` | AC1 fixed-parameter validation |

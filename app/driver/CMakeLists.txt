@@ -1,38 +1,38 @@
-# Copyright (c) NIO Inc. All Rights Reserved.
+# Copyright (c) shenjiangtao. All Rights Reserved.
 # Licensed under the MIT License.
 #
-# nio_drivers — Device driver layer: SDK-specific adapters.
+# dynalgo_drivers — Device driver layer: SDK-specific adapters.
 # Orbbec driver (optional) + RoboSense RS-AC1 driver (optional).
-# Depends on: nio_core, (optionally) OrbbecSDK, (optionally) rs_driver.
+# Depends on: dynalgo_core, (optionally) OrbbecSDK, (optionally) rs_driver.
 
 cmake_minimum_required(VERSION 3.10)
-project(nio_drivers)
+project(dynalgo_drivers)
 
-add_library(nio_drivers STATIC
+add_library(dynalgo_drivers STATIC
     ${CMAKE_CURRENT_LIST_DIR}/dummy.cpp
 )
 
-target_link_libraries(nio_drivers PUBLIC
-    nio::core
+target_link_libraries(dynalgo_drivers PUBLIC
+    dynalgo::core
 )
 
 if(ENABLE_ORBBEC)
-    target_include_directories(nio_drivers PUBLIC
+    target_include_directories(dynalgo_drivers PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/orbbec
     )
 
-    target_sources(nio_drivers PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_adapter.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_frame_adapter.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/orbbec/nio_ob_device.cpp
+    target_sources(dynalgo_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/dynalgo_ob_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/dynalgo_ob_frame_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/dynalgo_ob_device.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/orbbec/dynalgo_ob_device.cpp
     )
 
-    target_compile_definitions(nio_drivers PUBLIC
+    target_compile_definitions(dynalgo_drivers PUBLIC
         ENABLE_ORBBEC
     )
 
-    target_link_libraries(nio_drivers PUBLIC
+    target_link_libraries(dynalgo_drivers PUBLIC
         ob::${OB_SDK_LIB_NAME}
     )
 
@@ -40,18 +40,18 @@ if(ENABLE_ORBBEC)
 endif()
 
 if(ENABLE_RS_AC1)
-    target_include_directories(nio_drivers PUBLIC
+    target_include_directories(dynalgo_drivers PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/robosense
     )
 
-    target_sources(nio_drivers PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_adapter.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_frame_adapter.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/robosense/nio_rs_device.cpp
+    target_sources(dynalgo_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/dynalgo_rs_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/dynalgo_rs_frame_adapter.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/dynalgo_rs_device.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/robosense/dynalgo_rs_device.cpp
     )
 
-    target_compile_definitions(nio_drivers PUBLIC
+    target_compile_definitions(dynalgo_drivers PUBLIC
         ENABLE_RS_AC1
         DISABLE_PCAP_PARSE
         ENABLE_USB
@@ -59,9 +59,9 @@ if(ENABLE_RS_AC1)
         ENABLE_IMAGE_PARSE
     )
 
-    target_compile_options(nio_drivers PRIVATE -Wno-error)
+    target_compile_options(dynalgo_drivers PRIVATE -Wno-error)
 
-    target_include_directories(nio_drivers PUBLIC
+    target_include_directories(dynalgo_drivers PUBLIC
         ${RS_DRIVER_ROOT}/src
         ${RS_DRIVER_ROOT}/thirdparty/libusb/libusb
         ${RS_DRIVER_ROOT}/thirdparty/libuvc/include
@@ -82,22 +82,22 @@ if(ENABLE_RS_AC1)
     _rs_remove_werror(usb-ac-static)
     _rs_remove_werror(uvc-ac-static)
 
-    target_sources(nio_drivers PRIVATE
+    target_sources(dynalgo_drivers PRIVATE
         ${RS_DRIVER_ROOT}/src/rs_driver/driver/input/input_usb.cpp
     )
-    target_link_libraries(nio_drivers PUBLIC usb-ac-static uvc-ac-static pthread)
+    target_link_libraries(dynalgo_drivers PUBLIC usb-ac-static uvc-ac-static pthread)
 
     message(STATUS "RS-AC1 support enabled (rs_driver root: ${RS_DRIVER_ROOT})")
 endif()
 
 if(ENABLE_ORBBEC OR ENABLE_RS_AC1)
-    target_include_directories(nio_drivers PUBLIC
+    target_include_directories(dynalgo_drivers PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
-    target_sources(nio_drivers PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/nio_driver_factory.cpp
+    target_sources(dynalgo_drivers PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/dynalgo_driver_factory.hpp
+        ${CMAKE_CURRENT_LIST_DIR}/dynalgo_driver_factory.cpp
     )
 endif()
 
@@ -105,5 +105,5 @@ if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)
     message(WARNING "Both ENABLE_ORBBEC and ENABLE_RS_AC1 are OFF — no device drivers will be built")
 endif()
 
-add_library(nio::drivers ALIAS nio_drivers)
-set_target_properties(nio_drivers PROPERTIES FOLDER "app/driver")
+add_library(dynalgo::drivers ALIAS dynalgo_drivers)
+set_target_properties(dynalgo_drivers PROPERTIES FOLDER "app/driver")

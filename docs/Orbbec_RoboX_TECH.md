@@ -285,20 +285,20 @@ public:
 };
 ```
 
-#**类型系统提取到 `nio::types` namespace（2025-03 实现）**：
+#**类型系统提取到 `dynalgo::types` namespace（2025-03 实现）**：
 
-`NioFormat`、`NioFrameType`、`NioAlignMode` 已从 `nio` namespace 提取到 `nio::types` 子命名空间，通过 `using types::NioFormat` 等声明保持向后兼容。这允许 HAL 层类型系统集中管理，同时保持现有代码引用不变。
+`DynalgoFormat`、`DynalgoFrameType`、`DynalgoAlignMode` 已从 `dynalgo` namespace 提取到 `dynalgo::types` 子命名空间，通过 `using types::DynalgoFormat` 等声明保持向后兼容。这允许 HAL 层类型系统集中管理，同时保持现有代码引用不变。
 **HAL层常量规范提取（2025-03 实现）**：
 
 将厂商特定的硬件常量提取到独立的 `spec` 文件中，实现零运行时开销的编译期常量管理：
-- `app/driver/robosense/nio_rs_spec.hpp` — RoboSense AC1 的 UIid、分辨率、fps、格式等 `constexpr` 常量
-- `app/driver/orbbec/nio_ob_spec.hpp` — Orbbec 的深度精度映射表、颜色格式策略等 `constexpr` 常量
+- `app/driver/robosense/dynalgo_rs_spec.hpp` — RoboSense AC1 的 UIid、分辨率、fps、格式等 `constexpr` 常量
+- `app/driver/orbbec/dynalgo_ob_spec.hpp` — Orbbec 的深度精度映射表、颜色格式策略等 `constexpr` 常量
 **配置验证机制（2025-03 实现）**：
 
 引入 `ConfigValidator` 接口及厂商实现：
-- `app/core/nio_config_validator.hpp` — 抽象验证接口
-- `app/driver/orbbec/nio_ob_validator.hpp` — Orbbec 验证器（深度精度、分辨率）
-- `app/driver/robosense/nio_rs_validator.hpp` — RoboSense 验证器（固定参数校验）
+- `app/core/dynalgo_config_validator.hpp` — 抽象验证接口
+- `app/driver/orbbec/dynalgo_ob_validator.hpp` — Orbbec 验证器（深度精度、分辨率）
+- `app/driver/robosense/dynalgo_rs_validator.hpp` — RoboSense 验证器（固定参数校验）
 **DriverFactory 完善（2025-03 实现）**：
 
 `discoverDevices()` 增加 `DriverVendor` 枚举（ALL/ORBBEC/ROBOSENSE）和 `DriverConfig` 筛选参数，支持按厂商选择性发现设备。

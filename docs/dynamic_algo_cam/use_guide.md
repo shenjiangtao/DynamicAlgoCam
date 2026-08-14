@@ -1,4 +1,4 @@
-### nio.multi_capture 简介
+### dynalgo.multi_capture 简介
 
 **dynamic_algo_cam** 是一个多品牌深度摄像头同时采集与录制的工具。支持 **Orbbec**（Gemini 305/335L/336L）和 **RoboSense RS-AC1** 两种设备，自动发现连接的设备、选择合适的流配置、启动每台设备的视频与 IMU 管道，将采集到的流写入磁盘。同时支持 D2C 深度对齐到彩色后的 jet colormap 着色与 alpha 混合，输出融合 H.264 文件。
 
@@ -30,7 +30,7 @@
 - pthreads
 
 **可选依赖**
-- OpenCV — 启用 `nio_opencv_plugin`（自动检测，未找到时跳过）
+- OpenCV — 启用 `dynalgo_opencv_plugin`（自动检测，未找到时跳过）
 - Python 3 + numpy + matplotlib — 后处理工具可选
 
 **CMake 构建选项**（在根目录 `CMakeLists.txt` 中声明）
@@ -81,7 +81,7 @@ cmake --build . -j$(nproc)
 ```bash
 ./dynamic_algo_cam                                      # 录制全部设备
 ./dynamic_algo_cam -c "305" "336L"                      # 按设备名过滤
-./dynamic_algo_cam -s /HDD/nio_capture                  # 自定义保存目录
+./dynamic_algo_cam -s /HDD/dynalgo_capture                  # 自定义保存目录
 ./dynamic_algo_cam --alpha 0.7 --depth-min 0.2 --depth-max 3.0  # 自定义融合参数
 ./dynamic_algo_cam --no-fusion                          # 仅录制原始流
 ./dynamic_algo_cam --no-show                            # 无头模式
@@ -166,7 +166,7 @@ Orbbec 设备启用 `pipeline->setPointCloudEnabled(true)` 后，`ObPipeline::st
 启动日志或 DEBUG 输出里：
 - `PCD fallback: self-computed back-projection fed pcdTask (ownPts=N)` → 走了反投影 fallback
 - `PCD dual-track: driverPts=N ownPts=M | sample-mean[driver]=(...) vs own=(...)` → 双轨对比
-  (默认 DEBUG 级日志，`NIO_LOG_SET_LEVEL(TRACE)` 下可见)
+  (默认 DEBUG 级日志，`DYNALGO_LOG_SET_LEVEL(TRACE)` 下可见)
 
 #### IMU CSV 文件
 
@@ -225,17 +225,17 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 ┌──────────────────────────────────────┐
 │  dynamic_algo_cam (executable)       │  main(), CLI 解析, 信号处理
 ├──────────────────────────────────────┤
-│  nio_capture (static lib)             │  CaptureSession, H264Encoder,
+│  dynalgo_capture (static lib)             │  CaptureSession, H264Encoder,
 │                                       │  StreamTask, FrameConsumer, SDLViewer
 ├──────────────────────────────────────┤
-│  nio_drivers (static lib)             │  discoverDevices() 工厂
+│  dynalgo_drivers (static lib)             │  discoverDevices() 工厂
 │  ├─ orbbec/  (ENABLE_ORBBEC)         │  ObDevice, ObPipeline, ObContext
 │  └─ robosense/ (ENABLE_RS_AC1)       │  RsDevice, RsPipeline, RsContext
 ├──────────────────────────────────────┤
-│  nio_core (static lib)               │  NioDevice, NioPipeline, NioFrame,
-│                                       │  NioFormat, NioFrameType, Logger
+│  dynalgo_core (static lib)               │  DynalgoDevice, DynalgoPipeline, DynalgoFrame,
+│                                       │  DynalgoFormat, DynalgoFrameType, Logger
 └──────────────────────────────────────┘
-  + nio_opencv_plugin (optional)        → nio_core, nio_capture, OpenCV
+  + dynalgo_opencv_plugin (optional)        → dynalgo_core, dynalgo_capture, OpenCV
 ```
 
 #### 数据流
@@ -243,7 +243,7 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 ```
 SDK 回调 (OrbbecSDK / rs_driver 线程)
   → 像素数据拷贝出 SDK 缓冲区 (adapter 层)
-  → NioFrameSet (shared_ptr, 堆分配)
+  → DynalgoFrameSet (shared_ptr, 堆分配)
   → VideoFrameQueue::push() [drop-oldest]
   → 消费者线程: pop()
   → FrameConsumer::consume()
@@ -261,7 +261,7 @@ SDK 回调 (OrbbecSDK / rs_driver 线程)
 
 | 线程 | 产生者 | 生命周期 | 功能 |
 |------|--------|----------|------|
-| SDK 回调线程 | OrbbecSDK / rs_driver | start→stop | push NioFrameSet 到 VideoFrameQueue |
+| SDK 回调线程 | OrbbecSDK / rs_driver | start→stop | push DynalgoFrameSet 到 VideoFrameQueue |
 | Video 消费者 | CaptureSession | start→stop | pop 队列，分发到各 FrameConsumer |
 | IMU 消费者 | CaptureSession | start→stop | pop IMU 队列，分发到 ImuStreamTask |
 | StreamTask worker (x5) | 各 Consumer | start→stop | 编码/写入磁盘 |

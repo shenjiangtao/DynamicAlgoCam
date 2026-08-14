@@ -1,9 +1,9 @@
-// Copyright (c) NIO Inc. All Rights Reserved.
+// Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 
 #include "utils_opencv.hpp"
-#include "nio_types.hpp"
-#include "nio_log.hpp"
+#include "dynalgo_types.hpp"
+#include "dynalgo_log.hpp"
 #include "utils.hpp"
 
 #if defined(__has_include)
@@ -13,7 +13,7 @@
 #endif
 #endif
 
-namespace nio {
+namespace dynalgo {
 
 const std::string defaultKeyMapPrompt = "'Esc': Exit Window, '?': Show Key Map";
 CVWindow::CVWindow(std::string name, uint32_t width, uint32_t height, ArrangeMode arrangeMode)
@@ -44,7 +44,7 @@ CVWindow::CVWindow(std::string name, uint32_t width, uint32_t height, ArrangeMod
 
     processThread_ = std::thread(&CVWindow::processFrames, this);
 
-    winCreatedTime_ = nio::getNowTimesMs();
+    winCreatedTime_ = dynalgo::getNowTimesMs();
 }
 
 CVWindow::~CVWindow() noexcept {
@@ -90,13 +90,13 @@ bool CVWindow::run() {
             if (alpha_ > 1) {
                 alpha_ = 1;
             }
-            addLog("Adjust alpha to " + nio::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
+            addLog("Adjust alpha to " + dynalgo::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
         } else if (key == '-' || key == '_') {
             alpha_ -= 0.1f;
             if (alpha_ < 0) {
                 alpha_ = 0;
             }
-            addLog("Adjust alpha to " + nio::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
+            addLog("Adjust alpha to " + dynalgo::toString(alpha_, 1) + " (Only valid in OVERLAY arrange mode)");
         }
         if (keyPressedCallback_) {
             keyPressedCallback_(key);
@@ -126,7 +126,7 @@ void CVWindow::destroyWindow() {
         cv::waitKey(1);
         isWindowDestroyed_ = true;
     } else {
-        NIO_LOG_WARN_S("CVWindows has been destroyed!");
+        DYNALGO_LOG_WARN_S("CVWindows has been destroyed!");
     }
 }
 
@@ -149,10 +149,10 @@ void CVWindow::setKeyPrompt(const std::string& prompt) {
 
 void CVWindow::addLog(const std::string& log) {
     log_ = log;
-    logCreatedTime_ = nio::getNowTimesMs();
+    logCreatedTime_ = dynalgo::getNowTimesMs();
 }
 
-void CVWindow::pushFramesToView(std::vector<const NioFrame*> frames, int groupId) {
+void CVWindow::pushFramesToView(std::vector<const DynalgoFrame*> frames, int groupId) {
     if (frames.empty()) {
         return;
     }
@@ -162,10 +162,10 @@ void CVWindow::pushFramesToView(std::vector<const NioFrame*> frames, int groupId
     srcFrameGroupsCv_.notify_one();
 }
 
-void CVWindow::pushFramesToView(const NioFrame* currentFrame, int groupId) {
+void CVWindow::pushFramesToView(const DynalgoFrame* currentFrame, int groupId) {
     if (!currentFrame)
         return;
-    pushFramesToView(std::vector<const NioFrame*>{ currentFrame }, groupId);
+    pushFramesToView(std::vector<const DynalgoFrame*>{ currentFrame }, groupId);
 }
 
 void CVWindow::setShowInfo(bool show) {
@@ -186,7 +186,7 @@ void CVWindow::setAlpha(float alpha) {
 }
 
 void CVWindow::processFrames() {
-    std::map<int, std::vector<const NioFrame*>> frameGroups;
+    std::map<int, std::vector<const DynalgoFrame*>> frameGroups;
     while (!closed_) {
         if (closed_) {
             break;
@@ -207,7 +207,7 @@ void CVWindow::processFrames() {
             for (const auto* frame : frames) {
                 auto rstMat = visualize(frame);
                 if (!rstMat.empty()) {
-                    int uid = groupId * static_cast<int>(NioFrameType::COUNT) + static_cast<int>(frame->type);
+                    int uid = groupId * static_cast<int>(DynalgoFrameType::COUNT) + static_cast<int>(frame->type);
                     matGroups_[uid] = { frame, rstMat };
                 }
             }
@@ -303,19 +303,19 @@ void CVWindow::arrangeFrames() {
             }
         }
     } catch (std::exception& e) {
-        NIO_LOG_ERROR_S("CVWindow exception: " << e.what());
+        DYNALGO_LOG_ERROR_S("CVWindow exception: " << e.what());
     }
 
     if (renderMat.empty()) {
         return;
     }
 
-    if (showPrompt_ || nio::getNowTimesMs() - winCreatedTime_ < 5000) {
+    if (showPrompt_ || dynalgo::getNowTimesMs() - winCreatedTime_ < 5000) {
         cv::putText(renderMat, prompt_, cv::Point(8, 16), cv::FONT_HERSHEY_DUPLEX, 0.5, cv::Scalar(255, 255, 255), 1,
                     cv::LINE_AA);
     }
 
-    if (!log_.empty() && nio::getNowTimesMs() - logCreatedTime_ < 3000) {
+    if (!log_.empty() && dynalgo::getNowTimesMs() - logCreatedTime_ < 3000) {
         cv::putText(renderMat, log_, cv::Point(8, height_ - 16), cv::FONT_HERSHEY_DUPLEX, 0.5,
                     cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
     }
@@ -324,7 +324,7 @@ void CVWindow::arrangeFrames() {
     renderMat_ = renderMat;
 }
 
-cv::Mat CVWindow::visualize(const NioFrame* frame) {
+cv::Mat CVWindow::visualize(const DynalgoFrame* frame) {
     if (frame == nullptr) {
         return cv::Mat();
     }
@@ -335,75 +335,75 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
     const auto* data = frame->rawData();
 
     switch (frame->type) {
-    case NioFrameType::COLOR:
-    case NioFrameType::COLOR_LEFT:
-    case NioFrameType::COLOR_RIGHT:
+    case DynalgoFrameType::COLOR:
+    case DynalgoFrameType::COLOR_LEFT:
+    case DynalgoFrameType::COLOR_RIGHT:
         {
             switch (frame->format) {
-            case NioFormat::MJPG:
-            case NioFormat::MJPEG:
+            case DynalgoFormat::MJPG:
+            case DynalgoFormat::MJPEG:
                 {
                     cv::Mat rawMat(1, frame->dataSize(), CV_8UC1, const_cast<uint8_t*>(data));
                     rstMat = cv::imdecode(rawMat, 1);
                 }
                 break;
-            case NioFormat::NV21:
+            case DynalgoFormat::NV21:
                 {
                     cv::Mat rawMat(h * 3 / 2, w, CV_8UC1, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_YUV2BGR_NV21);
                 }
                 break;
-            case NioFormat::YUYV:
-            case NioFormat::YUY2:
+            case DynalgoFormat::YUYV:
+            case DynalgoFormat::YUY2:
                 {
                     cv::Mat rawMat(h, w, CV_8UC2, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_YUV2BGR_YUY2);
                 }
                 break;
-            case NioFormat::BGR:
+            case DynalgoFormat::BGR:
                 {
                     cv::Mat rawMat(h, w, CV_8UC3, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_BGR2RGB);
                 }
                 break;
-            case NioFormat::RGB:
-            case NioFormat::RGB888:
+            case DynalgoFormat::RGB:
+            case DynalgoFormat::RGB888:
                 {
                     cv::Mat rawMat(h, w, CV_8UC3, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_RGB2BGR);
                 }
                 break;
-            case NioFormat::RGBA:
+            case DynalgoFormat::RGBA:
                 {
                     cv::Mat rawMat(h, w, CV_8UC4, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_RGBA2BGR);
                 }
                 break;
-            case NioFormat::BGRA:
+            case DynalgoFormat::BGRA:
                 {
                     cv::Mat rawMat(h, w, CV_8UC4, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_BGRA2RGB);
                 }
                 break;
-            case NioFormat::UYVY:
+            case DynalgoFormat::UYVY:
                 {
                     cv::Mat rawMat(h, w, CV_8UC2, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_YUV2BGR_UYVY);
                 }
                 break;
-            case NioFormat::I420:
+            case DynalgoFormat::I420:
                 {
                     cv::Mat rawMat(h * 3 / 2, w, CV_8UC1, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_YUV2BGR_I420);
                 }
                 break;
-            case NioFormat::Y8:
+            case DynalgoFormat::Y8:
                 {
                     cv::Mat rawMat(h, w, CV_8UC1, const_cast<uint8_t*>(data));
                     cv::cvtColor(rawMat, rstMat, cv::COLOR_GRAY2BGR);
                 }
                 break;
-            case NioFormat::Y16:
+            case DynalgoFormat::Y16:
                 {
                     cv::Mat rawMat(h, w, CV_16UC1, const_cast<uint8_t*>(data));
                     cv::Mat gray8;
@@ -419,9 +419,9 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
             }
         }
         break;
-    case NioFrameType::DEPTH:
+    case DynalgoFrameType::DEPTH:
         {
-            if (frame->format == NioFormat::Y16) {
+            if (frame->format == DynalgoFormat::Y16) {
                 cv::Mat rawMat = cv::Mat(h, w, CV_16UC1, const_cast<uint8_t*>(data));
                 float scale = frame->depthScale;
 
@@ -436,19 +436,19 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
             }
         }
         break;
-    case NioFrameType::IR:
-    case NioFrameType::IR_LEFT:
-    case NioFrameType::IR_RIGHT:
+    case DynalgoFrameType::IR:
+    case DynalgoFrameType::IR_LEFT:
+    case DynalgoFrameType::IR_RIGHT:
         {
-            if (frame->format == NioFormat::Y16) {
+            if (frame->format == DynalgoFormat::Y16) {
                 cv::Mat cvtMat;
                 cv::Mat rawMat = cv::Mat(h, w, CV_16UC1, const_cast<uint8_t*>(data));
                 rawMat.convertTo(cvtMat, CV_8UC1, 1.0 / 16.0f);
                 cv::cvtColor(cvtMat, rstMat, cv::COLOR_GRAY2RGB);
-            } else if (frame->format == NioFormat::Y8) {
+            } else if (frame->format == DynalgoFormat::Y8) {
                 cv::Mat rawMat = cv::Mat(h, w, CV_8UC1, const_cast<uint8_t*>(data));
                 cv::cvtColor(rawMat, rstMat, cv::COLOR_GRAY2RGB);
-            } else if (frame->format == NioFormat::MJPG || frame->format == NioFormat::MJPEG) {
+            } else if (frame->format == DynalgoFormat::MJPG || frame->format == DynalgoFormat::MJPEG) {
                 cv::Mat rawMat(1, frame->dataSize(), CV_8UC1, const_cast<uint8_t*>(data));
                 rstMat = cv::imdecode(rawMat, 1);
                 cv::cvtColor(rstMat, rstMat, cv::COLOR_GRAY2RGB);
@@ -458,20 +458,20 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
             }
         }
         break;
-    case NioFrameType::CONFIDENCE:
+    case DynalgoFrameType::CONFIDENCE:
         {
-            if (frame->format == NioFormat::Y16) {
+            if (frame->format == DynalgoFormat::Y16) {
                 cv::Mat cvtMat;
                 cv::Mat rawMat = cv::Mat(h, w, CV_16UC1, const_cast<uint8_t*>(data));
                 rawMat.convertTo(cvtMat, CV_8UC1, 1.0 / 16.0f);
                 cv::cvtColor(cvtMat, rstMat, cv::COLOR_GRAY2RGB);
-            } else if (frame->format == NioFormat::Y8) {
+            } else if (frame->format == DynalgoFormat::Y8) {
                 cv::Mat rawMat = cv::Mat(h, w, CV_8UC1, const_cast<uint8_t*>(data));
                 cv::cvtColor(rawMat, rstMat, cv::COLOR_GRAY2RGB);
             }
         }
         break;
-    case NioFrameType::ACCEL:
+    case DynalgoFrameType::ACCEL:
         {
             rstMat = cv::Mat::zeros(320, 300, CV_8UC3);
             std::string str = "Accel:";
@@ -495,7 +495,7 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
             }
         }
         break;
-    case NioFrameType::GYRO:
+    case DynalgoFrameType::GYRO:
         {
             rstMat = cv::Mat::zeros(320, 300, CV_8UC3);
             std::string str = "Gyro:";
@@ -524,7 +524,7 @@ cv::Mat CVWindow::visualize(const NioFrame* frame) {
     return rstMat;
 }
 
-void CVWindow::drawInfo(cv::Mat& imageMat, const NioFrame* frame) {
+void CVWindow::drawInfo(cv::Mat& imageMat, const DynalgoFrame* frame) {
     int baseline = 0;
     cv::Size textSize;
     int padding = 5;
@@ -542,16 +542,16 @@ void CVWindow::drawInfo(cv::Mat& imageMat, const NioFrame* frame) {
     auto frameType = frame->type;
     auto frameFormat = frame->format;
     switch (frameFormat) {
-    case NioFormat::NV21:
+    case DynalgoFormat::NV21:
         {
             switch (frameType) {
-            case NioFrameType::COLOR:
+            case DynalgoFrameType::COLOR:
                 putTextWithBackground("Color-NV21", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_LEFT:
+            case DynalgoFrameType::COLOR_LEFT:
                 putTextWithBackground("LeftColor-NV21", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_RIGHT:
+            case DynalgoFrameType::COLOR_RIGHT:
                 putTextWithBackground("RightColor-NV21", cv::Point(8, 16));
                 break;
             default:
@@ -559,17 +559,17 @@ void CVWindow::drawInfo(cv::Mat& imageMat, const NioFrame* frame) {
             }
         }
         break;
-    case NioFormat::MJPG:
-    case NioFormat::MJPEG:
+    case DynalgoFormat::MJPG:
+    case DynalgoFormat::MJPEG:
         {
             switch (frameType) {
-            case NioFrameType::COLOR:
+            case DynalgoFrameType::COLOR:
                 putTextWithBackground("Color-MJPG", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_LEFT:
+            case DynalgoFrameType::COLOR_LEFT:
                 putTextWithBackground("LeftColor-MJPG", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_RIGHT:
+            case DynalgoFrameType::COLOR_RIGHT:
                 putTextWithBackground("RightColor-MJPG", cv::Point(8, 16));
                 break;
             default:
@@ -577,17 +577,17 @@ void CVWindow::drawInfo(cv::Mat& imageMat, const NioFrame* frame) {
             }
         }
         break;
-    case NioFormat::YUYV:
-    case NioFormat::YUY2:
+    case DynalgoFormat::YUYV:
+    case DynalgoFormat::YUY2:
         {
             switch (frameType) {
-            case NioFrameType::COLOR:
+            case DynalgoFrameType::COLOR:
                 putTextWithBackground("Color-YUYV", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_LEFT:
+            case DynalgoFrameType::COLOR_LEFT:
                 putTextWithBackground("LeftColor-YUYV", cv::Point(8, 16));
                 break;
-            case NioFrameType::COLOR_RIGHT:
+            case DynalgoFrameType::COLOR_RIGHT:
                 putTextWithBackground("RightColor-YUYV", cv::Point(8, 16));
                 break;
             default:
@@ -598,16 +598,16 @@ void CVWindow::drawInfo(cv::Mat& imageMat, const NioFrame* frame) {
     default:
         {
             switch (frameType) {
-            case NioFrameType::DEPTH:
+            case DynalgoFrameType::DEPTH:
                 putTextWithBackground("Depth", cv::Point(8, 16));
                 break;
-            case NioFrameType::IR:
+            case DynalgoFrameType::IR:
                 putTextWithBackground("IR", cv::Point(8, 16));
                 break;
-            case NioFrameType::IR_LEFT:
+            case DynalgoFrameType::IR_LEFT:
                 putTextWithBackground("LeftIR", cv::Point(8, 16));
                 break;
-            case NioFrameType::IR_RIGHT:
+            case DynalgoFrameType::IR_RIGHT:
                 putTextWithBackground("RightIR", cv::Point(8, 16));
                 break;
             default:
@@ -652,4 +652,4 @@ cv::Mat CVWindow::resizeMatKeepAspectRatio(const cv::Mat& mat, int width, int he
     return paddedMat;
 }
 
-} // namespace nio
+} // namespace dynalgo

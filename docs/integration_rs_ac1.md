@@ -12,10 +12,10 @@
 当前 `dynamic_algo_cam` 应用仅支持 Orbbec 深度相机（Gemini 2/3 系列）。本方案将 RoboSense RS-AC1（基于 LiDAR 的主动深度相机）纳入同一采集框架，使下游消费者（编码、录文件、预览、融合）无需关心传感器 SDK 来源。
 
 **核心变更**:
-- 新增 `RsDevice` / `RsPipeline` 实现 `NioDevice` / `NioPipeline` 抽象接口
-- 新增 `rs_frame_adapter.hpp` 将 RS-AC1 的 `PointCloudMsg` + `ImageData` + `ImuData` 转换为 `NioFrameSet`
-- RS-AC1 点云作为 `NioFrameType::DEPTH`（乘以 `depthScale=1.0` 后未对齐的 96×288 点阵），图像作为 `NioFrameType::COLOR`
-- RS-AC1 IMU 直接映射到 `NioImuSample`（ACCEL + GYRO），经由 `ImuFrameQueue` 走现有 IMU 写入管线
+- 新增 `RsDevice` / `RsPipeline` 实现 `DynalgoDevice` / `DynalgoPipeline` 抽象接口
+- 新增 `rs_frame_adapter.hpp` 将 RS-AC1 的 `PointCloudMsg` + `ImageData` + `ImuData` 转换为 `DynalgoFrameSet`
+- RS-AC1 点云作为 `DynalgoFrameType::DEPTH`（乘以 `depthScale=1.0` 后未对齐的 96×288 点阵），图像作为 `DynalgoFrameType::COLOR`
+- RS-AC1 IMU 直接映射到 `DynalgoImuSample`（ACCEL + GYRO），经由 `ImuFrameQueue` 走现有 IMU 写入管线
 
 ---
 
@@ -23,7 +23,7 @@
 
 | 角色 | 需要做什么 | 涉及深度 |
 |------|-----------|---------|
-| 框架开发者 | 实现 RsDevice/RsPipeline/RsFrameAdapter; 扩展 NioPipeline 接口 | 全量 |
+| 框架开发者 | 实现 RsDevice/RsPipeline/RsFrameAdapter; 扩展 DynalgoPipeline 接口 | 全量 |
 | 应用集成者 | 修改 `main()` 中设备发现逻辑: OB 用 `ObContext`, RS-AC1 用 `RsContext`；按 VID/PID 或 `LidarType` 分流 | 中等 |
 | 运维/操作员 | 新增 CLI 参数 `--rs-ac1` 启用 RS-AC1 设备发现；USB 3.0 前置条件检查 | 浅层 |
 | 数据消费者 | 无变更 — 输出文件格式（.h264 / .raw / .txt / .json）不变 | 无 |
@@ -147,29 +147,29 @@ depth[row * 96 + col] = (uint16_t)(point[i].distance / 0.005)
 
 | RS-AC1 概念 | OB 等价物 | Nio 中间层类型 | 映射策略 |
 |-------------|----------|---------------|---------|
-| `PointCloudMsg` (27,648 XYZI 点) | `ob::DepthFrame` (2D depth map) | `NioFrame(COUNT=DEPTH)` | 将 XYZ 压缩为 row-major `float[N*3]`，存入 `NioFrame::data`；或合成 2D `uint16_t` depth map |
-| `ImageData` (彩图) | `ob::ColorFrame` | `NioFrame(COUNT=COLOR)` | 直接拷贝 `ImageData::data` → `NioFrame::data`；`frame_format` → `NioFormat` |
-| `ImuData` (6-axis) | `ob::FrameSet` (AccelFrame + GyroFrame) | `NioImuSample` | 拆分为 ACCEL + GYRO 两个 `NioImuSample` |
-| PTP 时钟同步 | `device->timerSyncWithHost()` | `NioDevice::timerSyncWithHost()` | RS-AC1 在 driver 内部自动做 PTP；适配器层为空操作 |
-| 无 IR 流 | `ob::IRFrame` / `ob::IRLeftFrame` | `NioFrame(COUNT=IR/IR_LEFT/IR_RIGHT)` | **不存在**。`RsPipeline` 不使能这些流 |
-| 内置 HW D2C | `ob::Align` + `ALIGN_D2C_HW_MODE` | `NioAlignMode::HW` | RS-AC1 始终为 HW D2C; 无 SW D2C 路径 |
-| `LidarDriver<PointCloudMsg>` | `ob::Pipeline` | `NioPipeline` | `RsPipeline` 封装 `LidarDriver` |
-| `RSDriverParam` | `ob::Config` | `NioStreamConfig` | `RsPipeline::enableStream()` 转换 `NioStreamConfig` → `RSDriverParam` 字段 |
-| dual get/put callback pair | `pipeline.start(config, single_callback)` | `NioVideoCallback` | `RsPipeline` 内部注册 get/put 对; 在 put callback 中构建 `NioFrameSet` 并调用户 callback |
+| `PointCloudMsg` (27,648 XYZI 点) | `ob::DepthFrame` (2D depth map) | `DynalgoFrame(COUNT=DEPTH)` | 将 XYZ 压缩为 row-major `float[N*3]`，存入 `DynalgoFrame::data`；或合成 2D `uint16_t` depth map |
+| `ImageData` (彩图) | `ob::ColorFrame` | `DynalgoFrame(COUNT=COLOR)` | 直接拷贝 `ImageData::data` → `DynalgoFrame::data`；`frame_format` → `DynalgoFormat` |
+| `ImuData` (6-axis) | `ob::FrameSet` (AccelFrame + GyroFrame) | `DynalgoImuSample` | 拆分为 ACCEL + GYRO 两个 `DynalgoImuSample` |
+| PTP 时钟同步 | `device->timerSyncWithHost()` | `DynalgoDevice::timerSyncWithHost()` | RS-AC1 在 driver 内部自动做 PTP；适配器层为空操作 |
+| 无 IR 流 | `ob::IRFrame` / `ob::IRLeftFrame` | `DynalgoFrame(COUNT=IR/IR_LEFT/IR_RIGHT)` | **不存在**。`RsPipeline` 不使能这些流 |
+| 内置 HW D2C | `ob::Align` + `ALIGN_D2C_HW_MODE` | `DynalgoAlignMode::HW` | RS-AC1 始终为 HW D2C; 无 SW D2C 路径 |
+| `LidarDriver<PointCloudMsg>` | `ob::Pipeline` | `DynalgoPipeline` | `RsPipeline` 封装 `LidarDriver` |
+| `RSDriverParam` | `ob::Config` | `DynalgoStreamConfig` | `RsPipeline::enableStream()` 转换 `DynalgoStreamConfig` → `RSDriverParam` 字段 |
+| dual get/put callback pair | `pipeline.start(config, single_callback)` | `DynalgoVideoCallback` | `RsPipeline` 内部注册 get/put 对; 在 put callback 中构建 `DynalgoFrameSet` 并调用户 callback |
 
-### 5.2 NioFormat 与 RS frame_format 映射
+### 5.2 DynalgoFormat 与 RS frame_format 映射
 
-| `frame_format_t` | `NioFormat` | 说明 |
+| `frame_format_t` | `DynalgoFormat` | 说明 |
 |-------------------|------------|------|
-| `FRAME_FORMAT_NV12` | `NioFormat::NV12` | 默认 |
-| `FRAME_FORMAT_BGR24` | `NioFormat::BGR` | |
-| `FRAME_FORMAT_RGB24` | `NioFormat::RGB` | |
-| `FRAME_FORMAT_YUV422` | `NioFormat::YUYV` | 语义等价 |
+| `FRAME_FORMAT_NV12` | `DynalgoFormat::NV12` | 默认 |
+| `FRAME_FORMAT_BGR24` | `DynalgoFormat::BGR` | |
+| `FRAME_FORMAT_RGB24` | `DynalgoFormat::RGB` | |
+| `FRAME_FORMAT_YUV422` | `DynalgoFormat::YUYV` | 语义等价 |
 
-已实现于 `app/driver/robosense/nio_rs_adapter.hpp`:
+已实现于 `app/driver/robosense/dynalgo_rs_adapter.hpp`:
 ```cpp
-NioFormat rsFrameFormatToNio(frame_format_t fmt);
-frame_format_t nioFormatToRsFrameFormat(NioFormat fmt);
+DynalgoFormat rsFrameFormatToNio(frame_format_t fmt);
+frame_format_t nioFormatToRsFrameFormat(DynalgoFormat fmt);
 ```
 
 ---
@@ -180,21 +180,21 @@ frame_format_t nioFormatToRsFrameFormat(NioFormat fmt);
 
 ```
 app/driver/robosense/
-  ├── nio_rs_adapter.hpp       # RS frame_format ↔ NioFormat / ImuData ↔ NioImuSample
-  ├── nio_rs_frame_adapter.hpp # PointCloudMsg+ImageData+ImuData → NioFrameSet
-  ├── nio_rs_device.hpp        # RsDevice, RsPipeline, RsContext 实现 NioDevice/NioPipeline/NioContext
-  ├── nio_rs_device.cpp        # 上述实现
-  └── nio_rs_spec.hpp          # AC1 硬件规格常量（Resolution、SensorSpec、USB_ID）
+  ├── dynalgo_rs_adapter.hpp       # RS frame_format ↔ DynalgoFormat / ImuData ↔ DynalgoImuSample
+  ├── dynalgo_rs_frame_adapter.hpp # PointCloudMsg+ImageData+ImuData → DynalgoFrameSet
+  ├── dynalgo_rs_device.hpp        # RsDevice, RsPipeline, RsContext 实现 DynalgoDevice/DynalgoPipeline/DynalgoContext
+  ├── dynalgo_rs_device.cpp        # 上述实现
+  └── dynalgo_rs_spec.hpp          # AC1 硬件规格常量（Resolution、SensorSpec、USB_ID）
 
 app/driver/orbbec/
-  └── nio_ob_spec.hpp          # Orbbec 深度精度映射、颜色格式策略
+  └── dynalgo_ob_spec.hpp          # Orbbec 深度精度映射、颜色格式策略
 ```
 
 ### 6.2 类图
 
 ```
               ┌─────────────┐
-              │ NioDevice   │ (abstract, 已存在)
+              │ DynalgoDevice   │ (abstract, 已存在)
               └──────┬──────┘
                      │ implements
             ┌────────┴────────┐
@@ -205,7 +205,7 @@ app/driver/orbbec/
      └────────────┘    └────────────┘
 
               ┌─────────────┐
-              │ NioPipeline │ (abstract, 已存在)
+              │ DynalgoPipeline │ (abstract, 已存在)
               └──────┬──────┘
                      │ implements
             ┌────────┴────────┐
@@ -216,7 +216,7 @@ app/driver/orbbec/
      └────────────┘    └────────────┘
 
               ┌─────────────┐
-              │ NioContext  │ (abstract, 已存在)
+              │ DynalgoContext  │ (abstract, 已存在)
               └──────┬──────┘
                      │ implements
             ┌────────┴────────┐
@@ -238,10 +238,10 @@ app/driver/orbbec/
   │                │ cb_put_cloud_       │
   │                ▼                     │
   │          stuffed_cloud_queue  ─────────► RsPipeline::processCloud()
-  │                                          │ 构建 NioFrame(DEPTH)
+  │                                          │ 构建 DynalgoFrame(DEPTH)
   │  USB recv ──► decodeImagePkt()          │
   │                │ cb_put_image_          │ if color + depth both ready:
-  │                ▼                        │   组装 NioFrameSet
+  │                ▼                        │   组装 DynalgoFrameSet
   │          stuffed_image_data_queue ──────►   videoCallback_(nioFs)
   │                                          │ 回收 msg 到 free queues
   │  HID recv ──► decodeImuPkt()            │
@@ -273,14 +273,14 @@ OB SDK 的 `ob::Pipeline::start()` 在单次回调中返回聚合后的 `FrameSe
 struct FrameSyncState {
     std::mutex mtx;
     std::condition_variable cv;
-    std::shared_ptr<NioFrame> colorFrame;
-    std::shared_ptr<NioFrame> depthFrame;
+    std::shared_ptr<DynalgoFrame> colorFrame;
+    std::shared_ptr<DynalgoFrame> depthFrame;
     bool colorReady = false;
     bool depthReady = false;
 };
 
 void RsPipeline::processCloud(std::shared_ptr<PointCloudMsg> msg) {
-    auto depthFrame = rsDepthToNioFrame(msg);  // PointCloud → NioFrame
+    auto depthFrame = rsDepthToNioFrame(msg);  // PointCloud → DynalgoFrame
     std::lock_guard<std::mutex> lk(syncState_.mtx);
     syncState_.depthFrame = depthFrame;
     syncState_.depthReady = true;
@@ -288,7 +288,7 @@ void RsPipeline::processCloud(std::shared_ptr<PointCloudMsg> msg) {
 }
 
 void RsPipeline::processImageData(std::shared_ptr<ImageData> msg) {
-    auto colorFrame = rsImageToNioFrame(msg);   // ImageData → NioFrame
+    auto colorFrame = rsImageToNioFrame(msg);   // ImageData → DynalgoFrame
     std::lock_guard<std::mutex> lk(syncState_.mtx);
     syncState_.colorFrame = colorFrame;
     syncState_.colorReady = true;
@@ -298,9 +298,9 @@ void RsPipeline::processImageData(std::shared_ptr<ImageData> msg) {
 void RsPipeline::tryEmitFrameSet() {
     // 在持有 syncState_.mtx 的情况下调用
     if (syncState_.colorReady && syncState_.depthReady) {
-        auto nioFs = std::make_shared<NioFrameSet>();
-        nioFs->setFrame(NioFrameType::COLOR, *syncState_.colorFrame);
-        nioFs->setFrame(NioFrameType::DEPTH, *syncState_.depthFrame);
+        auto nioFs = std::make_shared<DynalgoFrameSet>();
+        nioFs->setFrame(DynalgoFrameType::COLOR, *syncState_.colorFrame);
+        nioFs->setFrame(DynalgoFrameType::DEPTH, *syncState_.depthFrame);
         // nativeFrameSet = nullptr (RS 路径无 ob::FrameSet)
         videoCallback_(nioFs);
         syncState_.colorReady = false;
@@ -314,30 +314,30 @@ void RsPipeline::tryEmitFrameSet() {
 - 深度帧到达时彩色可能已更新 3 帧; 使用最新彩色帧（覆盖式更新）
 - 如只启用彩色或只启用深度，单独帧直接作为 FrameSet 输出
 
-### 6.5 RS-AC1 Depth → NioFrame 转换策略
+### 6.5 RS-AC1 Depth → DynalgoFrame 转换策略
 
 RS-AC1 的"深度"是 3D 点云（`PointXYZIRT`），不是 OB 的 2D depth map。需要选择:
 
-| 策略 | NioFrame::data 内容 | 兼容性 | 代价 |
+| 策略 | DynalgoFrame::data 内容 | 兼容性 | 代价 |
 |------|---------------------|--------|------|
 | **A: 合成 2D depth map** | `uint16_t[96×288]`, `depthScale=5.0f` (5mm) | 与现有 `DepthFrameConsumer` + `DepthRawTask` 完全兼容 | 点云信息损失（无方向向量、无 intensity）；96×288 分辨率低于 OB 的 640×576 |
-| **B: 保存原始 XYZI 浮点** | `float[N*4]` (x,y,z,intensity) | 需要 `NioFrame::format=POINT`; 新增 `NioFormat::POINT` 已存在 | 现有 H264Encoder 无法编码浮点点云；需新增 PCD/BIN writer |
-| **C: 两路并存** | depth map 放 `NioFrameType::DEPTH`; 点云放 `NioFrameType::POINT` | 最完整 | 数据量翻倍；下游需新增 POINT 流消费者 |
+| **B: 保存原始 XYZI 浮点** | `float[N*4]` (x,y,z,intensity) | 需要 `DynalgoFrame::format=POINT`; 新增 `DynalgoFormat::POINT` 已存在 | 现有 H264Encoder 无法编码浮点点云；需新增 PCD/BIN writer |
+| **C: 两路并存** | depth map 放 `DynalgoFrameType::DEPTH`; 点云放 `DynalgoFrameType::POINT` | 最完整 | 数据量翻倍；下游需新增 POINT 流消费者 |
 
 **推荐方案 A**（合成 2D depth map）:
 - 从 `PointCloudMsg` 重建 `uint16_t` depth map: `depth[i] = (uint16_t)(distance / 0.005)`，无效点 `depth[i] = 0`
-- `NioFrame` 元数据: `format=NioFormat::Y16, width=96, height=288, depthScale=5.0f`
+- `DynalgoFrame` 元数据: `format=DynalgoFormat::Y16, width=96, height=288, depthScale=5.0f`
 - **注意**: `depthScale=5.0f` 表示 5mm/unit（与 OB 的 `scale=1.0f` 即 1mm/unit 或 `0.001f` 即 1m 单位不同）。下游 `FusionStreamTask` 依赖 `depthScale` 做 colormap，需兼容
-- 点云的 **intensity** 信息可通过单独的 `NioFrame(NioFrameType::IR)` 传递（Y8 格式，AC1 的 intensity 相当于 IR 反射率），复用现有 IR 编码路径
+- 点云的 **intensity** 信息可通过单独的 `DynalgoFrame(DynalgoFrameType::IR)` 传递（Y8 格式，AC1 的 intensity 相当于 IR 反射率），复用现有 IR 编码路径
 
 **备选**: 如需保留完整 3D，可在 Phase 5 后扩展方案 C。
 
-### 6.6 NioPipeline 接口扩展
+### 6.6 DynalgoPipeline 接口扩展
 
-当前 `NioPipeline` 接口缺少 RS-AC1 需要的功能:
+当前 `DynalgoPipeline` 接口缺少 RS-AC1 需要的功能:
 
 ```diff
- class NioPipeline {
+ class DynalgoPipeline {
  public:
  +    // RS-AC1: 无独立 IR 传感器
  +    virtual bool hasIRSensor() const { return true; }
@@ -346,19 +346,19 @@ RS-AC1 的"深度"是 3D 点云（`PointXYZIRT`），不是 OB 的 2D depth map�
  +    virtual bool isPointCloudDepth() const { return false; }
  +
  +    // RS-AC1: D2C 模式 — 始终 HW
- +    virtual NioAlignMode getAlignMode() const = 0;
+ +    virtual DynalgoAlignMode getAlignMode() const = 0;
  +
      // ... 现有接口 ...
  };
 ```
 
 **类型系统升级（2025-03 实现）**：
-`NioFormat`、`NioFrameType` 和 `NioAlignMode` 已从 `nio` 命名空间提取到 `nio::types` 子命名空间，通过 `using` 保持向后兼容，不影响现有代码引用。迁移路径：直接使用 `nio::types::NioFormat` 即可访问。
+`DynalgoFormat`、`DynalgoFrameType` 和 `DynalgoAlignMode` 已从 `dynalgo` 命名空间提取到 `dynalgo::types` 子命名空间，通过 `using` 保持向后兼容，不影响现有代码引用。迁移路径：直接使用 `dynalgo::types::DynalgoFormat` 即可访问。
 
 `RsPipeline` 覆盖:
 - `hasIRSensor() → false`
 - `isPointCloudDepth() → true`
-- `getAlignMode() → NioAlignMode::HW`
+- `getAlignMode() → DynalgoAlignMode::HW`
 
 `CaptureSession` 在 `enumerateSensors()` 中查询这些方法决定是否创建 IR consumer。
 
@@ -376,7 +376,7 @@ RS-AC1 的"深度"是 3D 点云（`PointXYZIRT`），不是 OB 的 2D depth map�
 当前 `main()` 使用 `discoverDevices()` 工厂函数，内部根据 `ENABLE_ORBBEC` / `ENABLE_RS_AC1` 编译宏自动发现对应设备：
 
 ```cpp
-// nio_driver_factory.cpp
+// dynalgo_driver_factory.cpp
 std::vector<DiscoveredDevice> discoverDevices() {
     std::vector<DiscoveredDevice> result;
 
@@ -407,9 +407,9 @@ std::vector<DiscoveredDevice> discoverDevices() {
 ### 8.1 完整生命周期
 
 ```cpp
-class RsPipeline : public NioPipeline {
+class RsPipeline : public DynalgoPipeline {
 public:
-    bool start(NioVideoCallback callback) override {
+    bool start(DynalgoVideoCallback callback) override {
         videoCallback_ = callback;
 
         // 1. 配置 RSDriverParam
@@ -501,12 +501,12 @@ void RsPipeline::processImageData() {
 ### 8.3 RS → Nio 转换函数
 
 ```cpp
-// nio_rs_frame_adapter.hpp
+// dynalgo_rs_frame_adapter.hpp
 
-NioFrame rsDepthToNioFrame(const std::shared_ptr<PointCloudMsg>& cloud) {
-    NioFrame f;
-    f.type = NioFrameType::DEPTH;
-    f.format = NioFormat::Y16;
+DynalgoFrame rsDepthToNioFrame(const std::shared_ptr<PointCloudMsg>& cloud) {
+    DynalgoFrame f;
+    f.type = DynalgoFrameType::DEPTH;
+    f.format = DynalgoFormat::Y16;
     f.width = POINT_WIDTH_NUMS;   // 96
     f.height = POINT_HEIGHT_NUMS; // 288
     f.depthScale = 5.0f;          // 0.005m * 1000 = 5mm/unit
@@ -527,9 +527,9 @@ NioFrame rsDepthToNioFrame(const std::shared_ptr<PointCloudMsg>& cloud) {
     return f;
 }
 
-NioFrame rsImageToNioFrame(const std::shared_ptr<ImageData>& img) {
-    NioFrame f;
-    f.type = NioFrameType::COLOR;
+DynalgoFrame rsImageToNioFrame(const std::shared_ptr<ImageData>& img) {
+    DynalgoFrame f;
+    f.type = DynalgoFrameType::COLOR;
     f.format = rsFrameFormatToNio(img->frame_format);
     f.width = img->width;
     f.height = img->height;
@@ -538,10 +538,10 @@ NioFrame rsImageToNioFrame(const std::shared_ptr<ImageData>& img) {
     return f;
 }
 
-std::vector<NioImuSample> rsImuToNioSamples(const std::shared_ptr<ImuData>& imu) {
-    std::vector<NioImuSample> samples;
-    NioImuSample accel;
-    accel.type = NioFrameType::ACCEL;
+std::vector<DynalgoImuSample> rsImuToNioSamples(const std::shared_ptr<ImuData>& imu) {
+    std::vector<DynalgoImuSample> samples;
+    DynalgoImuSample accel;
+    accel.type = DynalgoFrameType::ACCEL;
     accel.timestampUs = static_cast<uint64_t>(imu->timestamp * 1e6);
     accel.x = imu->linear_acceleration_x;
     accel.y = imu->linear_acceleration_y;
@@ -549,8 +549,8 @@ std::vector<NioImuSample> rsImuToNioSamples(const std::shared_ptr<ImuData>& imu)
     accel.temperature = 0.0f;  // RS-AC1 不提供温度
     samples.push_back(accel);
 
-    NioImuSample gyro;
-    gyro.type = NioFrameType::GYRO;
+    DynalgoImuSample gyro;
+    gyro.type = DynalgoFrameType::GYRO;
     gyro.timestampUs = static_cast<uint64_t>(imu->timestamp * 1e6);
     gyro.x = imu->angular_velocity_x;
     gyro.y = imu->angular_velocity_y;
@@ -564,7 +564,7 @@ std::vector<NioImuSample> rsImuToNioSamples(const std::shared_ptr<ImuData>& imu)
 
 ### 8.4 RsDevice 实现
 
-| NioDevice 方法 | 实现 |
+| DynalgoDevice 方法 | 实现 |
 |----------------|------|
 | `getDeviceInfo()` | VID=0x3840, PID=0x1010, name="RoboSense_AC1", SN=来自 `driver.getDeviceInfo()` 的 SN, connectionType="USB3.0" |
 | `timerSyncWithHost()` | 空操作（RS-AC1 在 driver 内部做 PTP，无需外部调用） |
@@ -576,7 +576,7 @@ std::vector<NioImuSample> rsImuToNioSamples(const std::shared_ptr<ImuData>& imu)
 ### 8.5 RsContext 实现
 
 ```cpp
-class RsContext : public NioContext {
+class RsContext : public DynalgoContext {
 public:
     RsContext() { libusb_init(&usbCtx_); }
 
@@ -596,7 +596,7 @@ public:
         return ac1Count;
     }
 
-    std::shared_ptr<NioDevice> getDevice(uint32_t index) override {
+    std::shared_ptr<DynalgoDevice> getDevice(uint32_t index) override {
         // 返回 RsDevice，封装 device_uuid 用于多设备选择
         return std::make_shared<RsDevice>(index);
     }
@@ -617,7 +617,7 @@ public:
 ### 9.2 RS-AC1 路径
 
 - RS-AC1 **始终为 HW D2C** — 点云已对齐到图像
-- `RsPipeline::getAlignMode() → NioAlignMode::HW`
+- `RsPipeline::getAlignMode() → DynalgoAlignMode::HW`
 - `FusionStreamTask` 在 HW D2C 分支可直接使用（color 和 depth 分辨率不同时需要 resize, 但色彩混合逻辑不变）
 - **特殊**: RS-AC1 depth 为 96×288, color 为 1920×1080; jet colormap 上采样到 1080p 后与 color alpha-blend
 - `nativeFrameSet` 为 `nullptr`（RS 路径无 `ob::FrameSet`），SW D2C 分支不适用
@@ -698,7 +698,7 @@ Source-specific compile definitions and link libraries are set in
 建议在应用启动时自动检测并解绑:
 
 ```cpp
-// nio_rs_device.cpp
+// dynalgo_rs_device.cpp
 static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
     // 遍历 /sys/bus/usb/devices/*/idVendor / idProduct
     // 匹配 vid:pid 后 echo到 unbind
@@ -715,7 +715,7 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 | 回滚步骤 | 命令/动作 |
 |----------|-----------|
 | 禁用 RS-AC1 | cmake 时 `-DENABLE_RS_AC1=OFF`; 代码中 `#ifdef ENABLE_RS_AC1` 包裹所有 RS 相关 include/class |
-| 完全移除 | 删除 `app/driver/robosense/nio_rs_*.hpp/.cpp`; 删除根 CMakeLists.txt 和 app/driver/CMakeLists.txt 中 `if(ENABLE_RS_AC1)` 块 |
+| 完全移除 | 删除 `app/driver/robosense/dynalgo_rs_*.hpp/.cpp`; 删除根 CMakeLists.txt 和 app/driver/CMakeLists.txt 中 `if(ENABLE_RS_AC1)` 块 |
 | 回退 C++ 标准 | `set(CMAKE_CXX_STANDARD 11)` — 仅当 RS-AC1 完全移除时安全 |
 
 ---
@@ -732,7 +732,7 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 | 多 AC1 冲突 | `device_uuid` 未指定 | 为每个 `RSDriverParam.input_param.device_uuid` 设置 USB serial |
 | USBFS 内存不足 | 多设备并发 | `cat /sys/module/usbcore/parameters/usbfs_memory_mb`; 需要 ≥ 128 |
 | C++ 编译错误 (lambda init-capture) | C++ 标准过低 | 确认 CMake 设置 `CMAKE_CXX_STANDARD=14`（已完成） |
-| depthScale 不匹配 | OB=1mm/unit, AC1=5mm/unit | 检查 `NioFrame::depthScale`; fusion colormap 使用 `rawVal * scale / 1000.0` |
+| depthScale 不匹配 | OB=1mm/unit, AC1=5mm/unit | 检查 `DynalgoFrame::depthScale`; fusion colormap 使用 `rawVal * scale / 1000.0` |
 
 ---
 
@@ -740,11 +740,11 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 
 | 阶段 | 内容 | 依赖 | 预估工作量 |
 |------|------|------|-----------|
-| **Phase 4a** | 扩展 `NioDevice`/`NioPipeline` 接口（hasIRSensor, isPointCloudDepth, getAlignMode） | Phase 3 完成 | ✅ 完成 |
+| **Phase 4a** | 扩展 `DynalgoDevice`/`DynalgoPipeline` 接口（hasIRSensor, isPointCloudDepth, getAlignMode） | Phase 3 完成 | ✅ 完成 |
 | **Phase 4b** | 实现 `RsDevice`, `RsPipeline`, `RsContext` | Phase 4a | ✅ 完成 |
 | **Phase 4c** | 实现 `RsFrameAdapter` (rsDepthToNioFrame, rsImageToNioFrame, rsImuToNioSamples) | Phase 4b | ✅ 完成 |
 | **Phase 4d** | CMake 集成 + 构建验证 (C++14 升级, rs_driver subdirectory) | Phase 4c | ✅ 完成 |
-| **Phase 4e** | `CaptureSession` 改用 `NioPipeline` (替换 `ob::Pipeline`); 按 pipeline 类型分发 | Phase 3 完整 + Phase 4d | ✅ 完成 |
+| **Phase 4e** | `CaptureSession` 改用 `DynalgoPipeline` (替换 `ob::Pipeline`); 按 pipeline 类型分发 | Phase 3 完整 + Phase 4d | ✅ 完成 |
 | **Phase 4f** | `main()` 多设备发现分流 (OB + RS-AC1) → `discoverDevices()` 工厂 | Phase 4e | ✅ 完成 |
 | **Phase 5a** | RS-AC1 + OB 双设备功能测试 | Phase 4f | ✅ 完成 |
 
@@ -754,7 +754,7 @@ static bool unbindUvcDriver(uint16_t vid, uint16_t pid) {
 
 | 项目 | 状态 | 需要确认 |
 |------|------|---------|
-| RS-AC1 depthScale 精度 | ✅ 已确认 | OB 管线使用 `scale/1000.0` 得到米; AC1 使用 `distance*0.005`; NioFrame 中 encoding 为 uint16 `depthScale=5.0f`, 后者计算为 `rawVal * 5.0f / 1000.0 = rawVal * 0.005`, 与原始 `distance = rawVal * 0.005` 一致 |
+| RS-AC1 depthScale 精度 | ✅ 已确认 | OB 管线使用 `scale/1000.0` 得到米; AC1 使用 `distance*0.005`; DynalgoFrame 中 encoding 为 uint16 `depthScale=5.0f`, 后者计算为 `rawVal * 5.0f / 1000.0 = rawVal * 0.005`, 与原始 `distance = rawVal * 0.005` 一致 |
 | C++14 升级影响 | ✅ 已完成 | 已在根 CMakeLists.txt 升级至 C++14，构建通过 |
 | udev 规则 | ✅ 已部署 | `/etc/udev/rules.d/99-robosense-ac1.rules` |
 | RS-AC1 多机并行 | ✅ 已支持 | 同一台主机上 2+ 个 AC1 使用 `device_uuid` (USB serial) 区分 |
@@ -815,17 +815,17 @@ RS-AC1 的输出文件与 OB 完全一致:
 | RS ImageData | `vendors/RoboSense/src/rs_driver/msg/image_data_msg.hpp` |
 | RS ImuData | `vendors/RoboSense/src/rs_driver/msg/imu_data_msg.hpp` |
 | RS PointCloudMsg | `vendors/RoboSense/src/rs_driver/msg/point_cloud_msg.hpp` |
-| Nio types | `app/core/nio_types.hpp` |
-| Nio frame | `app/core/nio_frame.hpp` |
-| Nio device | `app/core/nio_device.hpp` |
-| Nio OB device | `app/driver/orbbec/nio_ob_device.hpp/.cpp` |
-| Nio OB adapter | `app/driver/orbbec/nio_ob_adapter.hpp` |
-| Nio OB frame adapter | `app/driver/orbbec/nio_ob_frame_adapter.hpp` |
-| Nio RS device | `app/driver/robosense/nio_rs_device.hpp/.cpp` |
-| Nio RS frame adapter | `app/driver/robosense/nio_rs_frame_adapter.hpp` |
-| CaptureSession | `app/capture/nio_capture_session.hpp/.cpp` |
-| FusionStreamTask | `app/capture/nio_stream_tasks.hpp/.cpp` |
-| Driver factory | `app/driver/nio_driver_factory.hpp/.cpp` |
+| Nio types | `app/core/dynalgo_types.hpp` |
+| Nio frame | `app/core/dynalgo_frame.hpp` |
+| Nio device | `app/core/dynalgo_device.hpp` |
+| Nio OB device | `app/driver/orbbec/dynalgo_ob_device.hpp/.cpp` |
+| Nio OB adapter | `app/driver/orbbec/dynalgo_ob_adapter.hpp` |
+| Nio OB frame adapter | `app/driver/orbbec/dynalgo_ob_frame_adapter.hpp` |
+| Nio RS device | `app/driver/robosense/dynalgo_rs_device.hpp/.cpp` |
+| Nio RS frame adapter | `app/driver/robosense/dynalgo_rs_frame_adapter.hpp` |
+| CaptureSession | `app/capture/dynalgo_capture_session.hpp/.cpp` |
+| FusionStreamTask | `app/capture/dynalgo_stream_tasks.hpp/.cpp` |
+| Driver factory | `app/driver/dynalgo_driver_factory.hpp/.cpp` |
 | app 入口 | `app/dynamic_algo_cam/dynamic_algo_cam.cpp` |
 
 ## 最新代码变更（2025-03）
@@ -836,25 +836,25 @@ RS-AC1 的输出文件与 OB 完全一致:
 
 将厂商特定的硬件常量提取到独立的 `spec` 文件中，实现零运行时开销的编译期常量管理：
 
-- `app/driver/robosense/nio_rs_spec.hpp` — RoboSense AC1 的 `constexpr` 硬件常量（分辨率、fps、格式、USB ID）
-- `app/driver/orbbec/nio_ob_spec.hpp` — Orbbec 的深度精度映射表、颜色格式策略等 `constexpr` 常量
+- `app/driver/robosense/dynalgo_rs_spec.hpp` — RoboSense AC1 的 `constexpr` 硬件常量（分辨率、fps、格式、USB ID）
+- `app/driver/orbbec/dynalgo_ob_spec.hpp` — Orbbec 的深度精度映射表、颜色格式策略等 `constexpr` 常量
 
 所有常量使用 `constexpr` 定义，编译期确定，零运行时开销。
 
 ### 2. 类型系统提取到 `types` namespace
 
-`NioFormat`、`NioFrameType`、`NioAlignMode` 已从 `nio` 命名空间提取到 `nio::types` 子命名空间，通过 `using` 保持向后兼容：
+`DynalgoFormat`、`DynalgoFrameType`、`DynalgoAlignMode` 已从 `dynalgo` 命名空间提取到 `dynalgo::types` 子命名空间，通过 `using` 保持向后兼容：
 
 ```cpp
-namespace nio {
+namespace dynalgo {
     namespace types {
-        enum class NioFormat { ... };
-        enum class NioFrameType { ... };
-        enum class NioAlignMode { ... };
+        enum class DynalgoFormat { ... };
+        enum class DynalgoFrameType { ... };
+        enum class DynalgoAlignMode { ... };
     }
-    using types::NioFormat;
-    using types::NioFrameType;
-    using types::NioAlignMode;
+    using types::DynalgoFormat;
+    using types::DynalgoFrameType;
+    using types::DynalgoAlignMode;
 }
 ```
 
@@ -863,9 +863,9 @@ namespace nio {
 `discoverDevices()` 增加 `DriverConfig` 参数，支持按厂商筛选设备：
 
 ```cpp
-nio::DriverConfig cfg;
-cfg.vendor = nio::DriverVendor::ROBOSENSE;  // 可选 ALL / ORBBEC / ROBOSENSE
-auto devices = nio::discoverDevices(cfg);
+dynalgo::DriverConfig cfg;
+cfg.vendor = dynalgo::DriverVendor::ROBOSENSE;  // 可选 ALL / ORBBEC / ROBOSENSE
+auto devices = dynalgo::discoverDevices(cfg);
 ```
 
 - `DriverVendor::ALL`（默认）：发现所有厂商设备
@@ -877,7 +877,7 @@ auto devices = nio::discoverDevices(cfg);
 引入 `ConfigValidator` 接口及厂商实现，在设备创建前验证配置合法性：
 
 ```cpp
-auto validator = nio::createValidator(nio::DriverVendor::ORBBEC);
+auto validator = dynalgo::createValidator(dynalgo::DriverVendor::ORBBEC);
 if (validator && !validator->validateStream(config)) {
     std::cerr << "Validation failed: " << validator->lastError() << std::endl;
     return false;
@@ -890,9 +890,9 @@ if (validator && !validator->validateStream(config)) {
 - **设备信息验证**：VID/PID 匹配、固件版本检查
 
 实现文件：
-- `app/core/nio_config_validator.hpp/.cpp` — 抽象接口 + 工厂函数
-- `app/driver/orbbec/nio_ob_validator.hpp/.cpp` — Orbbec 验证实现
-- `app/driver/robosense/nio_rs_validator.hpp/.cpp` — RoboSense AC1 验证实现
+- `app/core/dynalgo_config_validator.hpp/.cpp` — 抽象接口 + 工厂函数
+- `app/driver/orbbec/dynalgo_ob_validator.hpp/.cpp` — Orbbec 验证实现
+- `app/driver/robosense/dynalgo_rs_validator.hpp/.cpp` — RoboSense AC1 验证实现
 
 ### 5. SDL 窗口退出修复
 

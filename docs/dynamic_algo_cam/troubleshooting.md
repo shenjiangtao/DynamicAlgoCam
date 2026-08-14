@@ -242,11 +242,11 @@ echo "options usbcore usbfs_memory_mb=256" | sudo tee /etc/modprobe.d/usbcore.co
 cmake .. -DENABLE_ORBBEC=ON    # 或 -DENABLE_RS_AC1=ON
 ```
 
-### 现象：链接错误 `undefined reference to nio::discoverDevices()`
+### 现象：链接错误 `undefined reference to dynalgo::discoverDevices()`
 
-**原因**：`nio_driver_factory.cpp` 未被编译。此文件在 `ENABLE_ORBBEC OR ENABLE_RS_AC1` 时应加入 `nio_drivers` 目标。
+**原因**：`dynalgo_driver_factory.cpp` 未被编译。此文件在 `ENABLE_ORBBEC OR ENABLE_RS_AC1` 时应加入 `dynalgo_drivers` 目标。
 
-**确认**：检查 `app/driver/CMakeLists.txt` 中存在 `if(ENABLE_ORBBEC OR ENABLE_RS_AC1)` 块包含 `nio_driver_factory.cpp`。
+**确认**：检查 `app/driver/CMakeLists.txt` 中存在 `if(ENABLE_ORBBEC OR ENABLE_RS_AC1)` 块包含 `dynalgo_driver_factory.cpp`。
 
 ### 现象：OrbbecSDK 链接失败
 
@@ -261,7 +261,7 @@ cmake .. -DENABLE_ORBBEC=ON    # 或 -DENABLE_RS_AC1=ON
 
 ### 查看日志
 
-程序日志默认写入与录制数据相同的目录下的 `nio.log`。
+程序日志默认写入与录制数据相同的目录下的 `dynalgo.log`。
 
 ### 关键日志行含义
 

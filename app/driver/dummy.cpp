@@ -1,4 +1,4 @@
-// Copyright (c) NIO Inc. All Rights Reserved.
+// Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// Dummy source to keep nio_drivers valid when all drivers are disabled.
+// Dummy source to keep dynalgo_drivers valid when all drivers are disabled.

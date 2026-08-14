@@ -3,24 +3,24 @@
 
 #include "utils.hpp"
 #include "utils_c.h"
-#include "nio_common.hpp"
+#include "dynalgo_common.hpp"
 
 #include <chrono>
 #include <linux/limits.h>
 #include <unistd.h>
 
-namespace nio {
+namespace dynalgo {
 char waitForKeyPressed(uint32_t timeout_ms) {
-    return nio_wait_for_key_press(timeout_ms);
+    return dynalgo_wait_for_key_press(timeout_ms);
 }
 
-// Forward to the single canonical time provider in nio_common.cpp.
+// Forward to the single canonical time provider in dynalgo_common.cpp.
 uint64_t getNowTimesMs() {
-    return nio::getTimestampMsInt();
+    return dynalgo::getTimestampMsInt();
 }
 
 int getInputOption() {
-    char inputOption = nio::waitForKeyPressed();
+    char inputOption = dynalgo::waitForKeyPressed();
     if (inputOption == ESC_KEY) {
         return -1;
     }
@@ -28,7 +28,7 @@ int getInputOption() {
 }
 
 bool supportAnsiEscape() {
-    if (nio_support_ansi_escape() == 0) {
+    if (dynalgo_support_ansi_escape() == 0) {
         return false;
     }
     return true;
@@ -47,4 +47,4 @@ std::string getExeDir() {
     return path.substr(0, pos);
 }
 
-} // namespace nio
+} // namespace dynalgo

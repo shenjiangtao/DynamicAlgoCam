@@ -25,17 +25,17 @@ See [docs/device_comparison.md](docs/device_comparison.md) for detailed hardware
 ┌─────────────────────────────────────────────────┐
 │  dynamic_algo_cam  (executable)                │
 ├─────────────────────────────────────────────────┤
-│  nio_capture         (capture logic + encoding) │
+│  dynalgo_capture         (capture logic + encoding) │
 ├─────────────────────────────────────────────────┤
-│  nio_drivers         (vendor SDK adapters)       │
+│  dynalgo_drivers         (vendor SDK adapters)       │
 ├─────────────────────────────────────────────────┤
-│  nio_core            (SDK-neutral types)        │
+│  dynalgo_core            (SDK-neutral types)        │
 └─────────────────────────────────────────────────┘
-  + nio_opencv_plugin (optional, if OpenCV found)
+  + dynalgo_opencv_plugin (optional, if OpenCV found)
   + app/models/         (algorithm / inference models, Python; NOT built by CMake)
 ```
 
-Vendor SDK headers (`libobsensor/`, `rs_driver/`) are **only** allowed in `app/driver/`. All other layers are SDK-agnostic, communicating through abstract `NioDevice` / `NioPipeline` / `NioContext` interfaces.
+Vendor SDK headers (`libobsensor/`, `rs_driver/`) are **only** allowed in `app/driver/`. All other layers are SDK-agnostic, communicating through abstract `DynalgoDevice` / `DynalgoPipeline` / `DynalgoContext` interfaces.
 
 Algorithm / inference model packages live under `app/models/<name>/` (e.g. `app/models/yolov8/`). These are standalone Python packages and are **not** part of the C++ build — see [`app/models/README.md`](app/models/README.md) for the layout convention and license disclosure.
 
@@ -50,7 +50,7 @@ Algorithm / inference model packages live under `app/models/<name>/` (e.g. `app/
 | FFmpeg (libavcodec, libavutil, libswscale, libavformat, libswresample) | Yes | pkg-config |
 | SDL2 | Yes | pkg-config |
 | pthreads | Yes | System |
-| OpenCV | No | Optional — enables `nio_opencv_plugin` |
+| OpenCV | No | Optional — enables `dynalgo_opencv_plugin` |
 
 ### Vendor SDK Options
 
@@ -99,7 +99,7 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 ./dynamic_algo_cam -c "305" "336L"
 
 # Custom save directory
-./dynamic_algo_cam -s /HDD/nio_capture
+./dynamic_algo_cam -s /HDD/dynalgo_capture
 
 # Adjust D2C fusion parameters
 ./dynamic_algo_cam --alpha 0.7 --depth-min 0.2 --depth-max 3.0

@@ -10,11 +10,11 @@
 extern "C" {
 #endif
 
-uint64_t nio_get_current_timestamp_ms(void);
+uint64_t dynalgo_get_current_timestamp_ms(void);
 
-char nio_wait_for_key_press(uint32_t timeout_ms);
+char dynalgo_wait_for_key_press(uint32_t timeout_ms);
 
-int nio_support_ansi_escape(void);
+int dynalgo_support_ansi_escape(void);
 
 #ifdef __cplusplus
 }

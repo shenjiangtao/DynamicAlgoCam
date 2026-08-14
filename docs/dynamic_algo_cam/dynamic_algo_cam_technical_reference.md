@@ -6,7 +6,7 @@
 
 ## 1. 概述
 
-`dynamic_algo_cam` 是基于 NioDevice/NioPipeline 抽象层的多厂商多设备并发采集工具。它自动发现所有已连接的 Orbbec 深度摄像头和 RoboSense RS-AC1 LiDAR，为每台设备建立独立的采集管道，将彩色、深度、红外流编码为 H.264 文件，深度原始数据写入 `.raw` 二进制文件，IMU 数据写入 CSV 文本文件。支持 D2C（深度对齐到彩色）融合：深度帧 jet colormap 着色后与彩色帧 alpha 混合，输出融合 H.264 文件。
+`dynamic_algo_cam` 是基于 DynalgoDevice/DynalgoPipeline 抽象层的多厂商多设备并发采集工具。它自动发现所有已连接的 Orbbec 深度摄像头和 RoboSense RS-AC1 LiDAR，为每台设备建立独立的采集管道，将彩色、深度、红外流编码为 H.264 文件，深度原始数据写入 `.raw` 二进制文件，IMU 数据写入 CSV 文本文件。支持 D2C（深度对齐到彩色）融合：深度帧 jet colormap 着色后与彩色帧 alpha 混合，输出融合 H.264 文件。
 
 **适用受众**：
 - **集成开发者**：需要将多设备采集嵌入自有数据管线
@@ -21,15 +21,15 @@
 
 | 依赖 | 最低版本 | 所属层 | 用途 |
 |------|----------|--------|------|
-| **OrbbecSDK v2** (`libobsensor`) | SDK v2.x | nio_drivers | 设备发现、Pipeline 管理、帧回调、D2C 对齐 |
-| **FFmpeg libavcodec** | 4.x+ | nio_capture | H.264 编码 (libx264)、MJPEG 解码 |
-| **FFmpeg libswscale** | 4.x+ | nio_capture | 像素格式转换 (src→YUV420P) |
-| **FFmpeg libavutil** | 4.x+ | nio_capture | AVFrame/AVPacket 分配 |
-| **FFmpeg libavformat** | 4.x+ | nio_capture | 格式支持（链接要求） |
-| **FFmpeg libswresample** | 4.x+ | nio_capture | 链接要求 |
-| **SDL2** | 2.x | nio_capture | 实时预览窗口 |
-| **pthreads** | 标准 | nio_core | 线程支持 |
-| **OpenCV** (可选) | 3.x+ | nio_opencv_plugin | 额外可视化功能 |
+| **OrbbecSDK v2** (`libobsensor`) | SDK v2.x | dynalgo_drivers | 设备发现、Pipeline 管理、帧回调、D2C 对齐 |
+| **FFmpeg libavcodec** | 4.x+ | dynalgo_capture | H.264 编码 (libx264)、MJPEG 解码 |
+| **FFmpeg libswscale** | 4.x+ | dynalgo_capture | 像素格式转换 (src→YUV420P) |
+| **FFmpeg libavutil** | 4.x+ | dynalgo_capture | AVFrame/AVPacket 分配 |
+| **FFmpeg libavformat** | 4.x+ | dynalgo_capture | 格式支持（链接要求） |
+| **FFmpeg libswresample** | 4.x+ | dynalgo_capture | 链接要求 |
+| **SDL2** | 2.x | dynalgo_capture | 实时预览窗口 |
+| **pthreads** | 标准 | dynalgo_core | 线程支持 |
+| **OpenCV** (可选) | 3.x+ | dynalgo_opencv_plugin | 额外可视化功能 |
 
 ### 2.2 系统与编译要求
 
@@ -61,25 +61,25 @@
 ```
 ┌─────────────────────────────────────────────────┐
 │  dynamic_algo_cam (executable)                  │  main, CLI (parseArgs),
-│  → nio::core + nio::drivers + nio::capture       │  signalHandler, 采集主循环
+│  → dynalgo::core + dynalgo::drivers + dynalgo::capture       │  signalHandler, 采集主循环
 ├─────────────────────────────────────────────────┤
-│  nio_capture (static lib, nio::capture)          │  CaptureSession,
+│  dynalgo_capture (static lib, dynalgo::capture)          │  CaptureSession,
 │                                                   │  H264Encoder, StreamTask,
-│  依赖: nio::core + FFmpeg + SDL2                 │  FrameConsumer, SDLViewer
+│  依赖: dynalgo::core + FFmpeg + SDL2                 │  FrameConsumer, SDLViewer
 ├─────────────────────────────────────────────────┤
-│  nio_drivers (static lib, nio::drivers)           │  discoverDevices() 工厂
+│  dynalgo_drivers (static lib, dynalgo::drivers)           │  discoverDevices() 工厂
 │  ├─ orbbec/  (ENABLE_ORBBEC)                    │  ObDevice, ObPipeline, ObContext
 │  ├─ robosense/ (ENABLE_RS_AC1)                  │  RsDevice, RsPipeline, RsContext
-│  └─ nio_driver_factory (either enabled)          │
-│  依赖: nio::core + ob::OrbbecSDK | rs_driver    │
+│  └─ dynalgo_driver_factory (either enabled)          │
+│  依赖: dynalgo::core + ob::OrbbecSDK | rs_driver    │
 ├─────────────────────────────────────────────────┤
-│  nio_core (static lib, nio::core)                │  NioDevice (abstract),
-│                                                   │  NioPipeline (abstract),
-│  依赖: Threads::Threads                          │  NioContext (abstract),
-│                                                   │  NioFrame, NioFrameSet, NioFormat,
+│  dynalgo_core (static lib, dynalgo::core)                │  DynalgoDevice (abstract),
+│                                                   │  DynalgoPipeline (abstract),
+│  依赖: Threads::Threads                          │  DynalgoContext (abstract),
+│                                                   │  DynalgoFrame, DynalgoFrameSet, DynalgoFormat,
 │                                                   │  Logger, StreamTask, FrameQueue
 └─────────────────────────────────────────────────┘
-  + nio_opencv_plugin (conditional, if OpenCV found)
+  + dynalgo_opencv_plugin (conditional, if OpenCV found)
 ```
 
 **硬性规则**：`ENABLE_ORBBEC` / `ENABLE_RS_AC1` 宏和厂商 SDK 头文件仅允许出现在 `app/driver/`。`app/core/` 和 `app/capture/` 必须零厂商 SDK 依赖。
@@ -87,28 +87,28 @@
 ### 3.2 类继承体系
 
 ```
-NioDevice (abstract, app/core/nio_device.hpp)
-├── ObDevice    (app/driver/orbbec/nio_ob_device.hpp)     [ENABLE_ORBBEC]
-└── RsDevice    (app/driver/robosense/nio_rs_device.hpp)  [ENABLE_RS_AC1]
+DynalgoDevice (abstract, app/core/dynalgo_device.hpp)
+├── ObDevice    (app/driver/orbbec/dynalgo_ob_device.hpp)     [ENABLE_ORBBEC]
+└── RsDevice    (app/driver/robosense/dynalgo_rs_device.hpp)  [ENABLE_RS_AC1]
 
-NioPipeline (abstract)
+DynalgoPipeline (abstract)
 ├── ObPipeline  [ENABLE_ORBBEC]     — wraps ob::Pipeline
 └── RsPipeline  [ENABLE_RS_AC1]     — wraps rs_driver
 
-NioContext (abstract)
+DynalgoContext (abstract)
 ├── ObContext    [ENABLE_ORBBEC]    — OrbbecSDK device enumeration
 └── RsContext    [ENABLE_RS_AC1]    — rs_driver USB device enumeration
 
-NioD2CAlign (abstract)
+DynalgoD2CAlign (abstract)
 └── ObD2CAlign  [ENABLE_ORBBEC]    — wraps ob::Align
 
-StreamTask (base, app/core/nio_thread.hpp)
+StreamTask (base, app/core/dynalgo_thread.hpp)
 ├── EncodeStreamTask     — H.264 encode + file write
 ├── DepthRawTask         — raw depth + PCD write
 ├── FusionStreamTask     — alpha-blended depth-over-color + encode
 └── ImuStreamTask        — IMU CSV write
 
-FrameConsumer (base, app/capture/nio_frame_consumer.hpp)
+FrameConsumer (base, app/capture/dynalgo_frame_consumer.hpp)
 ├── ColorFrameConsumer
 ├── DepthFrameConsumer
 ├── IRFrameConsumer
@@ -157,11 +157,11 @@ SDK 回调线程 (ob::Pipeline / rs_driver)
 
 | 目标 | 类型 | 别名 | 源文件 | 链接依赖 | 公开定义 |
 |------|------|------|--------|----------|----------|
-| `nio_core` | STATIC | `nio::core` | utils.c, utils.cpp, nio_common.cpp, nio_frame.cpp, nio_thread.cpp | `Threads::Threads` | — |
-| `nio_drivers` | STATIC | `nio::drivers` | dummy.cpp + 条件编译: orbbec/*.cpp, robosense/*.cpp, nio_driver_factory.cpp | `nio::core` + `ob::OrbbecSDK` / `usb-ac-static`+`uvc-ac-static` | `ENABLE_ORBBEC`, `ENABLE_RS_AC1`, `DISABLE_PCAP_PARSE`, `ENABLE_USB`, `ENABLE_IMU_PARSE`, `ENABLE_IMAGE_PARSE` |
-| `nio_capture` | STATIC | `nio::capture` | nio_h264_encoder.cpp, nio_stream_io.cpp, nio_color_convert.cpp, nio_sdl_viewer.cpp, nio_stream_tasks.cpp, nio_capture_session.cpp, nio_frame_queue.cpp, nio_frame_consumer.cpp | `nio::core`, FFmpeg (5 libs), SDL2 | — |
-| `dynamic_algo_cam` | EXEC | — | dynamic_algo_cam.cpp | `nio::core`, `nio::drivers`, `nio::capture` | `GIT_COMMIT_HASH` (PRIVATE) |
-| `nio_opencv_plugin` | STATIC (条件) | `nio::opencv_plugin` | utils_opencv.cpp, nio_color_convert_cv.cpp | `nio::core`, `nio::capture`, OpenCV | — |
+| `dynalgo_core` | STATIC | `dynalgo::core` | utils.c, utils.cpp, dynalgo_common.cpp, dynalgo_frame.cpp, dynalgo_thread.cpp | `Threads::Threads` | — |
+| `dynalgo_drivers` | STATIC | `dynalgo::drivers` | dummy.cpp + 条件编译: orbbec/*.cpp, robosense/*.cpp, dynalgo_driver_factory.cpp | `dynalgo::core` + `ob::OrbbecSDK` / `usb-ac-static`+`uvc-ac-static` | `ENABLE_ORBBEC`, `ENABLE_RS_AC1`, `DISABLE_PCAP_PARSE`, `ENABLE_USB`, `ENABLE_IMU_PARSE`, `ENABLE_IMAGE_PARSE` |
+| `dynalgo_capture` | STATIC | `dynalgo::capture` | dynalgo_h264_encoder.cpp, dynalgo_stream_io.cpp, dynalgo_color_convert.cpp, dynalgo_sdl_viewer.cpp, dynalgo_stream_tasks.cpp, dynalgo_capture_session.cpp, dynalgo_frame_queue.cpp, dynalgo_frame_consumer.cpp | `dynalgo::core`, FFmpeg (5 libs), SDL2 | — |
+| `dynamic_algo_cam` | EXEC | — | dynamic_algo_cam.cpp | `dynalgo::core`, `dynalgo::drivers`, `dynalgo::capture` | `GIT_COMMIT_HASH` (PRIVATE) |
+| `dynalgo_opencv_plugin` | STATIC (条件) | `dynalgo::opencv_plugin` | utils_opencv.cpp, dynalgo_color_convert_cv.cpp | `dynalgo::core`, `dynalgo::capture`, OpenCV | — |
 
 ### 4.1 根 CMakeLists.txt 厂商配置
 
@@ -362,7 +362,7 @@ else:
 
 ### 7.5 三维点云：Driver 优先 + 自实现反投影双轨
 
-`PointcloudFrameConsumer::consume()` 对每帧 `NioFrameSet` 应用三条策略，确保数据来源清晰、可降级：
+`PointcloudFrameConsumer::consume()` 对每帧 `DynalgoFrameSet` 应用三条策略，确保数据来源清晰、可降级：
 
 1. **Driver 已产出 POINT 帧**（`ObPipeline::start()` 内 `pointCloudFilter_->process(obFs)` 已对齐坐标，adv 部分请见 §4.1）：**主路径直接使用**，`pcdTask_`
    enqueue 该帧 wire 数据 → `PcdWriterTask` 写 PCD/PCS。后续算法消费的也是这条帧。
@@ -375,7 +375,7 @@ else:
    跳过 `Z ≤ 0` 无效像素，把有效点封装为 `PcdLayout::obXyz()` 自描述 wire 格式
    （`12B 头 + 1×24B PcdFieldDesc + N×12B float3`）后 enqueue 给 `pcdTask_`，**PcdWriterTask
    无需区分数据来源**。
-3. **Driver 与自反投影都存在**：Driver 帧优先（步骤 1），同时用 `NIO_LOG_DEBUG_S` 输出双轨对比：
+3. **Driver 与自反投影都存在**：Driver 帧优先（步骤 1），同时用 `DYNALGO_LOG_DEBUG_S` 输出双轨对比：
    - 双方点数（`driverPts` vs `ownPts`）
    - 前 8 个点的 XYZ 均值（`sample-mean[driver]=(dx,dy,dz)` vs `sample-mean[own]=(ox,oy,oz)`）
 

@@ -1,4 +1,4 @@
-// Copyright (c) NIO Inc. All Rights Reserved.
+// Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 //
 // dynamic_algo_cam.cpp — Multi-device capture application.
@@ -9,16 +9,16 @@
 // Usage:
 //   ./dynamic_algo_cam                                          # all devices
 //   ./dynamic_algo_cam -c "305" "336L"                          # filter by camera type
-//   ./dynamic_algo_cam -s /HDD/nio_capture                      # custom save directory
-//   ./dynamic_algo_cam -c "305" -s /HDD/nio_capture --alpha 0.6 # combined
+//   ./dynamic_algo_cam -s /HDD/dynalgo_capture                      # custom save directory
+//   ./dynamic_algo_cam -c "305" -s /HDD/dynalgo_capture --alpha 0.6 # combined
 
-#include "nio_capture_config.hpp"
-#include "nio_capture_session.hpp"
-#include "nio_common.hpp"
-#include "nio_device.hpp"
-#include "nio_driver_factory.hpp"
-#include "nio_log.hpp"
-#include "nio_sdl_viewer.hpp"
+#include "dynalgo_capture_config.hpp"
+#include "dynalgo_capture_session.hpp"
+#include "dynalgo_common.hpp"
+#include "dynalgo_device.hpp"
+#include "dynalgo_driver_factory.hpp"
+#include "dynalgo_log.hpp"
+#include "dynalgo_sdl_viewer.hpp"
 #include "utils.hpp"
 #include "event.hpp"
 #ifdef ENABLE_EVENT_SIM
@@ -42,7 +42,7 @@
 #define GIT_COMMIT_HASH "unknown"
 #endif
 
-using namespace nio;
+using namespace dynalgo;
 
 int main(int argc, char** argv) try {
     std::signal(SIGINT, signalHandler);
@@ -53,14 +53,14 @@ int main(int argc, char** argv) try {
     // Initialize logger after determining the actual output directory (outputRootDir).
     // This ensures logs are stored alongside captured data.
     // (Logger will be initialized later, after outputRootDir is computed.)
-    NIO_LOG_SET_LEVEL(nio::LogLevel::TRACE);
-    // Note: NIO_LOG_INIT will be called after outputRootDir is defined.
+    DYNALGO_LOG_SET_LEVEL(dynalgo::LogLevel::TRACE);
+    // Note: DYNALGO_LOG_INIT will be called after outputRootDir is defined.
     std::cout << "Git commit: " << GIT_COMMIT_HASH << std::endl;
     // Log statements will be emitted after logger init.
-    // NIO_LOG_INFO_S will be called later when outputRootDir is ready.
+    // DYNALGO_LOG_INFO_S will be called later when outputRootDir is ready.
 
     for (size_t i = 0; i < cfg.cameraFilter.size(); i++) {
-        NIO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
+        DYNALGO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
 
     // Discover all devices via the driver factory
@@ -69,7 +69,7 @@ int main(int argc, char** argv) try {
 
     if (totalDevices < 1) {
         std::cerr << "No device found!" << std::endl;
-        NIO_LOG_FATAL("No device found!");
+        DYNALGO_LOG_FATAL("No device found!");
         return -1;
     }
 
@@ -78,15 +78,15 @@ int main(int argc, char** argv) try {
     std::string outputRootDir = outputBaseDir + "/" + sessionTimestamp;
     mkdirp(outputRootDir);
     // Initialize logger now that we have the final output directory.
-    NIO_LOG_INIT("dynamic_algo_cam", outputRootDir);
-    NIO_LOG_INFO_S("Logger initialized to directory: " << outputRootDir);
+    DYNALGO_LOG_INIT("dynamic_algo_cam", outputRootDir);
+    DYNALGO_LOG_INFO_S("Logger initialized to directory: " << outputRootDir);
     // Log build and run information now that logger is ready.
-    NIO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
-    NIO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
+    DYNALGO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
+    DYNALGO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
                    << " saveDir=" << outputRootDir << " alpha=" << cfg.alpha
                    << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
                    << " fusion=" << (cfg.enableFusion ? "on" : "off"));
-    NIO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
+    DYNALGO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
     // Check USB memory for multi-device
     {
@@ -133,14 +133,14 @@ int main(int argc, char** argv) try {
 
         auto session = std::make_shared<CaptureSession>(dd.device, dd.pipeline, safeName, deviceOutputDir, cfg);
         if (!session->setup()) {
-            NIO_LOG_ERROR_S("Setup failed for device: " << safeName);
+            DYNALGO_LOG_ERROR_S("Setup failed for device: " << safeName);
             continue;
         }
 
         session->startImuPipeline();
         session->startVideoPipeline(viewer, cfg.noShow);
         if (!session->hasVideoPipeline()) {
-            NIO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping");
+            DYNALGO_LOG_WARN_S("Video pipeline not started for " << safeName << ", skipping");
             sessions.push_back(session);
             continue;
         }
@@ -156,7 +156,7 @@ int main(int argc, char** argv) try {
 
     if (sessions.empty()) {
         std::cerr << "No matching devices found!" << std::endl;
-        NIO_LOG_FATAL("No matching devices found!");
+        DYNALGO_LOG_FATAL("No matching devices found!");
         return -1;
     }
 
@@ -223,11 +223,11 @@ int main(int argc, char** argv) try {
     simulator.start({{0, "E0"}, {1200, "E1"}, {2000, "E2"}});
 #endif
 
-    auto lastReportTime = nio::getNowTimesMs();
+    auto lastReportTime = dynalgo::getNowTimesMs();
     uint32_t waitTime = 1000;
 
     while (g_running) {
-        auto key = nio::waitForKeyPressed(waitTime);
+        auto key = dynalgo::waitForKeyPressed(waitTime);
         if (key == ESC_KEY || key == 'q' || key == 'Q') {
             g_running = false;
             break;
@@ -235,9 +235,9 @@ int main(int argc, char** argv) try {
 
         // Insert real event detection here – call eventSink(Event(...))
         // Example placeholder (replace with actual trigger logic):
-        // if (someCondition) eventSink(Event("E3", nio::getNowTimesMs()));
+        // if (someCondition) eventSink(Event("E3", dynalgo::getNowTimesMs()));
 
-        uint64_t now = nio::getNowTimesMs();
+        uint64_t now = dynalgo::getNowTimesMs();
         if (!eventWindow.shouldContinue(now)) {
             std::cout << "\n=== Event window expired, stopping recording ===" << std::endl;
             g_running = false;
@@ -266,11 +266,11 @@ int main(int argc, char** argv) try {
     viewer.close();
 
     std::cout << "All recordings saved to: " << outputRootDir << "/" << std::endl;
-    NIO_LOG_SHUTDOWN();
+    DYNALGO_LOG_SHUTDOWN();
     return 0;
 } catch (std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;
-    NIO_LOG_FATAL_S("Exception: " << e.what());
-    NIO_LOG_SHUTDOWN();
+    DYNALGO_LOG_FATAL_S("Exception: " << e.what());
+    DYNALGO_LOG_SHUTDOWN();
     return -1;
 }

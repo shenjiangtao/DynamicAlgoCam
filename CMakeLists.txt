@@ -1,18 +1,18 @@
-# Copyright (c) NIO Inc. All Rights Reserved.
+# Copyright (c) shenjiangtao. All Rights Reserved.
 # Licensed under the MIT License.
 #
-# NIO multi-device capture project — root entry point.
+# DynamicAlgoCam multi-device capture project — root entry point.
 #
 # Directory layout:
 #   vendors/OrbbecSDK/   — Orbbec depth camera SDK (vendored copy)
 #   vendors/RoboSense/   — RoboSense LiDAR driver (vendored copy)
-#   app/                  — NIO application layer (core / driver / capture / ...)
-#   docs/                 — NIO-specific documentation
-#   scripts/              — NIO-specific scripts
+#   app/                  — DynamicAlgoCam application layer (core / driver / capture / ...)
+#   docs/                 — DynamicAlgoCam documentation
+#   scripts/              — DynamicAlgoCam scripts
 
 cmake_minimum_required(VERSION 3.10)
 
-project(NioCapture VERSION 1.0.0 LANGUAGES CXX C)
+project(DynalgoCapture VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -20,7 +20,7 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(NIO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(DYNALGO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(ENABLE_ORBBEC "Enable Orbbec device support" ON)
 option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
@@ -30,20 +30,20 @@ option(ENABLE_EVENT_SIM "Enable synthetic event simulator for testing" OFF)
 # optimized. Developers wanting debug symbols pass -DCMAKE_BUILD_TYPE=Debug.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-    message(STATUS "NIO: CMAKE_BUILD_TYPE not set — defaulting to Release")
+    message(STATUS "DYNALGO: CMAKE_BUILD_TYPE not set — defaulting to Release")
 endif()
 
 # Release/RelWithDebInfo: replace CMake's default -O2 with -O3, fold in
 # -march=native + -DNDEBUG (the latter is already added by CMake for
 # Release, but explicit is better when overriding -O level). Bounded to
 # GCC/Clang — MSVC uses /O2 by default and is left alone.
-set(NIO_RELEASE_FLAGS "")
+set(DYNALGO_RELEASE_FLAGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(NIO_RELEASE_FLAGS "-O3;-march=native;-DNDEBUG")
+    set(DYNALGO_RELEASE_FLAGS "-O3;-march=native;-DNDEBUG")
 endif()
 foreach(_cfg RELEASE RELWITHDEBINFO)
     foreach(_lang C CXX)
-        foreach(_flag IN LISTS NIO_RELEASE_FLAGS)
+        foreach(_flag IN LISTS DYNALGO_RELEASE_FLAGS)
             add_compile_options("$<$<AND:$<CONFIG:${_cfg}>,$<COMPILE_LANGUAGE:${_lang}>>:${_flag}>")
         endforeach()
     endforeach()

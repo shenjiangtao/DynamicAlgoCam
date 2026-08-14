@@ -1,9 +1,9 @@
-# Copyright (c) NIO Inc. All Rights Reserved.
+# Copyright (c) shenjiangtao. All Rights Reserved.
 # Licensed under the MIT License.
 #
 # dynamic_algo_cam — Multi-device capture application.
 # Standalone application entry point (main).
-# Links against the layered libraries: nio_core, nio_drivers, nio_capture.
+# Links against the layered libraries: dynalgo_core, dynalgo_drivers, dynalgo_capture.
 
 cmake_minimum_required(VERSION 3.10)
 project(dynamic_algo_cam)
@@ -21,7 +21,7 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 
 execute_process(
     COMMAND git rev-parse --short HEAD
-    WORKING_DIRECTORY ${NIO_PROJECT_ROOT_DIR}
+    WORKING_DIRECTORY ${DYNALGO_PROJECT_ROOT_DIR}
     OUTPUT_VARIABLE GIT_COMMIT_SHORT
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
@@ -40,9 +40,9 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME}
-    nio::core
-    nio::drivers
-    nio::capture
+    dynalgo::core
+    dynalgo::drivers
+    dynalgo::capture
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

@@ -72,50 +72,50 @@ combined work 的一部分对外发布，整体受 GPL-3.0 copyleft 约束。三
 
 工程主体（C++ 采集应用）需要一个**SDK-neutral 的模型推理接入点**，让 YOLOv8 或
 后续其它模型可在不被采集主流程耦合的前提下接入。该抽象层落在 `app/core/`，与
-现有 `NioDevice` / `NioPipeline` 同级，**不引入任何推理 SDK 依赖**：
+现有 `DynalgoDevice` / `DynalgoPipeline` 同级，**不引入任何推理 SDK 依赖**：
 
 | 文件 | 作用 |
 |------|------|
-| `app/core/nio_model.hpp` | `NioModelType` 枚举、`NioDetectionResult` 结构、`NioModelBackend` 抽象类、`NioModelConfig` |
-| `app/core/nio_model_factory.hpp` | `createModelBackend(type)` 工厂入口 + `registerModelBackend` 注册钩子 |
-| `app/core/nio_model_factory.cpp` | 工厂实现 + 进程级注册表（mutex 保护），已编入 `libnio_core.a` |
+| `app/core/dynalgo_model.hpp` | `DynalgoModelType` 枚举、`DynalgoDetectionResult` 结构、`DynalgoModelBackend` 抽象类、`DynalgoModelConfig` |
+| `app/core/dynalgo_model_factory.hpp` | `createModelBackend(type)` 工厂入口 + `registerModelBackend` 注册钩子 |
+| `app/core/dynalgo_model_factory.cpp` | 工厂实现 + 进程级注册表（mutex 保护），已编入 `libnio_core.a` |
 
 ### 接口契约
 
 ```cpp
-enum class NioModelType { NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT };
+enum class DynalgoModelType { NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT };
 
-struct NioDetectionResult {
+struct DynalgoDetectionResult {
     int   classId; float score;
     float x, y, w, h;     // 源帧坐标系下的 bounding box (像素)
     std::string label;
 };
 
-struct NioModelConfig {
+struct DynalgoModelConfig {
     std::string modelPath;    // weights/model file
     std::string deviceHint;   // "cpu"/"gpu"/"cuda:0"/...
     float confThreshold = 0.25f;
     float iouThreshold  = 0.45f;
 };
 
-class NioModelBackend {
-    virtual bool   load(const NioModelConfig& cfg) = 0;
-    virtual bool   infer(const NioFrame& frame,
-                         std::vector<NioDetectionResult>& out) = 0;
+class DynalgoModelBackend {
+    virtual bool   load(const DynalgoModelConfig& cfg) = 0;
+    virtual bool   infer(const DynalgoFrame& frame,
+                         std::vector<DynalgoDetectionResult>& out) = 0;
     virtual const char* name() const = 0;
 };
 
-std::unique_ptr<NioModelBackend> createModelBackend(NioModelType type);
+std::unique_ptr<DynalgoModelBackend> createModelBackend(DynalgoModelType type);
 ```
 
 ### 使用模式
 
 ```cpp
-auto backend = nio::createModelBackend(nio::NioModelType::YOLOV8_PY);
+auto backend = dynalgo::createModelBackend(dynalgo::DynalgoModelType::YOLOV8_PY);
 if (!backend) { /* 该 backend 未编入 */ }
-NioModelConfig cfg; cfg.modelPath = "yolov8n.pt";
+DynalgoModelConfig cfg; cfg.modelPath = "yolov8n.pt";
 if (backend->load(cfg)) {
-    std::vector<NioDetectionResult> results;
+    std::vector<DynalgoDetectionResult> results;
     if (backend->infer(currentFrame, results)) { /* 消费 results */ }
 }
 ```
@@ -126,14 +126,14 @@ if (backend->load(cfg)) {
   backend 时返回 `nullptr`，调用方应态然处理。
 - 后续具体 backend（YOLOv8 Python 桥接、ONNX Runtime、TensorRT、Dummy 测试实现）应
   放 `app/driver/<name>/` 或独立子目录，在各自 `.cpp` 内用 `static-init + 宏守卫` 调用
-  `registerModelBackend` 自注册（与 `NioDriverFactory` 风格一致）。
+  `registerModelBackend` 自注册（与 `DynalgoDriverFactory` 风格一致）。
 - **采集主流程不直接依赖此抽象类**——这是专留给"算法线程"或"上层业务模块"的接口；
   PcdTask / 录文件 / SDL 预览均与此层无关。
 
 ### 已验证
 
 - `cmake --build build --target dynamic_algo_cam` 通过；
-- `nm build/lib/libnio_core.a | grep nio::` 显示 `createModelBackend` 与 `registerModelBackend`
+- `nm build/lib/libnio_core.a | grep dynalgo::` 显示 `createModelBackend` 与 `registerModelBackend`
   符号已编入静态库。
 
 ## C++ 卡尔曼轨迹滤波器
@@ -143,16 +143,16 @@ bbox 卡尔曼滤波器**，用于后续模型推理输出框的轨迹平滑与�
 
 | 文件 | 作用 |
 |------|------|
-| `app/core/nio_kalman_tracker.hpp` | `NioKalmanTracker` 类：状态 `[cx,cy,w,h,vx,vy]`、匀速运动模型、`init/update/predict` 接口 |
-| `app/core/nio_kalman_tracker.cpp` | 完整 KF predict/update 实现，固定 6 维（用 `std::array<double,...>` 手写线性代数，**不引入 Eigen**），已编入 `libnio_core.a` |
+| `app/core/dynalgo_kalman_tracker.hpp` | `DynalgoKalmanTracker` 类：状态 `[cx,cy,w,h,vx,vy]`、匀速运动模型、`init/update/predict` 接口 |
+| `app/core/dynalgo_kalman_tracker.cpp` | 完整 KF predict/update 实现，固定 6 维（用 `std::array<double,...>` 手写线性代数，**不引入 Eigen**），已编入 `libnio_core.a` |
 
 ### 接口契约
 
 ```cpp
-class NioKalmanTracker {
-    void   init(const NioDetectionResult& det);                              // 显式初始化（可选；首帧 update 会自动初始化）
-    NioDetectionResult update(const NioDetectionResult& det);               // 吃测量并返回后验平滑 bbox
-    NioDetectionResult predict();                                           // 时间推进，给出下一帧先验 bbox
+class DynalgoKalmanTracker {
+    void   init(const DynalgoDetectionResult& det);                              // 显式初始化（可选；首帧 update 会自动初始化）
+    DynalgoDetectionResult update(const DynalgoDetectionResult& det);               // 吃测量并返回后验平滑 bbox
+    DynalgoDetectionResult predict();                                           // 时间推进，给出下一帧先验 bbox
     bool   initialised() const;                                             // T 表示已 init 或已收到首帧测量
     // 可调参：dt_, processNoise_, measNoise_（成员变量，构造时给默认值）
 };
@@ -161,25 +161,25 @@ class NioKalmanTracker {
 ### 使用模式
 
 ```cpp
-nio::NioKalmanTracker trk;                // 每个被跟踪目标一个实例
+dynalgo::DynalgoKalmanTracker trk;                // 每个被跟踪目标一个实例
 trk.init(firstDetection);                 // 显式初始化（可选）
-for (auto& det : frameDetections) {        // frameDetections 来自 NioModelBackend::infer
-    nio::NioDetectionResult smoothed = trk.update(det);  // 平滑当前帧
-    nio::NioDetectionResult next     = trk.predict();    // 预测下一帧位置
+for (auto& det : frameDetections) {        // frameDetections 来自 DynalgoModelBackend::infer
+    dynalgo::DynalgoDetectionResult smoothed = trk.update(det);  // 平滑当前帧
+    dynalgo::DynalgoDetectionResult next     = trk.predict();    // 预测下一帧位置
 }
 ```
 
 ### 范围与边界（与"集成卡尔曼滤波"请求严格匹配）
 
 - **单目标**：本阶段实现的是单目标 KF，不包含多目标数据关联（Hungarian / Greedy 匹配、轨迹生命周期
-  管理）。多目标跟踪需要上层业务模块在 `NioModelBackend::infer` 输出与多个 `NioKalmanTracker` 实例
+  管理）。多目标跟踪需要上层业务模块在 `DynalgoModelBackend::infer` 输出与多个 `DynalgoKalmanTracker` 实例
   之间做匹配，属后续工作。
-- **不接入采集主流程**：`NioKalmanTracker` 当前不被 `app/dynamic_algo_cam.cpp` 或
+- **不接入采集主流程**：`DynalgoKalmanTracker` 当前不被 `app/dynamic_algo_cam.cpp` 或
   `PointcloudFrameConsumer` 等任何采集主路径代码调用；它是预留给"算法线程/上层业务模块"的基础设施。
-- **无外部依赖**：nio_core 保持 SDK-neutral，KF 用 `std::array` 手写线性代数，未拉 Eigen / OpenCV。
+- **无外部依赖**：dynalgo_core 保持 SDK-neutral，KF 用 `std::array` 手写线性代数，未拉 Eigen / OpenCV。
 
 ### 已验证
 
 - `cmake --build build --target dynamic_algo_cam` 通过；
-- `nm build/lib/libnio_core.a | grep NioKalmanTracker` 显示
+- `nm build/lib/libnio_core.a | grep DynalgoKalmanTracker` 显示
   `init`、`update`、`predict`、构造函数符号已编入静态库。

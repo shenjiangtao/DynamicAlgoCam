@@ -99,7 +99,7 @@
 3. **三角测距**：视差 → 深度，基于标定的基线长度和焦距：`Z = f × B / d`（f=焦距, B=基线, d=视差）
 4. **深度图输出**：Y16 格式（uint16），每个像素表示距离值 = `raw × depthScale`
 
-**代码验证** (`app/driver/orbbec/nio_ob_device.cpp:87-290`)：
+**代码验证** (`app/driver/orbbec/dynalgo_ob_device.cpp:87-290`)：
 - `OB_SENSOR_IR_LEFT` + `OB_SENSOR_IR_RIGHT` → 双 IR 传感器
 - `OB_SENSOR_DEPTH` → SDK 内部完成匹配，直接输出深度图
 - `depthScale` 由 `OB_PROP_DEPTH_PRECISION_LEVEL_INT` 查询：0=1mm, 1=0.5mm, 2=0.25mm, 3=0.1mm
@@ -147,7 +147,7 @@
 4. **点云输出**：`PointXYZIRT`（x, y, z, intensity, ring, timestamp），每帧 27,648 个点
 5. **RGB 同步**：独立 RGB 传感器通过硬件同步与 LiDAR 共享时间戳，出厂标定外参
 
-**代码验证** (`app/driver/robosense/nio_rs_frame_adapter.hpp:22-65`)：
+**代码验证** (`app/driver/robosense/dynalgo_rs_frame_adapter.hpp:22-65`)：
 - `RS_AC1_DEPTH_WIDTH = 96, RS_AC1_DEPTH_HEIGHT = 288`
 - `RS_AC1_DEPTH_SCALE = 5.0` (5mm/step)
 - 深度图合成逻辑：每个点 `i` → 像素 `(col=i%96, row=i/96)`，`depth = sqrt(x²+y²+z²) / 0.005`
@@ -199,13 +199,13 @@
 | 336L | 640×480 ~ 1280×800 | 307,200–1,024,000 px | 0.1–1 mm | SDK 支持多档精度等级 |
 | AC1 | **96×288** (合成) | 27,648 pts | 5 mm (depthScale=5.0) | 代码: `RS_AC1_DEPTH_WIDTH=96, HEIGHT=288` |
 
-**关键发现**：335L 在 USB3.0 下实测选择了 1280×800 深度模式（而非文档中预期的 848×480），这是因为 `selectBestProfile()` 的评分逻辑偏好 1280 宽度 (+120 分) (`app/driver/orbbec/nio_ob_adapter.hpp:228`)。
+**关键发现**：335L 在 USB3.0 下实测选择了 1280×800 深度模式（而非文档中预期的 848×480），这是因为 `selectBestProfile()` 的评分逻辑偏好 1280 宽度 (+120 分) (`app/driver/orbbec/dynalgo_ob_adapter.hpp:228`)。
 
 ### 3.3 点云规格（AC1 独有）
 
 | 属性 | 值 | 来源 |
 |------|---|------|
-| 点类型 | `PointXYZIRT` | `app/driver/robosense/nio_rs_frame_adapter.hpp:34` |
+| 点类型 | `PointXYZIRT` | `app/driver/robosense/dynalgo_rs_frame_adapter.hpp:34` |
 | 字段 | x y z intensity ring timestamp | PCD 文件头 |
 | SPAD 网格 | 96×288 = 27,648 pts/frame | `RS_AC1_DEPTH_WIDTH/HEIGHT` |
 | 数据格式 | binary, 26 bytes/point (float xyz + float intensity + uint16 ring + double ts) | PCD SIZE/TYPE |
@@ -264,36 +264,36 @@
 
 ### 5.1 统一抽象层
 
-本项目通过 `NioDevice` / `NioPipeline` / `NioContext` 抽象接口屏蔽了两家 SDK 与白板。HAL 层使用 `namespace types` 隔离枚举类型，厂商实现层使用独立 namespace 区分；常量通过 `constexpr` 规范提取到 `spec` 文件。
+本项目通过 `DynalgoDevice` / `DynalgoPipeline` / `DynalgoContext` 抽象接口屏蔽了两家 SDK 与白板。HAL 层使用 `namespace types` 隔离枚举类型，厂商实现层使用独立 namespace 区分；常量通过 `constexpr` 规范提取到 `spec` 文件。
 
 ```
-NioContext (抽象)
+DynalgoContext (抽象)
 ├── ObContext   — ob::Context 设备枚举
 └── RsContext    — libusb 手动扫描
 
-NioDevice (抽象)
+DynalgoDevice (抽象)
 ├── ObDevice     — ob::Device 动态传感器查询
-└── RsDevice     — 硬编码传感器信息 (derived from nio_rs_spec.hpp)
+└── RsDevice     — 硬编码传感器信息 (derived from dynalgo_rs_spec.hpp)
 
-NioPipeline (抽象)
+DynalgoPipeline (抽象)
 ├── ObPipeline   — ob::Pipeline + ob::Config 生命周期
 └── RsPipeline   — LidarDriver + 双回调队列 + 帧合成
 
-nio::types (枚举与类型系统)
-├── NioFormat         — 像素/帧格式枚举
-├── NioFrameType    — 帧类型枚举
-└── NioAlignMode    — D2C 对齐模式枚举
+dynalgo::types (枚举与类型系统)
+├── DynalgoFormat         — 像素/帧格式枚举
+├── DynalgoFrameType    — 帧类型枚举
+└── DynalgoAlignMode    — D2C 对齐模式枚举
 
 厂商常量规范 (spec 文件)
-├── nio_ob_spec.hpp   — 深度精度映射、颜色格式策略
-└── nio_rs_spec.hpp   — AC1 固定硬件规格 (resolution, fps, USB ID)
+├── dynalgo_ob_spec.hpp   — 深度精度映射、颜色格式策略
+└── dynalgo_rs_spec.hpp   — AC1 固定硬件规格 (resolution, fps, USB ID)
 ```
 
 ### 5.2 关键实现差异
 
 | 方法 | ObDevice/ObPipeline | RsDevice/RsPipeline |
 |------|-------------------|---------------------|
-| `getSensorInfo()` | 动态查询 SDK 传感器列表 | 返回硬编码 NioSensorInfo |
+| `getSensorInfo()` | 动态查询 SDK 传感器列表 | 返回硬编码 DynalgoSensorInfo |
 | `setupPipeline()` | 遍历传感器 → 选择最佳流配置 → 检查 HW D2C | 固定参数 + depthScale |
 | `isPointCloudDepth()` | `false` | `true` — 触发 PCD 输出 |
 | `checkHWD2CSupport()` | 查询 `getD2CDepthProfileList()` 匹配 | 始终返回 `true` |
@@ -305,7 +305,7 @@ nio::types (枚举与类型系统)
 **Orbbec 335L 数据流**：
 ```
 ob::Pipeline → FrameSet callback
-    → obFrameSetToNio() → NioFrameSet
+    → obFrameSetToNio() → DynalgoFrameSet
     → VideoFrameQueue → CaptureSession::videoConsumerLoop()
         ├── ColorFrameConsumer  → H264Encoder → color.h264
         ├── DepthFrameConsumer  → H264Encoder → depth.h264
@@ -317,9 +317,9 @@ ob::Pipeline → FrameSet callback
 
 **RoboSense AC1 数据流**：
 ```
-LidarDriver → stuffedCloudQueue_  → processCloud()  → NioFrame(DEPTH) + NioFrame(POINT)
-           → stuffedImageQueue_ → processImage() → NioFrame(COLOR)
-           → stuffedImuQueue_   → processImu()    → NioImuSample[]
+LidarDriver → stuffedCloudQueue_  → processCloud()  → DynalgoFrame(DEPTH) + DynalgoFrame(POINT)
+           → stuffedImageQueue_ → processImage() → DynalgoFrame(COLOR)
+           → stuffedImuQueue_   → processImu()    → DynalgoImuSample[]
 
 tryEmitFrameSet(colorReady_ && depthReady_)
     → videoCallback_ → VideoFrameQueue → CaptureSession::videoConsumerLoop()
@@ -505,7 +505,7 @@ DATA binary
   - SSE 加速路径 (`AlignImpl.cpp:1609-1651`)
   - 通用不加速路径 (`AlignImplGeneric.cpp` — TODO 存根)
 
-**代码路径** (`app/capture/nio_capture_session.cpp:164-208`)：
+**代码路径** (`app/capture/dynalgo_capture_session.cpp:164-208`)：
 ```
 if (!hwD2CMode_) → alignFilter = pipeline_->getD2CAlignFilter()
 FusionStreamTask → SW align: enqueueNioFrameSet → alignFilter->process() → blend
@@ -598,7 +598,7 @@ FusionStreamTask → HW align: enqueueColor + enqueueDepth → directly blend pi
 |------|--------|-----------|
 | **初始集成工时** | 0.5–1 天 | 2–3 天 |
 | **驱动维护成本** | 低 (预编译 SDK) | 中 (源码依赖，需跟进 rs_driver 更新) |
-| **新增设备支持** | 中 (需实现 NioDevice/NioPipeline 子类 + 流配置) | 低 (硬编码，复制模式即可) |
+| **新增设备支持** | 中 (需实现 DynalgoDevice/DynalgoPipeline 子类 + 流配置) | 低 (硬编码，复制模式即可) |
 | **多设备共存** | 简单 (SDK 自动) | 需手动管理 USB serial / bus-device 地址 |
 | **跨平台移植** | SDK 已支持 | 需 rs_driver + libusb 适配 |
 
@@ -666,8 +666,8 @@ FusionStreamTask → HW align: enqueueColor + enqueueDepth → directly blend pi
 | AC1 串行号可能不可用 | AC1 | USB string descriptor 可能为空；需 fallback 到 bus-device 编号 |
 | 335L depth_raw 存储过大 | 335L | 1280×800×2B/frame=2MB；可考虑帧间压缩或降采样存盘 |
 | AC1 IMU 噪声偏高 | AC1 | 可能需要校准偏置；335L ~0.002 rad/s vs AC1 ~0.01 rad/s |
-| 代码中硬编码魔法数字 | 通用 | AC1 分辨率/fps/格式等硬编码在设备实现中 | 已通过 `nio_rs_spec.hpp` 和 `nio_ob_spec.hpp` 提取为 `constexpr` 常量 |
-| 类型枚举命名空间不清晰 | 通用 | `NioFormat`等在 `nio` 根命名空间 | 已提取到 `nio::types` namespace，通过 `using` 保持向后兼容 |
+| 代码中硬编码魔法数字 | 通用 | AC1 分辨率/fps/格式等硬编码在设备实现中 | 已通过 `dynalgo_rs_spec.hpp` 和 `dynalgo_ob_spec.hpp` 提取为 `constexpr` 常量 |
+| 类型枚举命名空间不清晰 | 通用 | `DynalgoFormat`等在 `dynalgo` 根命名空间 | 已提取到 `dynalgo::types` namespace，通过 `using` 保持向后兼容 |
 | 缺少配置验证机制 | 通用 | 配置合法性仅在运行时通过 SDK 报错 | 已添加 `ConfigValidator` 接口及 Orbbec/RoboSense 实现，支持三级验证 |
 | `device_comparison.md` IMU 信息需更新 | 文档 | AC1 IMU 现已正常输出 ~100Hz，需更新文档 | 已更新 |
 
@@ -694,21 +694,21 @@ FusionStreamTask → HW align: enqueueColor + enqueueDepth → directly blend pi
 
 | 组件 | 文件路径 | 关键行 |
 |------|---------|-------|
-| OB 设备适配器 | `app/driver/orbbec/nio_ob_device.cpp` | 87-290 (setupPipeline) |
-| OB 格式转换 | `app/driver/orbbec/nio_ob_adapter.hpp` | 20-258 (全) |
-| RS 设备适配器 | `app/driver/robosense/nio_rs_device.cpp` | 20-369 (全) |
-| RS 帧适配器 | `app/driver/robosense/nio_rs_frame_adapter.hpp` | 22-121 (全) |
-| RS 格式转换 | `app/driver/robosense/nio_rs_adapter.hpp` | 19-77 (全) |
-| 采集会话 | `app/capture/nio_capture_session.cpp` | 25-504 (全) |
-| 中性类型定义 | `app/core/nio_types.hpp` | 20-242 (NioFormat, NioFrameType 已移至 nio::types) |
-| 抽象设备接口 | `app/core/nio_device.hpp` | 1-156 (NioAlignMode 已移至 nio::types) |
-| 配置验证接口 | `app/core/nio_config_validator.hpp` | 全 (ConfigValidator 抽象接口及 createValidator) |
-| 中性帧定义 | `app/core/nio_frame.hpp` | 全 |
-| 帧队列 | `app/capture/nio_frame_queue.hpp` | 1-55 (全) |
+| OB 设备适配器 | `app/driver/orbbec/dynalgo_ob_device.cpp` | 87-290 (setupPipeline) |
+| OB 格式转换 | `app/driver/orbbec/dynalgo_ob_adapter.hpp` | 20-258 (全) |
+| RS 设备适配器 | `app/driver/robosense/dynalgo_rs_device.cpp` | 20-369 (全) |
+| RS 帧适配器 | `app/driver/robosense/dynalgo_rs_frame_adapter.hpp` | 22-121 (全) |
+| RS 格式转换 | `app/driver/robosense/dynalgo_rs_adapter.hpp` | 19-77 (全) |
+| 采集会话 | `app/capture/dynalgo_capture_session.cpp` | 25-504 (全) |
+| 中性类型定义 | `app/core/dynalgo_types.hpp` | 20-242 (DynalgoFormat, DynalgoFrameType 已移至 dynalgo::types) |
+| 抽象设备接口 | `app/core/dynalgo_device.hpp` | 1-156 (DynalgoAlignMode 已移至 dynalgo::types) |
+| 配置验证接口 | `app/core/dynalgo_config_validator.hpp` | 全 (ConfigValidator 抽象接口及 createValidator) |
+| 中性帧定义 | `app/core/dynalgo_frame.hpp` | 全 |
+| 帧队列 | `app/capture/dynalgo_frame_queue.hpp` | 1-55 (全) |
 | D2C 对齐核心 | `vendors/OrbbecSDK/src/filter/publicfilters/AlignImpl.cpp` | 1533-1685 (D2C 算法) |
 | 点云 Filter | `vendors/OrbbecSDK/src/filter/publicfilters/PointCloudProcess.hpp` | 13-80 (全) |
 | 流配置列表 | `vendors/OrbbecSDK/include/libobsensor/hpp/StreamProfile.hpp` | 473-601 (StreamProfileList) |
-| 设备发现工厂 | `app/driver/nio_driver_factory.hpp` + `.cpp` | 全 |
+| 设备发现工厂 | `app/driver/dynalgo_driver_factory.hpp` + `.cpp` | 全 |
 | 设备对比文档 | `docs/device_comparison.md` | 全 (296 行) |
 
 ### 13.4 测试数据

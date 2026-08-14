@@ -1,4 +1,4 @@
-// Copyright (c) NIO Inc. All Rights Reserved.
+// Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 
 #pragma once
@@ -10,11 +10,11 @@
 #include <string>
 #include <thread>
 
-#include "nio_frame.hpp"
-#include "nio_types.hpp"
+#include "dynalgo_frame.hpp"
+#include "dynalgo_types.hpp"
 #include "utils.hpp"
 
-namespace nio {
+namespace dynalgo {
 
 typedef enum {
     ARRANGE_SINGLE,
@@ -34,8 +34,8 @@ public:
     void close();
     void reset();
 
-    void pushFramesToView(std::vector<const NioFrame*> frames, int groupId = 0);
-    void pushFramesToView(const NioFrame* currentFrame, int groupId = 0);
+    void pushFramesToView(std::vector<const DynalgoFrame*> frames, int groupId = 0);
+    void pushFramesToView(const DynalgoFrame* currentFrame, int groupId = 0);
 
     void setShowInfo(bool show);
     void setShowSyncTimeInfo(bool show);
@@ -49,8 +49,8 @@ public:
 private:
     void processFrames();
     void arrangeFrames();
-    cv::Mat visualize(const NioFrame* frame);
-    void drawInfo(cv::Mat& imageMat, const NioFrame* frame);
+    cv::Mat visualize(const DynalgoFrame* frame);
+    void drawInfo(cv::Mat& imageMat, const DynalgoFrame* frame);
     cv::Mat resizeMatKeepAspectRatio(const cv::Mat& mat, int width, int height);
 
 private:
@@ -65,11 +65,11 @@ private:
     float alpha_;
 
     std::thread processThread_;
-    std::map<int, std::vector<const NioFrame*>> srcFrameGroups_;
+    std::map<int, std::vector<const DynalgoFrame*>> srcFrameGroups_;
     std::mutex srcFrameGroupsMtx_;
     std::condition_variable srcFrameGroupsCv_;
 
-    using StreamsMatMap = std::map<int, std::pair<const NioFrame*, cv::Mat>>;
+    using StreamsMatMap = std::map<int, std::pair<const DynalgoFrame*, cv::Mat>>;
     StreamsMatMap matGroups_;
     std::mutex renderMatsMtx_;
     cv::Mat renderMat_;
@@ -84,4 +84,4 @@ private:
     std::function<void(int)> keyPressedCallback_;
 };
 
-} // namespace nio
+} // namespace dynalgo

@@ -8,7 +8,7 @@
 #include <sstream>
 #include <string>
 
-namespace nio {
+namespace dynalgo {
 char waitForKeyPressed(uint32_t timeout_ms = 0);
 
 uint64_t getNowTimesMs();
@@ -42,4 +42,4 @@ private:
     char fill{ 0 };
 };
 
-} // namespace nio
+} // namespace dynalgo
