@@ -24,6 +24,9 @@ add_library(nio_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/nio_device.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_thread.hpp
     ${CMAKE_CURRENT_LIST_DIR}/nio_thread.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_model.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_model_factory.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/nio_model_factory.cpp
 )
 
 find_package(Threads REQUIRED)
