@@ -102,30 +102,41 @@
 **前置依赖**：可与 Phase A 并行；不依赖 A 的任何产物。
 
 ### B0. 公式再次确认
-- [ ] B0.1 复核反投影公式：`u = det.x + det.w/2`，`v = det.y + det.h/2`，`Z = rawDepthAt(u,v) * depthScale`，`X = (u - intr.cx) * Z / intr.fx`，`Y = (v - intr.cy) * Z / intr.fy`
-  - 验证：与 `app/capture/dynalgo_frame_consumer.cpp:139-176` 现成 `PointcloudFrameConsumer` 反投影路径一致（同公式）
+- [x] B0.1 复核反投影公式：`u = det.x + det.w/2`，`v = det.y + det.h/2`，`Z = rawDepthAt(u,v) * depthScale`，`X = (u - intr.cx) * Z / intr.fx`，`Y = (v - intr.cy) * Z / intr.fy`
+  - 验证：与 `app/capture/dynalgo_frame_consumer.cpp:144-174` 现成 `backprojectToPointCloud` 反投影路径完全一致（同公式，逐字核对 implementation）
 
 ### B1. header-only 工具
-- [ ] B1.1 新增 `app/core/dynalgo_detection_to_3d.hpp`：声明 `detectionCenterToCamera3D(...)` 函数，含 PRECONDITION 注释块
+- [x] B1.1 新增 `app/core/dynalgo_detection_to_3d.hpp`：声明 `detectionCenterToCamera3D(...)` 函数，含 PRECONDITION 注释块
   - 验证：注释明示 "depth must be D2C-aligned to color frame"
   - 验证：注释明示 `filterHalf=0`/`=2` 含义
-  - 验证：函数对深度为 0 / 越界 / NaN 返回 false，输出 X/Y/Z 不变更
+  - 验证：函数对深度为 0 / 越界 / 错格式 / 退化 intrinsics 返回 false，输出 X/Y/Z 不变更
   - 对应代码：`app/core/dynalgo_detection_to_3d.hpp`（新增）
-- [ ] B1.2 修改 `app/core/CMakeLists.txt`：仅将 header 加入 install 列表，不加入源（header-only）
-  - 验证：`grep -c 'dynalgo_detection_to_3d.cpp' app/core/CMakeLists.txt` = 0
-- [ ] B1.3 实现 `detectionCenterToCamera3D` inline 主体：取 `filterHalf > 0` 时对 `(2*filterHalf+1)^2` 窗内非零深度取中值；`filterHalf == 0` 时取单像素
-  - 验证：单元测试 (B2.1) 的两个用例通过
+- [x] B1.2 修改 `app/core/CMakeLists.txt`：仅将 header 加入 install 列表，不加入源（header-only）
+  - 验证：`grep -c 'dynalgo_detection_to_3d.cpp' app/core/CMakeLists.txt` = 0（实际为 no-op：仓库中 `app/core` 现存模式不 install 单 header；header 仅靠 `target_include_directories(... PUBLIC app/core)` 让消费者找到，同 dynalgo_model.hpp 等现存 header-only 模式一致）
+- [x] B1.3 实现 `detectionCenterToCamera3D` inline 主体：取 `filterHalf > 0` 时对 `(2*filterHalf+1)^2` 窗内非零深度取中值；`filterHalf == 0` 时取单像素
+  - 验证：单元测试 (B2.1) 与 phaseB_smoke 5 用例全过
 
 ### B2. 单元测试
-- [ ] B2.1 新增 `tests/detection_to_3d_test.cpp`：测试用例 (a) 中心 detection + 全 1000mm 深度 → 反投影 `(0,0,1.0)`；(b) 偏离中心 detection + 全 2000mm 深度 → 反投影值距欧式距离与公式预测误差 `< 1e-4`
-  - 验证：GTest 可用时 `ctest --test-dir build -R detection_to_3d` 通过；GTest 不可用时该项被 CMake `skip`（沿用现有 `tests/CMakeLists.txt` 处理 `event_window_test.cpp` 的模式）
+- [x] B2.1 新增 `tests/detection_to_3d_test.cpp`：测试用例 (a) 中心 detection + 全 1000mm 深度 → 反投影 `(0,0,1.0)`；(b) 偏离中心 detection + 全 2000mm 深度 → 反投影值距欧式距离与公式预测误差 `< 1e-4`；外加 (c) 全零深度、(d) 错格式、(e) 中值窗 三组用例
+  - 验证（GTest 缺环境替代）：`/tmp/opencode/phaseB_smoke` 等价用 C++ `assert` 重写 5 用例，全部通过、输出 `B-SMOKE-OK`；GTest 可用环境运行 `ctest -R detection_to_3d` 时直接吃这些 `TEST()`
   - 对应代码：`tests/detection_to_3d_test.cpp`（新增）
-- [ ] B2.2 修改 `tests/CMakeLists.txt` 把新测试源加入；保留现有 GTest 可用性检测的"缺则跳过"逻辑
-  - 验证：无 GTest 环境 `cmake ..` 无 FATAL_ERROR
+- [x] B2.2 修改 `tests/CMakeLists.txt` 把新测试源加入；保留现有 GTest 可用性检测的"缺则跳过"逻辑（"缺则跳过"逻辑实际在根 CMakeLists.txt:107-116 `BUILD_TESTS=OFF` + `find_package(GTest QUIET)`，tests/CMakeLists.txt 只在条件成立时被加进 build）
+  - 验证：无 GTest 环境 `cmake -DBUILD_TESTS=ON` 无 FATAL_ERROR，仅 WARNING `GTest not found – tests will not be built`（已实测）
 
 ### B3. 文档同步
-- [ ] B3.1 在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加 "2D 检测框 → 3D 相机光心坐标" 小节，含函数签名 + PRECONDITION + 推荐参数
-  - 验证：md 内容与 header 注释一致；引用路径与仓库实际一致
+- [x] B3.1 在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加 "2D 检测框 → 3D 相机光心坐标" 小节，含函数签名 + PRECONDITION + 推荐参数 + 范围/边界 + 已验证证据
+  - 验证：md 内容与 header 注释一致；引用路径与仓库实际一致（`app/core/dynalgo_detection_to_3d.hpp` 与 `app/capture/dynalgo_frame_consumer.cpp:144-174`）
+
+### B4. 提交清单（待 commit + push）
+- [ ] B4.1 `git add -A` 一次包含以下新增 / 修改文件：
+  - `app/core/dynalgo_detection_to_3d.hpp`（新）
+  - `tests/detection_to_3d_test.cpp`（新）
+  - `tests/CMakeLists.txt`（修改）
+  - `docs/dynamic_algo_cam/models_overview.md`（修改，追加 Phase B 文档小节）
+  - `docs/dynamic_algo_cam/IMPLEMENTATION_TASKS.md`（本清单 Phase B 全部勾选 + M2 回填）
+- [ ] B4.2 commit message `feat: add 2D detection box -> 3D back-projection tool (Phase B)`
+- [ ] B4.3 `git push origin main`
+- [ ] B4.4 push 后回填 commit hash 至 §"实施记录区" 与 §"验收里程碑 M2"
 
 ---
 
@@ -259,6 +270,7 @@
 |---|---|---|---|
 | A0-A5 | `ae23b1d` | 2026-08-14 | Phase A 实现 + 验证完成；commit `ae23b1d` 已 push 至 origin/main（`85a193c..ae23b1d`） |
 | T1 工程命名重构 | `25be197` | 2026-08-14 | 见下方"T1 工程命名重构"段；commit `25be197` 已 push 至 origin/main（`532f7ad..25be197`） |
+| B0-B3 (Phase B 3D 反投影) | `<pending-push>` | 2026-08-14 | 见上方 "Phase B — 2D 检测框 → 3D 相机光心反投影" 段；commit 待 push 后回填 |
 
 ---
 
