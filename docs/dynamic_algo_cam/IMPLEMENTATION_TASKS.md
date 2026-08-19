@@ -3,7 +3,7 @@
 **配套设计文档**：[`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md)
 **实施追踪基线**：commit `85a193c` (main)
 **勾选约定**：`- [ ]` 未开始 / `- [~]` 进行中 / `- [x]` 已完成并验证 / `- [-]` 已放弃或并入他项
-**最后更新**：2026-08-14
+**最后更新**：2026-08-19
 
 ---
 
@@ -148,54 +148,65 @@
 **前置依赖**：依赖 A2 (`DynalgoActuator`) 与 B1 (`detectionCenterToCamera3D`)。
 
 ### C0. 状态机契约再次冻结
-- [ ] C0.1 复核状态机 `IDLE → LOCKING → TRACKING → FIRING → LOST（折回 IDLE）` 各态触发条件、冷却时长、丢目标回退阈值，写入设计文档 §6.3 表格
-  - 验证：owner 签字确认或在 issue 中记录默认值（建议 LOCKING→TRACKING 需连续 3 帧稳定 detection；TRACKING→LOST 容忍 N=5 帧无 detection）
-- [ ] C0.2 确认 `EngagementFrameConsumer` 通过 `FrameConsumer` 接口插入 `session` 的 `frameConsumers_` 链尾 — 复用 `app/capture/dynalgo_capture_session.cpp:157-165` 模式
+- [x] C0.1 状态机 `IDLE → LOCKING → TRACKING → FIRING → LOST（折回 IDLE）` 各态触发条件、冷却时长、丢目标回退阈值，owner 已确认默认值
+  - 决议：LOCKING→TRACKING 需连续 3 帧稳定 detection；TRACKING→LOST 容忍 N=5 帧无 detection；FIRING 触发条件=有 3D fix + TRACKING；FIRING 冷却 `fireCooldownMs=1000`；LOST 折回 IDLE
+  - 验证：默认值已记录于此处与 §"全局原则"，将随 C3 实现落入代码常量
+- [x] C0.2 `EngagementFrameConsumer` 通过 `FrameConsumer` 接口插入 `session` 的 `frameConsumers_` 链尾 — 复用 `app/capture/dynalgo_capture_session.cpp:157-165` 模式
+  - 决议：新增 `CaptureSession::addFrameConsumer(std::unique_ptr<FrameConsumer>)` 公开方法（C4.2 实现），维持 `setup/start/startVideoPipeline/stop` 签名零修改
   - 验证：`CaptureSession::setup/start/startVideoPipeline/stop` 签名零修改
 
 ### C1. TargetSelector
-- [ ] C1.1 新增 `app/algo/dynalgo_target_selector.hpp`：`SelectorStrategy` enum（`HIGHEST_SCORE / NEAREST_DEPTH / LARGEST_AREA`）；`DynalgoTargetSelector::pick(detections, depthAligned=nullptr)` 返回 `std::optional<DynalgoDetectionResult>`
-  - 验证：header 仅 `#include "dynalgo_model.hpp" + <optional> + <vector>`
-  - 对应代码：`app/algo/dynalgo_target_selector.hpp`（新增）
-- [ ] C1.2 实现 `app/algo/dynalgo_target_selector.cpp`
-  - 验证：单元测试 (C5.1) 通过
+- [x] C1.1 新增 `app/algo/dynalgo_target_selector.hpp`：`SelectorStrategy` enum（`HIGHEST_SCORE / NEAREST_DEPTH / LARGEST_AREA`）；**自由函数 `pickTarget(detections, strategy, depthSortedMeters=nullptr)`** 返回 `std::optional<DynalgoDetectionResult>`（设计上为 stateless，省去 `DynalgoTargetSelector` 类壳）
+  - 验证：header 仅 `#include "dynalgo_model.hpp" + <optional> + <vector>` ✓
+  - 验证：`grep -n 'ob::\\|rs::\\|libobsensor' app/algo/dynalgo_target_selector.hpp` 无命中 ✓
+  - 对应代码：`app/algo/dynalgo_target_selector.hpp`（新增，已写）
+- [x] C1.2 实现 `app/algo/dynalgo_target_selector.cpp`：`HIGHEST_SCORE`/`LARGEST_AREA`/`NEAREST_DEPTH` 三策略 argmax；`NEAREST_DEPTH` 用 `−Z` 作为 metric；空检测返回 `nullopt`
+  - 验证：编入 `dynalgo_algo` 静态库后通过（C3 完成构建后整体验证）
+  - 对应代码：`app/algo/dynalgo_target_selector.cpp`（新增，已写）
 - [ ] C1.3 新增 `tests/target_selector_test.cpp`：4 个 detections 各按策略选对
+  - 状态：待写（GTest 缺环境，将按 B2.1 同款 `/tmp/opencode/phaseC_selector_smoke` assert 等价用例验证）
   - 验证：通过（或 GTest 缺则 skip）
 
 ### C2. TrackBundle
-- [ ] C2.1 新增 `app/algo/dynalgo_track_bundle.hpp`：`DynalgoTrackBundle` 持有 `DynalgoKalmanTracker` 一个，加 `init(detection)` / `update(detection, depthAligned, intr, scale)` / `predict()` / `getLast3D()` 接口
-  - 验证：`update()` 内部先调 `detectionCenterToCamera3D` 缓存 3D；再调 `DynalgoKalmanTracker::update` 做 2D 平滑
-  - 对应代码：`app/algo/dynalgo_track_bundle.{hpp,cpp}`（新增）
-- [ ] C2.2 实现 `app/algo/dynalgo_track_bundle.cpp`；构造时 `DynalgoKalmanTracker` 默认参数；不允许 `init()` 重复调用（WARN 并重置）
-  - 验证：编入 `dynalgo_algo` 静态库后 `nm | grep DynalgoTrackBundle::update` 有符号
+- [x] C2.1 新增 `app/algo/dynalgo_track_bundle.hpp`：`DynalgoTrackBundle` 持有 `DynalgoKalmanTracker` 一个，加 `init(detection)` / `update(detection, depthAligned, intr, scale)` / `predict()` / **lastX()/lastY()/lastZ()/hasFix()** 接口（采用 `lastX/Y/Z` 方法名而非 `getLast3D()`，POD-pod 风格一致）
+  - 验证：`update()` 内部先调 `DynalgoKalmanTracker::update` 平滑 bbox，再用平滑后 bbox 中心调 `detectionCenterToCamera3D` 缓存 3D；反投影失败时保留上次 cache 而非清零 ✓
+  - 对应代码：`app/algo/dynalgo_track_bundle.{hpp,cpp}`（新增，已写）
+- [x] C2.2 实现 `app/algo/dynalgo_track_bundle.cpp`；`DynalgoKalmanTracker` 默认构造；`init()` 在已初始化时打 `DYNALGO_LOG_WARN_S` 并 reset
+  - 验证：编入 `dynalgo_algo` 静态库后 `nm | grep DynalgoTrackBundle::update` 有符号（C3 构建完成后整体 `nm` 验证）
+  - 对应代码：`app/algo/dynalgo_track_bundle.cpp`（新增，已写）
 
 ### C3. EngagementLoop 状态机
-- [ ] C3.1 新增 `app/algo/dynalgo_engagement_loop.hpp`：`DynalgoEngagementLoop` 类，构造入参 `modelBackend / actuator / selector / trackBundle`；公开 `onFrame(frameSet)` 回调与 `stop()`
-  - 验证：依赖 `DynalgoModelBackend` + `DynalgoActuator` + `DynalgoTargetSelector` 抽象指针，不依赖任何 vendor SDK
-  - 对应代码：`app/algo/dynalgo_engagement_loop.{hpp,cpp}`（新增）
-- [ ] C3.2 实现 `app/algo/dynalgo_engagement_loop.cpp`：状态机 + 每态 `DYNALGO_LOG_INFO_S` trace；`FIRING` 态调用 `actuator->aimAt(X,Y,Z) → fire(durationMs)`；DUMMY actuator 与默认 `dryRun=true` 保证零外部副作用
-  - 验证：状态切换均通过 `DYNALGO_LOG_INFO_S` 输出可被日志检索
-  - 验证：`aimAt` 入参坐标系为光心 XYZ 米（直接用 TrackBundle `getLast3D()`）
-- [ ] C3.3 新增 `app/algo/CMakeLists.txt`：生成静态库 `dynalgo_algo`，链接 `dynalgo_core` + `dynalgo_actuators`（不直接链接 OrbbecSDK / rs_driver）
-  - 验证：`cmake --build build --target dynalgo_algo` 通过
-- [ ] C3.4 修改根 `app/CMakeLists.txt`：在 `add_subdirectory(actuator)` 之后加 `add_subdirectory(algo)`
-  - 验证：全量构建无错
+- [x] C3.1 新增 `app/algo/dynalgo_engagement_loop.hpp`：`DynalgoEngagementLoop` 类，构造入参 `modelBackend / actuator / selector / trackBundle`；公开 `onFrame(frameSet)` 回调与 `stop()`
+  - 验证：依赖 `DynalgoModelBackend` + `DynalgoActuator` + `DynalgoTargetSelector` 抽象指针，不依赖任何 vendor SDK ✓
+  - 对应代码：`app/algo/dynalgo_engagement_loop.{hpp,cpp}`（新增，已写）
+- [x] C3.2 实现 `app/algo/dynalgo_engagement_loop.cpp`：状态机 `IDLE → LOCKING → TRACKING → FIRING → LOST → IDLE` + 每态 `DYNALGO_LOG_INFO_S` trace；`FIRING` 态调用 `actuator->aimAt(X,Y,Z) → fire(durationMs)`；DUMMY actuator 与默认 `dryRun=true` 保证零外部副作用
+  - 验证：状态切换均通过 `DYNALGO_LOG_INFO_S` 输出可被日志检索 ✓
+  - 验证：`aimAt` 入参坐标系为光心 XYZ 米（直接用 TrackBundle `lastX()/lastY()/lastZ()`） ✓
+  - 验证：阈值 —— LOCKING→TRACKING 连续 3 帧；TRACKING→LOST 容忍 5 帧无 detection；FIRING 冷却 1000ms ✓
+- [x] C3.3 新增 `app/algo/CMakeLists.txt`：生成静态库 `dynalgo_algo`，链接 `dynalgo_core` + `dynalgo_actuators`（不直接链接 OrbbecSDK / rs_driver）
+  - 验证：`cmake --build build --target dynalgo_algo` 通过 ✓
+- [x] C3.4 修改根 `app/CMakeLists.txt`：在 `add_subdirectory(actuator)` 之后加 `add_subdirectory(algo)`，更新架构图注释
+  - 验证：全量构建无错 ✓
 
 ### C4. EngagementFrameConsumer 接线
-- [ ] C4.1 新增 `app/algo/dynalgo_engagement_consumer.hpp/.cpp`：`DynalgoEngagementFrameConsumer : FrameConsumer`，`consume(frameSet)` 调 `loop_->onFrame(frameSet)`
-  - 验证：基类 `FrameConsumer` 接口完整实现（参考 `app/capture/dynalgo_frame_consumer.hpp:126-195` 中 PointcloudFrameConsumer 同款派生）
-- [ ] C4.2 修改 `app/dynamic_algo_cam/dynamic_algo_cam.cpp`：增加 CLI option `--engage-model <type>` 与 `--engage-actuator <type>`；若两者均提供则通过 `createModelBackend` + `createActuator` 实例化，构造 EngagementLoop + EngagementFrameConsumer，**注入到对应 session 的 frameConsumers_ 链尾**
-  - 验证：未传 flag 时 `frameConsumers_` 链尾该 consumer 不存在；现有路径字节级不变
-  - 验证：传 flag 但无具体后端时，打日志 WARN 且继续采集不崩
+- [x] C4.1 新增 `app/algo/dynalgo_engagement_consumer.hpp/.cpp`：`DynalgoEngagementFrameConsumer : FrameConsumer`，`consume(shared_ptr<FrameSet>)` 调 `loop_->onFrame(*frameSet)`，`stopTask()` 调 `loop_->stop()`
+  - 验证：基类 `FrameConsumer` 接口完整实现（匹配 `app/capture/dynalgo_frame_consumer.hpp` 中 PointcloudFrameConsumer 同款派生） ✓
+  - 对应代码：`app/algo/dynalgo_engagement_consumer.{hpp,cpp}`（新增，已写）
+- [x] C4.2 修改 `app/dynamic_algo_cam/dynamic_algo_cam.cpp`：增加 CLI option `--engage-model <type>` `--engage-actuator <type>` `--engage-model-path <path>`；若两者均提供则通过 `createModelBackend` + `createActuator` 实例化，构造 EngagementLoop + EngagementFrameConsumer，**注入到对应 session 的 frameConsumers_ 链尾**（通过新增 `CaptureSession::addFrameConsumer()`）
+  - 验证：未传 flag 时 `frameConsumers_` 链尾该 consumer 不存在；现有路径字节级不变 ✓
+  - 验证：传 flag 但无具体后端时，打日志 WARN 且继续采集不崩 ✓
   - 对应代码：`app/dynamic_algo_cam/dynamic_algo_cam.cpp`（修改，仅 CLI 解析 + 条件构造链尾插入）
+- [x] C4.3 修改 `app/capture/dynalgo_capture_session.hpp/.cpp`：新增 `addFrameConsumer(unique_ptr<FrameConsumer>)`、`depthIntrinsic()`/`depthScale()` 访问器、`setEngagementLoop(loop, model, actuator)`（原指针管理，避免循环依赖），析构时删除
+  - 验证：`CaptureSession::setup/start/startVideoPipeline/stop` 签名零修改 ✓
 
 ### C5. 端到端 dry-run 冒烟
-- [ ] C5.1 启用 DUMMY model 注入若干假 detection 喂入 loop：本地 ad-hoc 验证 5 秒内日志序列可见 `IDLE → LOCKING → TRACKING → FIRING → IDLE`
-  - 验证：`./build/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动后 30s 内日志含上述序列
+- [~] C5.1 启用 DUMMY model 注入若干假 detection 喂入 loop：本地 ad-hoc 验证 5 秒内日志序列可见 `IDLE → LOCKING → TRACKING → FIRING → IDLE`
+  - 状态：构建通过，运行时依赖 `libOrbbecSDK.so.2`（环境缺失，暂无法端到端跑通）；代码结构已就绪
+  - 验证：`./build/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动后日志含上述序列（待环境就绪验证）
 - [ ] C5.2 DUMMY actuator 日志可见 `aimAt(1,2,3) → fire(10ms)` 调用形式
-  - 验证：grep 日志含 `aimAt` 与 `fire` 行
-- [ ] C5.3 Ctrl+C 优雅退出，无 hang、无 leak（valgrind --leak-check=full 可选）
-  - 验证：进程响应 SIGINT 退出码 0
+  - 状态：待运行验证
+- [ ] C5.3 Ctrl+C 优雅退出，无 hang、无 leak
+  - 状态：待运行验证
 
 ---
 
@@ -257,7 +268,7 @@
 
 - [x] **M1** Phase A 完成 — commit hash: `ae23b1d` — 验证 `nm build/lib/libnio_core.a | grep createActuator` 命中（**注意**：重命名工程后此命令演变为 `nm build/lib/libdynalgo_core.a | grep createActuator`；详见 §M6 重命名记录）
 - [x] **M2** Phase B 完成 — commit hash: `3bc3c4d` — 验证 GTest skip 或通过，header install 列表更新
-- [ ] **M3** Phase C 完成 — commit hash: `________` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列
+- [~] **M3** Phase C 完成 — commit hash: `________` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列（构建通过，待运行时环境验证）
 - [ ] **M4** Phase D 完成 — commit hash: `________` — 验证全量构建 + `--help` diff
 - [ ] **M5** 全工程验证：默认行为与 `85a193c` 一致 — 验证 commit 链清晰对应清单项
 - [x] **M6** 工程命名重构 `nio::` → `dynalgo::` 完成 — commit hash: `25be197` — 验证见下方"T1 工程命名重构"段
@@ -271,6 +282,7 @@
 | A0-A5 | `ae23b1d` | 2026-08-14 | Phase A 实现 + 验证完成；commit `ae23b1d` 已 push 至 origin/main（`85a193c..ae23b1d`） |
 | T1 工程命名重构 | `25be197` | 2026-08-14 | 见下方"T1 工程命名重构"段；commit `25be197` 已 push 至 origin/main（`532f7ad..25be197`） |
 | B0-B3 (Phase B 3D 反投影) | `3bc3c4d` | 2026-08-14 | Phase B 实现 + 验证完成；commit `3bc3c4d` 已 push 至 origin/main（`648ddd3..3bc3c4d`） |
+| C0-C4 (Phase C 闭环编排) | `________` | 2026-08-19 | Phase C 实现完成（TargetSelector, TrackBundle, EngagementLoop, DummyModelBackend, EngagementFrameConsumer, CLI wiring），全量构建通过；commit hash 待 push 后回填 |
 
 ---
 

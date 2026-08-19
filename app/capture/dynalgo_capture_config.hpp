@@ -29,6 +29,11 @@ struct CaptureConfig
     bool noShow = false;
     bool depthToPcd = false;
     PcdMode pcdMode = PcdMode::Single;
+
+    // Engagement loop (Phase C)
+    std::string engageModel;    // e.g. "DUMMY", "YOLOV8_PY" — empty = disabled
+    std::string engageActuator; // e.g. "DUMMY" — empty = disabled
+    std::string engageModelPath; // model weights / config path
 };
 
 inline void printUsage(const char* prog) {
@@ -43,6 +48,9 @@ inline void printUsage(const char* prog) {
               << "  --no-show     Disable SDL live preview window\n"
               << "  --depth-to-pcd  Convert depth frames to point cloud and record (default: off)\n"
               << "  --pcd-mode M  Point cloud save mode: single (per-frame .pcd, default) or stream (single .pcs)\n"
+              << "  --engage-model TYPE  Enable engagement loop with model backend (DUMMY, YOLOV8_PY, etc.)\n"
+              << "  --engage-actuator TYPE  Enable engagement loop with actuator (DUMMY, etc.)\n"
+              << "  --engage-model-path PATH  Model weights/config path for engage-model\n"
               << "  --help        Show this help\n"
               << "\nExamples:\n"
               << "  " << prog << "                                 # all devices, default settings\n"
@@ -51,6 +59,7 @@ inline void printUsage(const char* prog) {
               << "  " << prog << " -c \"305\" --alpha 0.6          # combined options\n"
               << "  " << prog << " --pcd-mode stream             # continuous .pcs stream instead of per-frame .pcd\n"
               << "  " << prog << " --depth-to-pcd                 # convert depth to point cloud and record\n"
+              << "  " << prog << " --engage-model DUMMY --engage-actuator DUMMY  # dry-run engagement loop\n"
               << std::endl;
 }
 
@@ -63,6 +72,9 @@ inline CaptureConfig parseArgs(int argc, char** argv) {
                                         { "no-show", no_argument, nullptr, 'S' },
                                         { "depth-to-pcd", no_argument, nullptr, 'P' },
                                         { "pcd-mode", required_argument, nullptr, 'p' },
+                                        { "engage-model", required_argument, nullptr, 1000 },
+                                        { "engage-actuator", required_argument, nullptr, 1001 },
+                                        { "engage-model-path", required_argument, nullptr, 1002 },
                                         { "help", no_argument, nullptr, 'h' },
                                         { nullptr, 0, nullptr, 0 } };
 
@@ -106,6 +118,15 @@ inline CaptureConfig parseArgs(int argc, char** argv) {
                 cfg.pcdMode = PcdMode::Stream;
             else
                 cfg.pcdMode = PcdMode::Single;
+            break;
+        case 1000: // --engage-model
+            cfg.engageModel = optarg;
+            break;
+        case 1001: // --engage-actuator
+            cfg.engageActuator = optarg;
+            break;
+        case 1002: // --engage-model-path
+            cfg.engageModelPath = optarg;
             break;
         case 'h':
             printUsage(argv[0]);

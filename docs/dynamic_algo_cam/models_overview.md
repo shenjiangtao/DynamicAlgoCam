@@ -78,7 +78,7 @@ combined work 的一部分对外发布，整体受 GPL-3.0 copyleft 约束。三
 |------|------|
 | `app/core/dynalgo_model.hpp` | `DynalgoModelType` 枚举、`DynalgoDetectionResult` 结构、`DynalgoModelBackend` 抽象类、`DynalgoModelConfig` |
 | `app/core/dynalgo_model_factory.hpp` | `createModelBackend(type)` 工厂入口 + `registerModelBackend` 注册钩子 |
-| `app/core/dynalgo_model_factory.cpp` | 工厂实现 + 进程级注册表（mutex 保护），已编入 `libnio_core.a` |
+| `app/core/dynalgo_model_factory.cpp` | 工厂实现 + 进程级注册表（mutex 保护），已编入 `libdynalgo_core.a` |
 
 ### 接口契约
 
@@ -133,7 +133,7 @@ if (backend->load(cfg)) {
 ### 已验证
 
 - `cmake --build build --target dynamic_algo_cam` 通过；
-- `nm build/lib/libnio_core.a | grep dynalgo::` 显示 `createModelBackend` 与 `registerModelBackend`
+- `nm build/lib/libdynalgo_core.a | grep dynalgo::` 显示 `createModelBackend` 与 `registerModelBackend`
   符号已编入静态库。
 
 ## C++ 卡尔曼轨迹滤波器
@@ -144,7 +144,7 @@ bbox 卡尔曼滤波器**，用于后续模型推理输出框的轨迹平滑与�
 | 文件 | 作用 |
 |------|------|
 | `app/core/dynalgo_kalman_tracker.hpp` | `DynalgoKalmanTracker` 类：状态 `[cx,cy,w,h,vx,vy]`、匀速运动模型、`init/update/predict` 接口 |
-| `app/core/dynalgo_kalman_tracker.cpp` | 完整 KF predict/update 实现，固定 6 维（用 `std::array<double,...>` 手写线性代数，**不引入 Eigen**），已编入 `libnio_core.a` |
+| `app/core/dynalgo_kalman_tracker.cpp` | 完整 KF predict/update 实现，固定 6 维（用 `std::array<double,...>` 手写线性代数，**不引入 Eigen**），已编入 `libdynalgo_core.a` |
 
 ### 接口契约
 
@@ -181,12 +181,8 @@ for (auto& det : frameDetections) {        // frameDetections 来自 DynalgoMode
 ### 已验证
 
 - `cmake --build build --target dynamic_algo_cam` 通过；
-- `nm build/lib/libnio_core.a | grep DynalgoKalmanTracker` 显示
+- `nm build/lib/libdynalgo_core.a | grep DynalgoKalmanTracker` 显示
   `init`、`update`、`predict`、构造函数符号已编入静态库。
-
-  > 注：上句"libnio_core.a"为重命名前的旧名；自工程命名重构（commit `25be197`）后实际路径为
-  > `build/lib/libdynalgo_core.a`，命令相应演化为
-  > `nm build/lib/libdynalgo_core.a | grep DynalgoKalmanTracker`。
 
 ---
 
@@ -284,3 +280,182 @@ Y = (v - intr.cy) * Z / intr.fy
   5 个 `TEST()`（对应上述 a–e 用例）。本环境 GTest 缺失，根 `CMakeLists.txt`
   第 107-116 行的 `BUILD_TESTS=OFF + find_package(GTest QUIET)` 控制按预定方式跳过测试子目录。
 - **默认路径无破坏**：`cmake --build build --target dynamic_algo_cam` 通过（headr 引入不破坏任何现存 target）。
+
+---
+
+## TrackBundle 与 EngagementLoop（Phase C）
+
+### TrackBundle：单目标轨迹包装器
+
+实现：[`app/algo/dynalgo_track_bundle.hpp`](../../app/algo/dynalgo_track_bundle.hpp) /
+[`app/algo/dynalgo_track_bundle.cpp`](../../app/algo/dynalgo_track_bundle.cpp)
+（编入 `libdynalgo_algo.a`）。
+
+#### 接口契约
+
+```cpp
+namespace dynalgo {
+
+class DynalgoTrackBundle
+{
+public:
+    DynalgoTrackBundle() = default;
+
+    // 从首帧 detection 显式初始化（可选；首次 update 会自动 init）
+    void init(const DynalgoDetectionResult& det);
+
+    // 融入新测量并刷新 3D fix
+    // - det: 最新 smoothed/raw target detection (2D)
+    // - depthAligned: D2C-aligned Y16 depth frame (PRECONDITION of detectionCenterToCamera3D)
+    // - intr: depth intrinsics
+    // - depthScale: sensorInfo.depthScale
+    // 反投影失败时保留上次缓存的 3D fix（不清零）
+    void update(const DynalgoDetectionResult& det,
+                const DynalgoFrame& depthAligned,
+                const DynalgoIntrinsic& intr,
+                float depthScale);
+
+    // 无测量时的时间推进，返回预测 bbox
+    DynalgoDetectionResult predict();
+
+    bool initialised() const;  // 已 init 或已收到首帧测量
+    bool hasFix()      const;  // 是否有有效 3D fix
+    float lastX() const;       // 最近 3D fix X (米)，valid 当 hasFix()
+    float lastY() const;
+    float lastZ() const;
+
+private:
+    DynalgoKalmanTracker tracker_;   // 2D bbox 匀速 KF
+    bool  lastHasFix_ = false;
+    float lastX_ = 0.0f, lastY_ = 0.0f, lastZ_ = 0.0f;
+};
+
+} // namespace dynalgo
+```
+
+#### 内部流程
+
+1. `update()` 先调用 `DynalgoKalmanTracker::update(det)` 得到平滑后的 2D bbox
+2. 用平滑 bbox 的几何中心 `(cx,cy)` 调用 `detectionCenterToCamera3D()` 计算 3D fix
+3. 3D 计算失败时保留上次缓存，供上层决定是否继续瞄准
+4. `predict()` 直接透传给内部 KF 的 `predict()`
+
+#### 设计边界
+
+- **单目标**：每个 `DynalgoTrackBundle` 对应一条轨迹；多目标关联（Hungarian/贪婪匹配、轨迹生命周期）不在本类范围内，见 `IMPLEMENTATION_TASKS.md` O5
+- **不接入采集主流程**：仅供 `DynalgoEngagementLoop` 内部使用
+- **依赖**：`dynalgo_core` (KF、3D 反投影、DetectionResult)、`dynalgo_actuators` (仅链接依赖，不直接用)
+
+---
+
+### EngagementLoop：感知→定位→估计→控制编排闭环
+
+实现：[`app/algo/dynalgo_engagement_loop.hpp`](../../app/algo/dynalgo_engagement_loop.hpp) /
+[`app/algo/dynalgo_engagement_loop.cpp`](../../app/algo/dynalgo_engagement_loop.cpp)
+（编入 `libdynalgo_algo.a`）。
+
+#### 构造与配置
+
+```cpp
+struct Config {
+    int lockingFramesRequired = 3;     // 连续 detection 帧数进入 TRACKING
+    int lostFramesAllowed   = 5;       // 连续 miss 帧数进入 LOST
+    int fireCooldownMs      = 1000;    // 两次 fire() 最小间隔
+    SelectorStrategy selectorStrategy = SelectorStrategy::HIGHEST_SCORE;
+};
+
+DynalgoEngagementLoop(const Config& cfg,
+                      DynalgoModelBackend* model,
+                      DynalgoActuator* actuator,
+                      const DynalgoIntrinsic& depthIntr,
+                      float depthScale);
+```
+
+#### 状态机
+
+```
+IDLE ── detection ──► LOCKING ── 3 stable frames ──► TRACKING
+  ▲                                                    │
+  │                                                    ▼
+  └────────── lost > N ────────────────────────── LOST ◄── TRACKING
+                                                ▲
+                                                │ 3D fix obtained
+                                                ▼
+                                         FIRING ── cooldown ──► TRACKING
+```
+
+| 状态 | 触发条件 | 副作用 (dryRun 下仅日志) |
+|---|---|---|
+| **IDLE** | 无目标 / 刚启动 / LOST 折回 | 重置计数器与 bundle |
+| **LOCKING** | 首次 detection | 计数器+1；未达阈值保持 |
+| **TRACKING** | 连续 ≥3 帧 detection | 更新 KF + 3D fix；有 fix 时尝试 `fire()` |
+| **FIRING** | TRACKING 中有 3D fix 且冷却结束 | `actuator->aimAt(X,Y,Z) → fire(10ms)`；冷却后回 TRACKING |
+| **LOST** | 连续 >N 帧无 detection | 折回 IDLE |
+
+每次状态切换均通过 `DYNALGO_LOG_INFO_S("[engage] state: OLD → NEW")` 记录。
+
+#### 主循环回调
+
+```cpp
+void onFrame(const DynalgoFrameSet& frameSet);
+```
+
+单帧处理流程：
+
+1. **Perceive**：若 `modelBackend` 存在，对 `frameSet.getFrame(COLOR)` 调用 `infer()` 得到 detections
+2. **Locate**：用 `pickTarget()` 从 detections 中选单目标（策略可配：`HIGHEST_SCORE`/`NEAREST_DEPTH`/`LARGEST_AREA`；`NEAREST_DEPTH` 需预先计算每个 detection 的 Z）
+3. **Estimate**：将选中的 target 送入 `DynalgoTrackBundle`（`init`/`update`/`predict`）
+4. **Control**：在 `FIRING` 态调用 `actuator->aimAt(bundle.lastX(), bundle.lastY(), bundle.lastZ()) → fire(10ms)`，受 `fireCooldownMs` 限制
+
+#### EngagementFrameConsumer：FrameConsumer 适配器
+
+实现：[`app/algo/dynalgo_engagement_consumer.hpp`](../../app/algo/dynalgo_engagement_consumer.hpp) /
+[`app/algo/dynalgo_engagement_consumer.cpp`](../../app/algo/dynalgo_engagement_consumer.cpp)
+
+将 `CaptureSession` 的 `FrameConsumer` 链尾接入 `EngagementLoop`：
+
+```cpp
+class DynalgoEngagementFrameConsumer : public FrameConsumer {
+public:
+    explicit DynalgoEngagementFrameConsumer(DynalgoEngagementLoop* loop);
+    void consume(std::shared_ptr<DynalgoFrameSet> frameSet) override {
+        if (loop_ && frameSet) loop_->onFrame(*frameSet);
+    }
+    void stopTask() override { if (loop_) loop_->stop(); }
+};
+```
+
+在 `dynamic_algo_cam.cpp` 中通过 `session->addFrameConsumer()` 注入。
+
+#### CLI 启用
+
+```bash
+./build/bin/dynamic_algo_cam \
+    --engage-model DUMMY \
+    --engage-actuator DUMMY \
+    --engage-model-path <weights-path> \
+    --enable-event-sim --no-show
+```
+
+- `--engage-model`：`DUMMY` / `YOLOV8_PY` / `ONNXRUNTIME` / `TENSORRT`（对应 `DynalgoModelType`）
+- `--engage-actuator`：`DUMMY` / `LASER_GENERIC` / `GIMBAL_GENERIC`（对应 `DynalgoActuatorType`）
+- **未传任一 flag 时**：`frameConsumers_` 链尾不增加 `EngagementFrameConsumer`，现有采集/录制/预览路径**字节级不变**
+
+#### 已验证
+
+- `cmake --build build` 全量构建通过
+- `strings build/bin/dynamic_algo_cam | grep engage` 确认 3 个新 CLI 参数
+- `nm build/lib/libdynalgo_algo.a` 确认 `DynalgoEngagementLoop`、`DynalgoEngagementFrameConsumer`、`DummyModelBackend`、`pickTarget`、`DynalgoTrackBundle` 符号导出
+- 待运行时验证：需 `libOrbbecSDK.so.2` 环境跑干跑，观察状态机日志序列
+
+---
+
+## DummyModelBackend：工程干跑用模型后端
+
+实现：[`app/algo/dummy_model_backend.hpp`](../../app/algo/dummy_model_backend.hpp) /
+[`app/algo/dummy_model_backend.cpp`](../../app/algo/dummy_model_backend.cpp)
+
+- `DynalgoModelType::DUMMY` 后端，自注册到 `createModelBackend()`
+- `infer()` 产生固定合成 detection：帧中心、10% 帧尺寸、score=0.9、label="dummy"
+- 可通过 `setFixedDetection()` / `setEnabled()` 调整测试行为
+- **仅用于干跑 / 单元测试，不代表生产可用**

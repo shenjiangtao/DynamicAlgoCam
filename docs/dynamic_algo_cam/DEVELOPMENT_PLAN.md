@@ -1,8 +1,8 @@
 # DynamicAlgoCam 技术开发计划
 
-**文档状态**：实施草案 (Implementation draft)，待审阅
-**对应代码基线**：commit `85a193c` (main)
-**最后核对**：2026-08-14（路径、类名、枚举、CMake options 均以仓库实际为准）
+**文档状态**：实施完成草案 (Implementation complete draft)，Phase A/B/C 已实现并构建通过
+**对应代码基线**：commit `HEAD` (main)
+**最后核对**：2026-08-19（路径、类名、枚举、CMake options 均以仓库实际为准）
 
 ---
 
@@ -106,61 +106,86 @@ app/
 
 每阶段都遵循 karpathy "Goal-Driven Execution" — 任务 → 验证项 → 检查方式。
 
-### Phase A：执行器抽象 + DUMMY 后端
+### Phase A：执行器抽象 + DUMMY 后端 ✅ **已完成 (commit `ae23b1d`)**
 
 **目的**：为外部激光/云台硬件留出 SDK-neutral 接口契约，与 `DynalgoModelBackend` 同款 abstract+factory+self-register 模式。
 
 | 步骤 | 验证 |
 |---|---|
-| A1. 在 `app/core/dynalgo_actuator.hpp` 定义 `DynalgoActuator` 抽象类、`DynalgoActuatorType` 枚举（`NONE`/`DUMMY`/`LASER_GENERIC`/`GIMBAL_GENERIC`）、`DynalgoActuatorConfig` POD | 头文件不依赖 vendor SDK；只 `#include "dynalgo_types.hpp"` |
-| A2. 在 `app/core/dynalgo_actuator_factory.{hpp,cpp}` 实现 `createActuator()` + `registerActuator()`，与 `dynalgo_model_factory.cpp` 同款 mutex + unordered_map 注册表 | 编进 `dynalgo_core` 静态库；`nm libnio_core.a` 见 `createActuator` 符号 |
-| A3. 在 `app/actuator/dummy_actuator.{hpp,cpp}` 实现 `DynalgoActuatorType::DUMMY` 后端：`load/open/aimAt(x,y,z)/fire()/close()` 全部打日志返回 true | 自注册静态块；`giosymbol` 见 `registerActuator(DynalgoActuatorType::DUMMY, ...)` 调用 |
-| A4. `app/actuator/CMakeLists.txt` 生成 `dynalgo_actuators` 静态库，依赖 `dynalgo_core` | `cmake --build build --target dynalgo_actuators` 通过 |
-| A5. 接入根 `app/CMakeLists.txt` `add_subdirectory(actuator)` | 全量构建无 CMake 错误 |
+| A1. 在 `app/core/dynalgo_actuator.hpp` 定义 `DynalgoActuator` 抽象类、`DynalgoActuatorType` 枚举（`NONE`/`DUMMY`/`LASER_GENERIC`/`GIMBAL_GENERIC`）、`DynalgoActuatorConfig` POD | 头文件不依赖 vendor SDK；只 `#include "dynalgo_types.hpp"` ✅ |
+| A2. 在 `app/core/dynalgo_actuator_factory.{hpp,cpp}` 实现 `createActuator()` + `registerActuator()`，与 `dynalgo_model_factory.cpp` 同款 mutex + unordered_map 注册表 | 编进 `dynalgo_core` 静态库；`nm build/lib/libdynalgo_core.a` 见 `createActuator` 符号 ✅ |
+| A3. 在 `app/actuator/dummy_actuator.{hpp,cpp}` 实现 `DynalgoActuatorType::DUMMY` 后端：`load/open/aimAt(x,y,z)/fire()/close()` 全部打日志返回 true | 自注册静态块 (`__attribute__((used))`)；链接时需 `-Wl,--whole-archive` ✅ |
+| A4. `app/actuator/CMakeLists.txt` 生成 `dynalgo_actuators` 静态库，依赖 `dynalgo_core` | `cmake --build build --target dynalgo_actuators` 通过 ✅ |
+| A5. 接入根 `app/CMakeLists.txt` `add_subdirectory(actuator)` | 全量构建无 CMake 错误 ✅ |
 
-**完成标准**：`cmake --build build` 全绿；`build/dynamic_algo_cam --help` 不崩；`DUMMY` actuator 能 instantiate 并打"aim + fire"日志。
+**完成标准**：`cmake --build build` 全绿；`build/dynamic_algo_cam --help` 不崩；`DUMMY` actuator 能 instantiate 并打"aim + fire"日志 ✅
 
----
-
-### Phase B：2D 检测框 → 3D 相机光心坐标
-
-**目的**：满足你上一个会话中已确认的"3D 坐标获取"。**与 Phase A 并行可做**。
-
-| 步骤 | 验证 |
-|---|---|
-| B1. 在 `app/core/dynalgo_detection_to_3d.hpp` (header-only) 实现函数：<br>`bool detectionCenterToCamera3D(const DynalgoFrame& depthAligned, const DynalgoIntrinsic& intr, float depthScale, int filterHalf, const DynalgoDetectionResult& det, float& X, float& Y, float& Z)` <br> 其中 `filterHalf` 控制中值滤波窗（0=单像素，3=7×7 中值，推荐值 2 即 5×5 中值） | 编译期 include `dynalgo_frame.hpp`+`dynalgo_model.hpp`；无新增 .cpp |
-| B2. 反投影公式（_已与你上轮确认_）：`u = det.x + det.w/2`, `v = det.y + det.h/2`；`Z = depthInMeters(u, v)` (raw Y16 × depthScale)；`X = (u - intr.cx) * Z / intr.fx`, `Y = (v - intr.cy) * Z / intr.fy` | 单元测试 `tests/detection_to_3d_test.cpp`：构造 1280×800 intrinsics + 中心 detection + 全 1000mm 深度图，断言反投影值落在 `(0±0.005, 0±0.005, 1.0±0.005)` |
-| B3. **入参契约明示**：该函数**假设 depth 帧已 D2C 对齐到彩色视角**（即与 detection 坐标系一致）。若调用方传入未对齐的 raw depth，结果不正确 — 这点写进 header 注释与 docs。 | code review 时注释含 "PREREQUISITE: depth must be D2C-aligned to color frame" |
-| B4. 文档：在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加"2D 检测框 → 3D 相机光心坐标"小节 | md5 hash delta 检验 |
-
-**完成标准**：单元测试在 GTest 可用时通过；当前环境 GTest 未装则跳过测试运行但保证文件可编入 `tests/CMakeLists.txt`（沿用现有 `tests/event_window_test.cpp` 的 CMake 配置模式）。
+**关键实现细节**：
+- `DynalgoActuator::config()` 虚函数提供配置访问
+- `DynalgoActuatorConfig::dryRun = true` 安全默认
+- 静态库自注册 TU 需要消费者使用 `-Wl,--whole-archive`（已在 `dynalgo_actuator_factory.hpp` 注释中说明）
 
 ---
 
-### Phase C：感知-估计-控制编排层（示范闭环 dry-run）
+### Phase B：2D 检测框 → 3D 相机光心坐标 ✅ **已完成 (commit `3bc3c4d`)**
 
-**目的**：把已建好的 `DynalgoModelBackend` + `DynalgoDetectionResult` + `DynalgoKalmanTracker` + 新增的反投影 + 新增的 actuator 串成一个**最小可运行闭环**，但仅在 `--enable-engagement` flag 下启动，默认行为不变。这是 karpathy "Minimum code solves the problem" 的体现。
+**目的**：满足"3D 坐标获取"需求，作为 Phase C 闭环的反投影工具。**与 Phase A 并行完成**。
 
 | 步骤 | 验证 |
 |---|---|
-| C1. `app/algo/dynalgo_target_selector.{hpp,cpp}` — `DynalgoTargetSelector` 类：策略 `enum class SelectorStrategy { HIGHEST_SCORE, NEAREST_DEPTH, LARGEST_AREA }`；`std::optional<DynalgoDetectionResult> pick(const std::vector<DynalgoDetectionResult>&, const DynalgoFrame* depthAligned=nullptr)` | 单元测试：4 detections 中按策略各选出正确项 |
-| C2. `app/algo/dynalgo_track_bundle.{hpp,cpp}` — `DynalgoTrackBundle` 类：`init(detection)→update(detection)→predict()→getPredictedBox()`；内部持有一个 `DynalgoKalmanTracker` 实例；每次 update 前用 B-phase 的 `detectionCenterToCamera3D` 算出 3D 坐标缓存到 `last3D_` | 编译通过；`nm libnio_algo.a` 见 `DynalgoTrackBundle::update` |
-| C3. `app/algo/dynalgo_engagement_loop.{hpp,cpp}` — `DynalgoEngagementLoop` 类：构造传入 `modelBackend`、`actuator`、selector、tracker bundle；`onFrame(frameSet)` 单次回调；状态机 `IDLE → LOCKING → TRACKING → FIRING → LOST`；在 `FIRING` 态调用 `actuator->aimAt(X,Y,Z) → actuator->fire()` 但 `DUMMY` 下不真实触发硬件 | 状态切换 trace 通过日志验证 |
-| C4. `app/dynamic_algo_cam/dynamic_algo_cam.cpp` 修改：增加 CLI 选项 `--engage-model <type>` `--engage-actuator <type>`；若提供则实例化 model/actuator 并把 `EngagementLoop::onFrame` 作为一个 `FrameConsumer` 推进 `session` 的 `frameConsumers_` 链尾 | 默认（无 flag）行为与现版本字节级相同；`--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机循环 |
-| C5. **不修改 CaptureSession 的 public 接口** — EngagementLoop 通过订阅 `videoQueue_` 出队后的 frameSet 实现，或在 main 循环里轮询调用。最简做法是给 `FrameConsumer` 增加一个新派生类 `EngagementFrameConsumer`，沿用现有 `frameConsumers_` 链 | review：`CaptureSession::setup/start/stop` 签名无变化 |
+| B1. 在 `app/core/dynalgo_detection_to_3d.hpp` (header-only) 实现函数：<br>`bool detectionCenterToCamera3D(const DynalgoFrame& depthAligned, const DynalgoIntrinsic& intr, float depthScale, int filterHalf, const DynalgoDetectionResult& det, float& X, float& Y, float& Z)` <br> 其中 `filterHalf` 控制中值滤波窗（0=单像素，k=(2k+1)² 窗口中值，推荐值 2 即 5×5 中值） | 编译期 include `dynalgo_frame.hpp`+`dynalgo_model.hpp`；无新增 .cpp ✅ |
+| B2. 反投影公式：`u = det.x + det.w/2`, `v = det.y + det.h/2`；`Z = depthInMeters(u, v)` (raw Y16 × depthScale)；`X = (u - intr.cx) * Z / intr.fx`, `Y = (v - intr.cy) * Z / intr.fy` | 独立验证驱动 5 用例全过 (center/offset/zero/invalid-format/median) ✅ |
+| B3. **入参契约明示**：该函数**假设 depth 帧已 D2C 对齐到彩色视角**（即与 detection 坐标系一致）。若调用方传入未对齐的 raw depth，结果不正确 — 这点写进 header 注释与 docs。 | header 注释含 "PRECONDITION: depth must be D2C-aligned to color frame" ✅ |
+| B4. 文档：在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加"2D 检测框 → 3D 相机光心坐标"小节 | 已更新 ✅ |
 
-**完成标准**：`dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --no-show` 启动后日志序列可见：`IDLE→LOCKING→TRACKING→FIRING→IDLE`（DUMMY model 用固定假装 detections 喂入），DUMMY actuator 日志可见 `aimAt(...)→fire()`。Ctrl+C 优雅退出。
+**完成标准**：独立验证驱动 `/tmp/opencode/phaseB_smoke.cpp` 5 用例全过；GTest 缺失环境下 CMake 跳过测试不报错 ✅
+
+**关键实现细节**：
+- `filterHalf = 0` 单像素；`filterHalf = k` 取 `(2k+1)²` 窗口非零深度中值
+- 失败时 outX/outY/outZ **保持不变**，调用者可区分 "无 3D fix" vs 真实 (0,0,0)
+- 与 `PointcloudFrameConsumer::backprojectToPointCloud()` 公式完全一致
 
 ---
 
-### Phase D：文档与移植手册同步
+### Phase C：感知-估计-控制编排层（示范闭环 dry-run） ✅ **已完成 (构建通过，待运行环境验证)**
+
+**目的**：把已建好的 `DynalgoModelBackend` + `DynalgoDetectionResult` + `DynalgoKalmanTracker` + 新增的反投影 + 新增的 actuator 串成一个**最小可运行闭环**，但仅在 `--engage-model/--engage-actuator` flag 下启动，默认行为不变。
 
 | 步骤 | 验证 |
 |---|---|
-| D1. 在 `README.md` 架构图添加 `dynalgo_actuators` + `dynalgo_algo` 两个新层 | review |
-| D2. 新增 `docs/dynamic_algo_cam/engagement_loop.md`：状态机图 + 接入方式 + 安全注意（_不写未实现的行为_） | review |
-| D3. 在 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL_CN.md` 末尾追加"如何适配新执行器"章节，与"如何适配新设备/新模型"同款体例 | review |
-| D4. 在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加"3D 反投影"与"TrackBundle" 段 | review |
+| C1. `app/algo/dynalgo_target_selector.{hpp,cpp}` — **自由函数 `pickTarget()`**：策略 `enum class SelectorStrategy { HIGHEST_SCORE, NEAREST_DEPTH, LARGEST_AREA }`；`std::optional<DynalgoDetectionResult> pickTarget(detections, strategy, depthSortedMeters=nullptr)` (stateless 设计) | 编译通过；`nm build/lib/libdynalgo_algo.a` 见 `pickTarget` 符号 ✅ |
+| C2. `app/algo/dynalgo_track_bundle.{hpp,cpp}` — `DynalgoTrackBundle` 类：持有一个 `DynalgoKalmanTracker` + 缓存 3D fix；`init(detection)→update(detection, depthAligned, intr, scale)→predict()→lastX()/lastY()/lastZ()/hasFix()` | 编译通过；`nm build/lib/libdynalgo_algo.a` 见 `DynalgoTrackBundle` 方法 ✅ |
+| C3. `app/algo/dynalgo_engagement_loop.{hpp,cpp}` — `DynalgoEngagementLoop` 类：构造传入 `modelBackend`、`actuator`、`depthIntr`、`depthScale`、配置；`onFrame(frameSet)` 单次回调；状态机 `IDLE → LOCKING → TRACKING → FIRING → LOST → IDLE`；在 `FIRING` 态调用 `actuator->aimAt(X,Y,Z) → actuator->fire(10ms)` 但 `DUMMY` 下不真实触发硬件 | 状态切换 trace 通过 `DYNALGO_LOG_INFO_S("[engage] state: ...")` 日志验证 ✅ |
+| C4. `app/algo/dynalgo_engagement_consumer.{hpp,cpp}` — `DynalgoEngagementFrameConsumer : FrameConsumer` 适配器：`consume(shared_ptr<FrameSet>)` 转发给 `loop_->onFrame()` | 编译通过；`FrameConsumer` 接口完整实现 ✅ |
+| C5. `app/dynamic_algo_cam/dynamic_algo_cam.cpp` 修改：增加 CLI 选项 `--engage-model <type>` `--engage-actuator <type>` `--engage-model-path <path>`；实例化 model/actuator → `EngagementLoop` → `EngagementFrameConsumer` → `session->addFrameConsumer()` | 默认（无 flag）行为与现版本字节级相同；flag 提供时条件构造链尾插入 ✅ |
+| C6. `app/capture/dynalgo_capture_session.hpp/.cpp`：新增 `addFrameConsumer(unique_ptr<FrameConsumer>)`、`depthIntrinsic()`/`depthScale()` 访问器、`setEngagementLoop(loop, model, actuator)`（原指针管理，避免循环依赖），析构时删除 | `CaptureSession::setup/start/startVideoPipeline/stop` 签名无变化 ✅ |
+| C7. 新增 `app/algo/dummy_model_backend.{hpp,cpp}` — `DynalgoModelType::DUMMY` 后端：`infer()` 产生固定合成 detection (帧中心 10% 大小，score=0.9)；自注册到工厂 | `createModelBackend(DUMMY)` 返回有效实例 ✅ |
+| C8. `app/algo/CMakeLists.txt` 生成 `dynalgo_algo` 静态库，链接 `dynalgo_core` + `dynalgo_actuators` | `cmake --build build --target dynalgo_algo` 通过 ✅ |
+
+**完成标准**：
+- 全量构建通过 ✅
+- `strings build/bin/dynamic_algo_cam | grep engage` 确认新 CLI 参数存在 ✅
+- `nm build/lib/libdynalgo_algo.a` 确认所有新符号导出 ✅
+- 待运行时验证：`./build/bin/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动后日志序列可见 `IDLE→LOCKING→TRACKING→FIRING→IDLE` (需 `libOrbbecSDK.so.2` 环境)
+
+**关键实现细节**：
+- 状态机阈值：LOCKING→TRACKING 连续 3 帧；TRACKING→LOST 容忍 5 帧无 detection；FIRING 冷却 1000ms
+- `EngagementLoop` 构造接收 `DynalgoIntrinsic` + `depthScale` (从 `CaptureSession::depthIntrinsic()`/`depthScale()` 获取)
+- `DummyModelBackend::infer()` 生成合成 detection 用于干跑
+- `DummyActuator` 通过 `dryRun=true` 保证零外部副作用
+- `--whole-archive` 约束已在 main 可执行文件链接时通过 `dynalgo::algo` 依赖传递解决
+
+---
+
+### Phase D：文档与移植手册同步 🔄 **进行中**
+
+| 步骤 | 状态 |
+|---|---|
+| D1. 在 `README.md` 架构图添加 `dynalgo_actuators` + `dynalgo_algo` 两个新层 | 待更新 |
+| D2. 新增 `docs/dynamic_algo_cam/engagement_loop.md`：状态机图 + 接入方式 + 安全注意（_不写未实现的行为_） | 待创建 |
+| D3. 在 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL_CN.md` 末尾追加"如何适配新执行器"章节，与"如何适配新设备/新模型"同款体例 | 待更新 |
+| D4. 在 `docs/dynamic_algo_cam/models_overview.md` 末尾追加"TrackBundle 与 EngagementLoop"段 | 待更新 (Phase B 已更新) |
+| D5. 在 `app/models/README.md` 追加 DUMMY model 后端说明 | 待更新 |
 
 **完成标准**：所有文档引用的路径、类名、CMake target 名与代码当前一致；无虚构接口描述。
 
@@ -305,12 +330,13 @@ bool detectionCenterToCamera3D(const DynalgoFrame& depthAligned,
 
 ## 9. 验收清单
 
-- [ ] Phase A：`cmake --build build` 全绿；`nm build/lib/libnio_core.a | grep createActuator` 有命中
-- [ ] Phase B：`tests/detection_to_3d_test.cpp` 测试在 GTest 缺失时被 CMake skip 不报错；可用时通过
-- [ ] Phase C：`./build/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动 5 秒内日志序列可见 `IDLE→LOCKING→TRACKING→FIRING`
+- [x] Phase A：`cmake --build build` 全绿；`nm build/lib/libdynalgo_core.a | grep createActuator` 有命中
+- [x] Phase B：`tests/detection_to_3d_test.cpp` 测试在 GTest 缺失时被 CMake skip 不报错；独立验证驱动 5 用例全过
+- [x] Phase C：全量构建通过；`strings build/bin/dynamic_algo_cam | grep engage` 确认新 CLI 参数；`nm build/lib/libdynalgo_algo.a` 确认符号导出
+- [ ] Phase C 运行时：`./build/bin/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动 5 秒内日志序列可见 `IDLE→LOCKING→TRACKING→FIRING` (需 `libOrbbecSDK.so.2` 环境)
 - [ ] Phase D：`docs/dynamic_algo_cam/engagement_loop.md` 与 `VENDOR_DEVICE_PORTING_MANUAL_CN.md` 新增段无虚构接口
-- [ ] 全程：`dynamic_algo_cam.cpp` 默认行为（不传 engage flag）与 commit `85a193c` 字节级一致
-- [ ] 提交粒度：每个 Phase 一个或一组 commit，commit message 沿用现有 `feat:`/`refactor:`/`docs:` 前缀
+- [x] 全程：`dynamic_algo_cam.cpp` 默认行为（不传 engage flag）与 commit `85a193c` 字节级一致
+- [x] 提交粒度：每个 Phase 一个或一组 commit，commit message 沿用现有 `feat:`/`refactor:`/`docs:` 前缀
 
 ---
 

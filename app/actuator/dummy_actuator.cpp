@@ -55,6 +55,8 @@ bool DummyActuator::close() {
 
 const char* DummyActuator::name() const { return "DUMMY"; }
 
+const DynalgoActuatorConfig& DummyActuator::config() const { return cfg_; }
+
 } // namespace dynalgo
 
 namespace {

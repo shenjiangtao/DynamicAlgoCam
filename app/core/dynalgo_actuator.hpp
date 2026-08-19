@@ -86,6 +86,9 @@ public:
 
     // Human-readable backend name, e.g. "DUMMY", "LASER_GENERIC".
     virtual const char* name() const = 0;
+
+    // Current config (set by load()). Returns reference to internally stored config.
+    virtual const DynalgoActuatorConfig& config() const = 0;
 };
 
 } // namespace dynalgo

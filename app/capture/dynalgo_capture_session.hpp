@@ -26,6 +26,8 @@
 #include "dynalgo_stream_tasks.hpp"
 #include "dynalgo_thread.hpp"
 #include "dynalgo_types.hpp"
+#include "dynalgo_actuator.hpp"
+#include "dynalgo_model.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -46,6 +48,9 @@
 
 namespace dynalgo {
 
+// Forward declaration (defined in algo/dynalgo_engagement_loop.hpp)
+class DynalgoEngagementLoop;
+
 class CaptureSession
 {
 public:
@@ -54,6 +59,8 @@ public:
     void setFilePrefix(const std::string& prefix) { filePrefix_ = prefix; }
     CaptureSession(std::shared_ptr<DynalgoDevice> device, std::shared_ptr<DynalgoPipeline> pipeline,
                    const std::string& safeName, const std::string& deviceOutputDir, const CaptureConfig& cfg);
+
+    ~CaptureSession();
 
     bool setup();
 
@@ -65,6 +72,22 @@ public:
     const std::string& deviceName() const {
         return safeName_;
     }
+
+    // Append a frame consumer to the consumer chain. Called before startVideoPipeline().
+    // Thread-safe: internal mutex guards frameConsumers_.
+    void addFrameConsumer(std::unique_ptr<FrameConsumer> consumer);
+
+    // Accessors for engagement loop (Phase C)
+    const DynalgoIntrinsic& depthIntrinsic() const { return sensorInfo_.depthIntrinsic; }
+    float depthScale() const { return depthScale_; }
+
+    // Store engagement loop components (keeps model/actuator alive for session lifetime)
+    // Raw pointers are used to avoid header dependency on dynalgo_engagement_loop.hpp.
+    // Ownership is transferred; session deletes them in its destructor.
+    void setEngagementLoop(DynalgoEngagementLoop* loop,
+                           DynalgoModelBackend* model,
+                           DynalgoActuator* actuator);
+
     bool hasIMU() const {
         return sensorInfo_.hasAccel && sensorInfo_.hasGyro;
     }
@@ -119,6 +142,13 @@ private:
     std::shared_ptr<FusionStreamTask> fusionTask_;
     std::shared_ptr<ImuStreamTask> imuTask_;
     std::shared_ptr<StreamTask> pcdTask_;
+
+    // Engagement loop (Phase C) — owned by session for lifetime management
+    // Raw pointers (header avoids depending on dynalgo_engagement_loop.hpp).
+    // Deleted in ~CaptureSession() / resetEngagementLoop().
+    DynalgoEngagementLoop* engageLoop_ = nullptr;
+    DynalgoModelBackend* engageModelBackend_ = nullptr;
+    DynalgoActuator* engageActuator_ = nullptr;
 
     std::string devId_;
 

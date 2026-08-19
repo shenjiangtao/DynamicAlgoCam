@@ -27,6 +27,7 @@ public:
     bool fire(double durationMs) override;
     bool close() override;
     const char* name() const override;
+    const DynalgoActuatorConfig& config() const override;
 
 private:
     DynalgoActuatorConfig cfg_{};

@@ -6,6 +6,7 @@
 #include "dynalgo_capture_session.hpp"
 #include "dynalgo_log.hpp"
 #include "dynalgo_sdl_viewer.hpp"
+#include "../algo/dynalgo_engagement_loop.hpp"
 
 namespace dynalgo {
 
@@ -515,6 +516,35 @@ void CaptureSession::reportFps(uint64_t reportDurationMs) {
         }
     }
     DYNALGO_LOG_INFO_S(fpsLine.str());
+}
+
+void CaptureSession::addFrameConsumer(std::unique_ptr<FrameConsumer> consumer)
+{
+    if (!consumer)
+        return;
+    frameConsumers_.push_back(std::move(consumer));
+    DYNALGO_LOG_INFO_S("Added FrameConsumer to session " << safeName_ << " (total: " << frameConsumers_.size() << ")");
+}
+
+void CaptureSession::setEngagementLoop(DynalgoEngagementLoop* loop,
+                                       DynalgoModelBackend* model,
+                                       DynalgoActuator* actuator)
+{
+    // Delete any existing engagement loop components first
+    delete engageLoop_;
+    delete engageModelBackend_;
+    delete engageActuator_;
+
+    engageLoop_ = loop;
+    engageModelBackend_ = model;
+    engageActuator_ = actuator;
+    DYNALGO_LOG_INFO_S("Engagement loop stored for session " << safeName_);
+}
+
+CaptureSession::~CaptureSession() {
+    delete engageLoop_;
+    delete engageModelBackend_;
+    delete engageActuator_;
 }
 
 } // namespace dynalgo

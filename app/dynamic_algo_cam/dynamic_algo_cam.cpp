@@ -5,12 +5,14 @@
 //
 // Records color, depth, and IR streams to H.264 / raw files with IMU CSV
 // logging. Performs D2C alignment + alpha-blend fusion as H.264.
+// Optional: --engage-model / --engage-actuator enable perceive→locate→estimate→control loop.
 //
 // Usage:
 //   ./dynamic_algo_cam                                          # all devices
 //   ./dynamic_algo_cam -c "305" "336L"                          # filter by camera type
 //   ./dynamic_algo_cam -s /HDD/dynalgo_capture                      # custom save directory
 //   ./dynamic_algo_cam -c "305" -s /HDD/dynalgo_capture --alpha 0.6 # combined
+//   ./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY # dry-run engagement
 
 #include "dynalgo_capture_config.hpp"
 #include "dynalgo_capture_session.hpp"
@@ -18,7 +20,11 @@
 #include "dynalgo_device.hpp"
 #include "dynalgo_driver_factory.hpp"
 #include "dynalgo_log.hpp"
+#include "dynalgo_model_factory.hpp"
+#include "dynalgo_actuator_factory.hpp"
 #include "dynalgo_sdl_viewer.hpp"
+#include "../algo/dynalgo_engagement_loop.hpp"
+#include "../algo/dynalgo_engagement_consumer.hpp"
 #include "utils.hpp"
 #include "event.hpp"
 #ifdef ENABLE_EVENT_SIM
@@ -44,6 +50,25 @@
 
 using namespace dynalgo;
 
+// Helper: string -> DynalgoModelType
+static DynalgoModelType modelTypeFromString(const std::string& s) {
+    if (s == "NONE") return DynalgoModelType::NONE;
+    if (s == "DUMMY") return DynalgoModelType::DUMMY;
+    if (s == "YOLOV8_PY") return DynalgoModelType::YOLOV8_PY;
+    if (s == "ONNXRUNTIME") return DynalgoModelType::ONNXRUNTIME;
+    if (s == "TENSORRT") return DynalgoModelType::TENSORRT;
+    return DynalgoModelType::NONE;
+}
+
+// Helper: string -> DynalgoActuatorType
+static DynalgoActuatorType actuatorTypeFromString(const std::string& s) {
+    if (s == "NONE") return DynalgoActuatorType::NONE;
+    if (s == "DUMMY") return DynalgoActuatorType::DUMMY;
+    if (s == "LASER_GENERIC") return DynalgoActuatorType::LASER_GENERIC;
+    if (s == "GIMBAL_GENERIC") return DynalgoActuatorType::GIMBAL_GENERIC;
+    return DynalgoActuatorType::NONE;
+}
+
 int main(int argc, char** argv) try {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
@@ -62,6 +87,17 @@ int main(int argc, char** argv) try {
     for (size_t i = 0; i < cfg.cameraFilter.size(); i++) {
         DYNALGO_LOG_DEBUG_S("Camera filter[" << i << "]=" << cfg.cameraFilter[i]);
     }
+
+    // Engagement loop setup (Phase C) — created after sessions have depth intrinsics.
+    // We'll store the config and instantiate per-session after setup().
+    bool engageEnabled = !cfg.engageModel.empty() && !cfg.engageActuator.empty();
+    DynalgoModelType engageModelType = modelTypeFromString(cfg.engageModel);
+    DynalgoActuatorType engageActuatorType = actuatorTypeFromString(cfg.engageActuator);
+    DynalgoModelConfig engageModelCfg;
+    engageModelCfg.modelPath = cfg.engageModelPath.empty() ? "dummy" : cfg.engageModelPath;
+    engageModelCfg.deviceHint = "cpu";
+    engageModelCfg.confThreshold = 0.25f;
+    engageModelCfg.iouThreshold = 0.45f;
 
     // Discover all devices via the driver factory
     auto discovered = discoverDevices();
@@ -83,9 +119,14 @@ int main(int argc, char** argv) try {
     // Log build and run information now that logger is ready.
     DYNALGO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
     DYNALGO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
-                   << " saveDir=" << outputRootDir << " alpha=" << cfg.alpha
-                   << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
-                   << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+                       << " saveDir=" << outputRootDir << " alpha=" << cfg.alpha
+                       << " depthMin=" << cfg.depthMinM << " depthMax=" << cfg.depthMaxM
+                       << " fusion=" << (cfg.enableFusion ? "on" : "off"));
+    if (engageEnabled) {
+        DYNALGO_LOG_INFO_S("[engage] enabled: model=" << cfg.engageModel
+                           << " actuator=" << cfg.engageActuator
+                           << " modelPath=" << engageModelCfg.modelPath);
+    }
     DYNALGO_LOG_INFO_S("Session timestamp=" << sessionTimestamp << " outputDir=" << outputRootDir);
 
     // Check USB memory for multi-device
@@ -137,6 +178,43 @@ int main(int argc, char** argv) try {
             continue;
         }
 
+        // Engagement loop per session (after setup() so we have depthIntrinsic/depthScale)
+        DynalgoEngagementLoop* engageLoop = nullptr;
+        DynalgoModelBackend* engageModelBackend = nullptr;
+        DynalgoActuator* engageActuator = nullptr;
+        if (engageEnabled) {
+            auto modelBackendPtr = createModelBackend(engageModelType);
+            auto actuatorPtr = createActuator(engageActuatorType);
+            if (!modelBackendPtr) {
+                DYNALGO_LOG_WARN_S("[engage] createModelBackend(" << cfg.engageModel << ") returned nullptr — engagement disabled for this session");
+            } else if (!actuatorPtr) {
+                DYNALGO_LOG_WARN_S("[engage] createActuator(" << cfg.engageActuator << ") returned nullptr — engagement disabled for this session");
+            } else {
+                // Load config into backends
+                if (!modelBackendPtr->load(engageModelCfg)) {
+                    DYNALGO_LOG_WARN_S("[engage] modelBackend load() failed");
+                }
+                DynalgoActuatorConfig actuatorCfg{};
+                if (!actuatorPtr->load(actuatorCfg)) {
+                    DYNALGO_LOG_WARN_S("[engage] actuator load() failed");
+                }
+                if (!actuatorPtr->open()) {
+                    DYNALGO_LOG_WARN_S("[engage] actuator open() failed");
+                }
+
+                engageModelBackend = modelBackendPtr.release();
+                engageActuator = actuatorPtr.release();
+
+                const auto& depthIntr = session->depthIntrinsic();
+                float depthScale = session->depthScale();
+                engageLoop = new DynalgoEngagementLoop(
+                    DynalgoEngagementLoop::Config{}, engageModelBackend, engageActuator, depthIntr, depthScale);
+                auto engageConsumer = std::make_unique<DynalgoEngagementFrameConsumer>(engageLoop);
+                session->addFrameConsumer(std::move(engageConsumer));
+                DYNALGO_LOG_INFO_S("[engage] session " << safeName << " engagement loop armed");
+            }
+        }
+
         session->startImuPipeline();
         session->startVideoPipeline(viewer, cfg.noShow);
         if (!session->hasVideoPipeline()) {
@@ -144,6 +222,10 @@ int main(int argc, char** argv) try {
             sessions.push_back(session);
             continue;
         }
+
+        // Store engagement loop alongside session (shared lifetime)
+        if (engageLoop)
+            session->setEngagementLoop(engageLoop, engageModelBackend, engageActuator);
 
         sessions.push_back(std::move(session));
     }

@@ -51,6 +51,9 @@ target_link_libraries(dynalgo_capture PUBLIC
     ${SDL2_LIBRARIES}
 )
 
+# C++17 required for std::optional etc. from dynalgo_algo headers
+target_compile_features(dynalgo_capture PUBLIC cxx_std_17)
+
 target_include_directories(dynalgo_capture PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${AVCODEC_INCLUDE_DIRS}

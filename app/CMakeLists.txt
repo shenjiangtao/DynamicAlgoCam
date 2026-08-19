@@ -9,12 +9,14 @@
 #                                    rs_driver*        OrbbecSDK*
 #   Optional:
 #     dynalgo_actuators    →  dynalgo_core            (--engage-actuator)
+#     dynalgo_algo         →  dynalgo_core, dynalgo_actuators  (--engage-model --engage-actuator)
 #     dynalgo_opencv_plugin →  dynalgo_capture, dynalgo_core, OpenCV
 
 add_subdirectory(core)
 add_subdirectory(driver)
 add_subdirectory(capture)
 add_subdirectory(actuator)
+add_subdirectory(algo)
 
 find_package(OpenCV QUIET)
 add_subdirectory(plugins/opencv)
