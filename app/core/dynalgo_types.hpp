@@ -3,6 +3,10 @@
 //
 // dynalgo_types.hpp — SDK-neutral value types for multi-SDK capture.
 //
+// [文件说明 / File Description]
+// 中文：SDK中立的值类型，用于多SDK捕获，替代直接使用供应商SDK类型
+// English: SDK-neutral value types for multi-SDK capture, replaces direct usage of vendor SDK types
+//
 // Replaces direct usage of Orbbec SDK types (OBFormat, OBFrameType,
 // OBCameraIntrinsic, etc.) with SDK-agnostic equivalents.  Conversion
 // functions between DynalgoFormat↔OBFormat and DynalgoFrameType↔OBFrameType
@@ -18,7 +22,10 @@
 
 namespace dynalgo {
 
-// PcdFieldDesc: describes one field in a packed point cloud wire layout.
+// [结构体说明 / Struct Description]
+// 中文：点云字段描述符，用于描述打包点云线布局中的一个字段
+// English: PcdFieldDesc: describes one field in a packed point cloud wire layout
+//
 // Used by writePcdFile() to generate PCD headers and transform source data.
 // Wire format for POINT frames:
 //   [4B pointCount (uint32)] [4B srcPointSize (uint32)] [4B numFields (uint32)]
@@ -35,12 +42,17 @@ struct PcdFieldDesc
 };
 static_assert(sizeof(PcdFieldDesc) == 24, "PcdFieldDesc must be 24 bytes for wire compatibility");
 
-// PcdLayout: convenience wrapper around a vector of PcdFieldDesc.
+// [结构体说明 / Struct Description]
+// 中文：点云布局，PcdFieldDesc向量的便捷包装器
+// English: PcdLayout: convenience wrapper around a vector of PcdFieldDesc
 struct PcdLayout
 {
     std::vector<PcdFieldDesc> fields;
     uint32_t srcPointSize = 0;
 
+    // [方法说明 / Method Description]
+    // 中文：添加字段到布局
+    // English: Add field to layout
     void addField(const char* name, uint8_t srcSize, uint8_t pcdSize, char pcdType) {
         PcdFieldDesc d;
         std::strncpy(d.name, name, sizeof(d.name) - 1);
@@ -59,7 +71,9 @@ struct PcdLayout
         return s;
     }
 
-    // Serialize this layout into a byte buffer (wire header prefix).
+    // [方法说明 / Method Description]
+    // 中文：将布局序列化到字节缓冲区（线头前缀）
+    // English: Serialize this layout into a byte buffer (wire header prefix)
     void serialize(std::vector<uint8_t>& out) const {
         uint32_t n = static_cast<uint32_t>(fields.size());
         size_t hdrSize = 12 + n * sizeof(PcdFieldDesc);
@@ -77,8 +91,9 @@ struct PcdLayout
             std::memcpy(p, fields.data(), n * sizeof(PcdFieldDesc));
     }
 
-    // Deserialize a PcdLayout from wire data. Returns bytes consumed (0 on error).
-    // Expects: [srcPointSize(4)] [numFields(4)] [pointCount(4)] [fields...]
+    // [方法说明 / Method Description]
+    // 中文：从线数据反序列化PcdLayout，返回消耗的字节数（错误返回0）
+    // English: Deserialize a PcdLayout from wire data. Returns bytes consumed (0 on error)
     static size_t deserialize(const uint8_t* data, size_t size, PcdLayout& layout, uint32_t& pointCount) {
         if (size < 12)
             return 0;
@@ -99,8 +114,9 @@ struct PcdLayout
         return static_cast<size_t>(p - data);
     }
 
-    // RS-AC1 layout: matches PointXYZIRT struct layout (24 bytes with 1B padding after intensity)
-    // Offsets must match the compiler's layout, not a packed sum.
+    // [静态方法 / Static Method]
+    // 中文：RS-AC1布局，匹配PointXYZIRT结构体布局（24字节，强度后1字节填充）
+    // English: RS-AC1 layout: matches PointXYZIRT struct layout (24 bytes with 1B padding after intensity)
     static PcdLayout rsAc1() {
         PcdLayout l;
         l.srcPointSize = 24;
@@ -139,7 +155,9 @@ struct PcdLayout
         return l;
     }
 
-    // Orbbec XYZ-only layout: xyz(float3), 12 bytes per point, no transform needed
+    // [静态方法 / Static Method]
+    // 中文：Orbbec XYZ-only布局，xyz(float3)，每点12字节，无需转换
+    // English: Orbbec XYZ-only layout: xyz(float3), 12 bytes per point, no transform needed
     static PcdLayout obXyz() {
         PcdLayout l;
         l.addField("x", 4, 4, 'F');
@@ -154,7 +172,9 @@ struct PcdLayout
 // ---------------------------------------------------------------------------
 namespace types {
 
-// Pixel / frame format — SDK-independent.
+// [枚举说明 / Enum Description]
+// 中文：像素/帧格式，SDK中立
+// English: Pixel / frame format — SDK-independent.
 enum class DynalgoFormat {
     UNKNOWN = 0,
     Y8,
@@ -178,8 +198,9 @@ enum class DynalgoFormat {
     RGB888,
 };
 
-// Bytes per pixel for single-plane formats (Y16=2, RGB=3, RGBA=4, etc.).
-// Returns 0 for multi-plane or compressed formats (NV12/NV21/I420/MJPG/H264/POINT/UNKNOWN).
+// [函数说明 / Function Description]
+// 中文：获取单平面格式的每像素字节数，多平面或压缩格式返回0
+// English: Bytes per pixel for single-plane formats, returns 0 for multi-plane or compressed formats
 inline int nioFormatBpp(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
@@ -202,9 +223,9 @@ inline int nioFormatBpp(DynalgoFormat f) {
     }
 }
 
-// Raw buffer size in bytes for a given format + resolution.
-// Covers: Y8, Y16, YUYV/UYVY/YUY2, RGB/BGR/RGB888, RGBA/BGRA, NV12, NV21, I420.
-// Returns 0 for MJPEG, H264, POINT, UNKNOWN (variable-size).
+// [函数说明 / Function Description]
+// 中文：给定格式和分辨率的原始缓冲区大小（字节），可变大小格式返回0
+// English: Raw buffer size in bytes for a given format + resolution, returns 0 for variable-size formats
 inline size_t nioFormatRawSize(DynalgoFormat f, int w, int h) {
     switch (f) {
     case DynalgoFormat::Y8:
@@ -232,7 +253,9 @@ inline size_t nioFormatRawSize(DynalgoFormat f, int w, int h) {
     }
 }
 
-// Frame type — identifies the sensor source of a frame.
+// [枚举说明 / Enum Description]
+// 中文：帧类型，标识帧的传感器来源
+// English: Frame type — identifies the sensor source of a frame.
 enum class DynalgoFrameType {
     COLOR = 0,
     DEPTH,
@@ -253,7 +276,9 @@ enum class DynalgoFrameType {
 using types::DynalgoFormat;
 using types::DynalgoFrameType;
 
-// Camera intrinsic parameters (3×3 pinhole model).
+// [结构体说明 / Struct Description]
+// 中文：相机内参（3×3针孔模型）
+// English: Camera intrinsic parameters (3×3 pinhole model)
 struct DynalgoIntrinsic
 {
     float fx = 0.0f;
@@ -264,7 +289,9 @@ struct DynalgoIntrinsic
     int height = 0;
 };
 
-// Stream profile — resolution + fps + format for one sensor stream.
+// [结构体说明 / Struct Description]
+// 中文：流配置文件，包含分辨率、帧率和格式
+// English: Stream profile — resolution + fps + format for one sensor stream
 struct DynalgoStreamProfile
 {
     int width = 0;
@@ -273,8 +300,9 @@ struct DynalgoStreamProfile
     DynalgoFormat format = DynalgoFormat::UNKNOWN;
 };
 
-// Per-device sensor presence + profile summary.
-// Replaces vendor-specific SensorInfo types.
+// [结构体说明 / Struct Description]
+// 中文：每设备传感器存在性和配置文件摘要，替代供应商特定的SensorInfo类型
+// English: Per-device sensor presence + profile summary, replaces vendor-specific SensorInfo types
 struct DynalgoSensorInfo
 {
     bool hasColor = false;
@@ -303,10 +331,14 @@ struct DynalgoSensorInfo
     float depthScale = 0.001f;
 };
 
-// Frame count map — replaces std::map<OBFrameType, uint64_t>.
+// [类型别名 / Type Alias]
+// 中文：帧计数映射，替代std::map<OBFrameType, uint64_t>
+// English: Frame count map — replaces std::map<OBFrameType, uint64_t>
 using DynalgoFrameCounts = std::map<DynalgoFrameType, uint64_t>;
 
-// DynalgoFormat → string (for logging / FPS reports).
+// [函数说明 / Function Description]
+// 中文：DynalgoFormat转字符串，用于日志和FPS报告
+// English: DynalgoFormat → string (for logging / FPS reports)
 inline const char* nioFormatToStr(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
@@ -352,7 +384,9 @@ inline const char* nioFormatToStr(DynalgoFormat f) {
     }
 }
 
-// DynalgoFrameType → string (for logging / FPS reports).
+// [函数说明 / Function Description]
+// 中文：DynalgoFrameType转字符串，用于日志和FPS报告
+// English: DynalgoFrameType → string (for logging / FPS reports)
 inline const char* nioFrameTypeToStr(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:

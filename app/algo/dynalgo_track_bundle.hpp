@@ -16,28 +16,30 @@
 
 namespace dynalgo {
 
+// [类说明 / Class Description]
+// 中文: 单目标轨迹包，结合卡尔曼滤波器和缓存的3D定位
+// English: Single-target trajectory bundle combining Kalman filter and cached 3D fix
 class DynalgoTrackBundle
 {
 public:
     DynalgoTrackBundle() = default;
 
-    // Initialize from the first detection. Calling init() again on an
-    // already-initialized bundle logs a WARN and re-initialises.
+    // [方法说明 / Method Description]
+    // 中文: 从首次检测初始化轨迹包
+    // English: Initialize from the first detection
     void init(const DynalgoDetectionResult& det);
 
-    // Incorporate a new measurement and refresh the 3D fix.
-    // - `det`: the latest smoothed/raw target detection (2D)
-    // - `depthAligned`: D2C-aligned Y16 depth frame (PRECONDITION of detectionCenterToCamera3D)
-    // - `intr`: depth intrinsics
-    // - `depthScale`: depthScale from sensorInfo
-    // On any false return from detectionCenterToCamera3D the cached last3D is
-    // left unchanged so the caller still has the previous fix to act on.
+    // [方法说明 / Method Description]
+    // 中文: 融入新测量值并刷新3D定位
+    // English: Incorporate a new measurement and refresh the 3D fix
     void update(const DynalgoDetectionResult& det,
                 const DynalgoFrame& depthAligned,
                 const DynalgoIntrinsic& intr,
                 float depthScale);
 
-    // Time-propagate without a measurement and return the predicted bbox.
+    // [方法说明 / Method Description]
+    // 中文: 无测量时进行时间传播并返回预测边界框
+    // English: Time-propagate without measurement and return predicted bbox
     DynalgoDetectionResult predict();
 
     bool initialised() const { return tracker_.initialised(); }

@@ -17,7 +17,9 @@
 
 namespace dynalgo {
 
-// OBFormat → DynalgoFormat
+// [函数说明 / Function Description]
+// 中文: OBFormat 转 DynalgoFormat
+// English: OBFormat to DynalgoFormat
 inline DynalgoFormat obFormatToNio(OBFormat f) {
     switch (f) {
     case OB_FORMAT_Y8:
@@ -59,7 +61,9 @@ inline DynalgoFormat obFormatToNio(OBFormat f) {
     }
 }
 
-// DynalgoFormat → OBFormat
+// [函数说明 / Function Description]
+// 中文: DynalgoFormat 转 OBFormat
+// English: DynalgoFormat to OBFormat
 inline OBFormat nioFormatToOb(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
@@ -99,7 +103,9 @@ inline OBFormat nioFormatToOb(DynalgoFormat f) {
     }
 }
 
-// OBFrameType → DynalgoFrameType
+// [函数说明 / Function Description]
+// 中文: OBFrameType 转 DynalgoFrameType
+// English: OBFrameType to DynalgoFrameType
 inline DynalgoFrameType obFrameTypeToNio(OBFrameType t) {
     switch (t) {
     case OB_FRAME_COLOR:
@@ -129,7 +135,9 @@ inline DynalgoFrameType obFrameTypeToNio(OBFrameType t) {
     }
 }
 
-// DynalgoFrameType → OBSensorType (for disableStream etc.)
+// [函数说明 / Function Description]
+// 中文: DynalgoFrameType 转 OBSensorType（用于 disableStream 等）
+// English: DynalgoFrameType to OBSensorType (for disableStream etc.)
 inline OBSensorType nioFrameTypeToObSensor(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:
@@ -151,7 +159,9 @@ inline OBSensorType nioFrameTypeToObSensor(DynalgoFrameType t) {
     }
 }
 
-// DynalgoFrameType → OBFrameType
+// [函数说明 / Function Description]
+// 中文: DynalgoFrameType 转 OBFrameType
+// English: DynalgoFrameType to OBFrameType
 inline OBFrameType nioFrameTypeToOb(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:
@@ -181,7 +191,9 @@ inline OBFrameType nioFrameTypeToOb(DynalgoFrameType t) {
     }
 }
 
-// OBCameraIntrinsic → DynalgoIntrinsic
+// [函数说明 / Function Description]
+// 中文: OBCameraIntrinsic 转 DynalgoIntrinsic
+// English: OBCameraIntrinsic to DynalgoIntrinsic
 inline DynalgoIntrinsic obIntrinsicToNio(const OBCameraIntrinsic& ob) {
     DynalgoIntrinsic n;
     n.fx = ob.fx;
@@ -193,7 +205,9 @@ inline DynalgoIntrinsic obIntrinsicToNio(const OBCameraIntrinsic& ob) {
     return n;
 }
 
-// DynalgoIntrinsic → OBCameraIntrinsic
+// [函数说明 / Function Description]
+// 中文: DynalgoIntrinsic 转 OBCameraIntrinsic
+// English: DynalgoIntrinsic to OBCameraIntrinsic
 inline OBCameraIntrinsic nioIntrinsicToOb(const DynalgoIntrinsic& n) {
     OBCameraIntrinsic ob = {};
     ob.fx = n.fx;
@@ -205,17 +219,14 @@ inline OBCameraIntrinsic nioIntrinsicToOb(const DynalgoIntrinsic& n) {
     return ob;
 }
 
-// selectBestProfile: scoring-based stream profile selector.
-// Prefers the requested format (+1000), then favors 1280w (+120) /
-// 640w (+100) / 848w (+90), 800h (+110) / 720h (+100) / 480h (+80),
-// and 30fps (+50) / 25fps (+45) / 15fps (+30).
-// When `hwD2CSupportedProfiles` is non-null, profiles that appear in it
-// receive an extra +800 so depth selection prefers HW-D2C-capable profiles,
-// reducing software-align fallbacks.
-// Falls back to first profile if no match.
+// [函数说明 / Function Description]
+// 中文: 基于评分的流配置选择器。优先匹配格式(+1000)，再按分辨率/帧率评分。
+// 当 hwD2CSupportedProfiles 非空时，其中的配置额外 +800，优先选择硬件 D2C 支持的配置。
+// English: Score-based stream profile selector. Prefers requested format (+1000), then scores by resolution/fps.
+// When hwD2CSupportedProfiles is non-null, profiles in it get extra +800 to prefer HW-D2C capable profiles.
 inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr<ob::StreamProfileList> profiles,
-                                                                 OBFormat preferredFormat,
-                                                                 std::shared_ptr<ob::StreamProfileList> hwD2CSupportedProfiles = nullptr) {
+                                                                  OBFormat preferredFormat,
+                                                                  std::shared_ptr<ob::StreamProfileList> hwD2CSupportedProfiles = nullptr) {
     std::shared_ptr<ob::VideoStreamProfile> best;
     int bestScore = -1;
 
@@ -287,24 +298,42 @@ inline std::shared_ptr<ob::VideoStreamProfile> selectBestProfile(std::shared_ptr
 }
 
 // Orbbec VID (was DYNALGO_DEVICE_VID — specific to Orbbec, not generic).
+// [常量说明 / Constant Description]
+// 中文: Orbbec USB VID
+// English: Orbbec USB VID
 static constexpr uint16_t OB_DEVICE_VID = 0x2bc5;
 
+// [函数说明 / Function Description]
+// 中文: 判断是否为 Gemini 305 设备
+// English: Check if device is Gemini 305
 inline bool isGemini305Device(int vid, int pid) {
     return vid == OB_DEVICE_VID && (pid == 0x0840 || pid == 0x0841 || pid == 0x0842 || pid == 0x0843);
 }
 
+// [函数说明 / Function Description]
+// 中文: 判断是否为 Gemini 305g 设备（GMSL2 连接）
+// English: Check if device is Gemini 305g (GMSL2 connection)
 inline bool isGemini305gDevice(int vid, int pid, const char* connectionType) {
     return isGemini305Device(vid, pid) && strcmp(connectionType, "GMSL2") == 0;
 }
 
+// [函数说明 / Function Description]
+// 中文: 判断是否为 Astra Mini 设备
+// English: Check if device is Astra Mini
 inline bool isAstraMiniDevice(int vid, int pid) {
     return vid == OB_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e);
 }
 
+// [函数说明 / Function Description]
+// 中文: 判断是否为 Gemini 335L/336L 设备
+// English: Check if device is Gemini 335L/336L
 inline bool isGemini335L336LDevice(int vid, int pid) {
     return vid == OB_DEVICE_VID && (pid == 0x0804 || pid == 0x0807);
 }
 
+// [函数说明 / Function Description]
+// 中文: 判断设备是否有 LiDAR 传感器
+// English: Check if device has LiDAR sensor
 inline bool isLiDARDevice(std::shared_ptr<ob::Device> device) {
     auto sensorList = device->getSensorList();
     for (uint32_t i = 0; i < sensorList->getCount(); i++) {

@@ -9,6 +9,9 @@
 
 namespace dynalgo {
 
+// [函数说明 / Function Description]
+// 中文: 验证流配置（颜色/深度分辨率和帧率必须匹配 AC1 规格）
+// English: Validate stream config (color/depth resolution and fps must match AC1 spec)
 bool RsValidator::validateStream(const DynalgoStreamConfig& config) const {
     switch (config.frameType) {
     case types::DynalgoFrameType::COLOR:
@@ -40,6 +43,9 @@ bool RsValidator::validateStream(const DynalgoStreamConfig& config) const {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 验证传感器信息（必须同时有颜色和深度流）
+// English: Validate sensor info (must have both color and depth streams)
 bool RsValidator::validateSensorInfo(const DynalgoSensorInfo& info) const {
     if (!info.hasColor || !info.hasDepth) {
         lastError_ = "AC1 requires both color and depth streams";
@@ -49,6 +55,9 @@ bool RsValidator::validateSensorInfo(const DynalgoSensorInfo& info) const {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 验证设备信息（VID/PID 必须匹配 AC1）
+// English: Validate device info (VID/PID must match AC1)
 bool RsValidator::validateDevice(const DynalgoDeviceInfo& info) const {
     if (info.vid != VENDOR_ID || info.pid != PRODUCT_ID) {
         lastError_ = "Invalid AC1 device: VID=0x" + std::to_string(info.vid) + ", PID=0x" + std::to_string(info.pid);

@@ -8,6 +8,9 @@
 
 namespace dynalgo {
 
+// [方法说明 / Method Description]
+// 中文: 初始化轨迹包
+// English: Initialize track bundle
 void DynalgoTrackBundle::init(const DynalgoDetectionResult& det)
 {
     if (tracker_.initialised())
@@ -15,6 +18,9 @@ void DynalgoTrackBundle::init(const DynalgoDetectionResult& det)
     tracker_.init(det);
 }
 
+// [方法说明 / Method Description]
+// 中文: 更新轨迹包并刷新3D定位
+// English: Update track bundle and refresh 3D fix
 void DynalgoTrackBundle::update(const DynalgoDetectionResult& det,
                                  const DynalgoFrame& depthAligned,
                                  const DynalgoIntrinsic& intr,
@@ -33,6 +39,9 @@ void DynalgoTrackBundle::update(const DynalgoDetectionResult& det,
     }
 }
 
+// [方法说明 / Method Description]
+// 中文: 预测下一帧位置
+// English: Predict position for next frame
 DynalgoDetectionResult DynalgoTrackBundle::predict()
 {
     return tracker_.predict();

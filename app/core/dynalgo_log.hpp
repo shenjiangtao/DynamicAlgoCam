@@ -4,6 +4,10 @@
 // dynalgo_log.hpp — Header-only Logger singleton with multi-level output,
 // thread-safe logging, and auto-flush on destruction.
 //
+// [文件说明 / File Description]
+// 中文：头文件包含的Logger单例，支持多级别输出、线程安全日志和析构时自动刷新
+// English: Header-only Logger singleton with multi-level output, thread-safe logging, and auto-flush on destruction
+//
 // Usage:
 //   DYNALGO_LOG_INIT("my_process", "/tmp/logs")     — must call once at startup
 //   DYNALGO_LOG_SET_LEVEL(dynalgo::LogLevel::INFO)       — set minimum level
@@ -34,7 +38,9 @@
 
 namespace dynalgo {
 
-// Log severity levels: TRACE < DEBUG < INFO < WARN < ERROR < FATAL
+// [枚举说明 / Enum Description]
+// 中文：日志严重级别，从TRACE到FATAL依次递增
+// English: Log severity levels: TRACE < DEBUG < INFO < WARN < ERROR < FATAL
 enum class LogLevel {
     TRACE = 0,
     DEBUG = 1,
@@ -71,18 +77,25 @@ inline const char* ansiReset() {
 
 } // namespace detail
 
-// Logger: singleton with file + console output.
-// WARN/ERROR/FATAL also go to stderr; INFO and below go to stdout.
+// [类说明 / Class Description]
+// 中文：Logger单例类，提供文件和控制台输出，WARN/ERROR/FATAL输出到stderr，INFO及以下输出到stdout
+// English: Logger singleton with file + console output. WARN/ERROR/FATAL also go to stderr; INFO and below go to stdout.
 // All file writes are mutex-protected and auto-flushed.
 class Logger
 {
     // --- Public API: init, setLevel, log, flush, shutdown ---
 public:
+    // [方法说明 / Method Description]
+    // 中文：获取Logger单例实例（Meyer's singleton，C++11线程安全）
+    // English: Get Logger singleton instance (Meyer's singleton — thread-safe in C++11)
     static Logger& instance() { // Meyer's singleton — thread-safe in C++11
         static Logger logger;
         return logger;
     }
 
+    // [方法说明 / Method Description]
+    // 中文：初始化日志系统，指定进程名和输出目录，确保只执行一次
+    // English: Initialize logging system with process name and output directory, ensures single execution
     bool init(const std::string& processName, const std::string& outputDir) {
         // Ensure initialization runs only once, even if called from multiple threads.
         // The once_flag guarantees thread‑safe one‑time execution without a lock.
@@ -109,14 +122,23 @@ public:
         return initialized_;
     }
 
+    // [方法说明 / Method Description]
+    // 中文：设置日志最低级别，低于此级别的日志将被过滤
+    // English: Set minimum log level, logs below this level will be filtered
     void setLevel(LogLevel level) {
         level_.store(level, std::memory_order_relaxed);
     }
 
+    // [方法说明 / Method Description]
+    // 中文：获取当前日志级别
+    // English: Get current log level
     LogLevel getLevel() const {
         return level_.load(std::memory_order_relaxed);
     }
 
+    // [方法说明 / Method Description]
+    // 中文：记录日志消息，格式化输出包含时间、级别、线程ID、文件位置和函数名
+    // English: Log message with formatted output including time, level, thread ID, file location, and function name
     void log(LogLevel level, const char* file, int line, const char* func, const std::string& msg) {
         if (level < level_.load(std::memory_order_relaxed))
             return;
@@ -141,12 +163,18 @@ public:
         }
     }
 
+    // [方法说明 / Method Description]
+    // 中文：刷新日志缓冲区到文件
+    // English: Flush log buffer to file
     void flush() {
         std::lock_guard<std::mutex> lock(mtx_);
         if (logFile_.is_open())
             logFile_.flush();
     }
 
+    // [方法说明 / Method Description]
+    // 中文：关闭日志系统，写入结束标记并关闭文件
+    // English: Shutdown logging system, write end marker and close file
     void shutdown() {
         std::lock_guard<std::mutex> lock(mtx_);
         if (logFile_.is_open()) {
@@ -157,14 +185,24 @@ public:
         initialized_ = false;
     }
 
+    // [方法说明 / Method Description]
+    // 中文：获取日志文件路径
+    // English: Get log file path
     const std::string& getLogFilePath() const {
         return logFilePath_;
     }
+
+    // [方法说明 / Method Description]
+    // 中文：检查日志系统是否已初始化
+    // English: Check if logging system is initialized
     bool isInitialized() const {
         return initialized_;
     }
 
 private:
+    // [构造函数 / Constructor]
+    // 中文：私有构造函数，初始化日志级别和终端颜色检测
+    // English: Private constructor, initializes log level and terminal color detection
     Logger()
     : level_(LogLevel::TRACE), initialized_(false), colorTerm_(isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {}
     ~Logger() {
@@ -173,6 +211,9 @@ private:
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
 
+    // [方法说明 / Method Description]
+    // 中文：递归创建目录，忽略已存在的错误
+    // English: Recursively create directories, ignoring EEXIST errors
     static void mkdirp(const std::string& path) {
         size_t pos = 0;
         std::string tmp;

@@ -48,56 +48,120 @@
 
 namespace dynalgo {
 
+// [类说明 / Class Description]
+// 中文: 单设备采集会话 - 负责传感器枚举、编码器/文件创建、融合设置、管道启停和清理
+// English: Per-device capture session: sensor enumeration, encoder/file creation, fusion setup, pipeline start/stop, and teardown
+// Producer-consumer threading model:
+//   - SDK video callback (producer): converts -> DynalgoFrameSet, enqueues to VideoFrameQueue
+//   - Video consumer thread: dequeues FrameSets, dispatches to encode tasks, fusion task, viewer pushFrame, frame counter updates
+//   - SDK IMU callback (producer): formats CSV line, enqueues to ImuFrameQueue
+//   - IMU consumer thread: dequeues CSV lines, writes to ImuStreamTask
+
 // Forward declaration (defined in algo/dynalgo_engagement_loop.hpp)
 class DynalgoEngagementLoop;
 
 class CaptureSession
 {
 public:
-    // Existing public members ...
-    // New method to set filename prefix (event‑driven)
+    // [方法说明 / Method Description]
+    // 中文: 设置文件名前缀（事件驱动）
+    // English: Set filename prefix (event-driven)
     void setFilePrefix(const std::string& prefix) { filePrefix_ = prefix; }
+    
+    // [方法说明 / Method Description]
+    // 中文: 构造函数
+    // English: Constructor
     CaptureSession(std::shared_ptr<DynalgoDevice> device, std::shared_ptr<DynalgoPipeline> pipeline,
                    const std::string& safeName, const std::string& deviceOutputDir, const CaptureConfig& cfg);
 
+    // [方法说明 / Method Description]
+    // 中文: 析构函数，清理资源
+    // English: Destructor, cleanup resources
     ~CaptureSession();
 
+    // [方法说明 / Method Description]
+    // 中文: 初始化会话，创建编码器和任务
+    // English: Initialize session, create encoders and tasks
     bool setup();
 
+    // [方法说明 / Method Description]
+    // 中文: 启动视频管道
+    // English: Start video pipeline
     void startVideoPipeline(SDLViewer& viewer, bool noShow);
+    
+    // [方法说明 / Method Description]
+    // 中文: 启动IMU管道
+    // English: Start IMU pipeline
     void startImuPipeline();
+    
+    // [方法说明 / Method Description]
+    // 中文: 停止所有管道和线程
+    // English: Stop all pipelines and threads
     void stop();
+    
+    // [方法说明 / Method Description]
+    // 中文: 报告FPS统计
+    // English: Report FPS statistics
     void reportFps(uint64_t reportDurationMs);
 
+    // [方法说明 / Method Description]
+    // 中文: 获取设备安全名称
+    // English: Get device safe name
     const std::string& deviceName() const {
         return safeName_;
     }
 
-    // Append a frame consumer to the consumer chain. Called before startVideoPipeline().
-    // Thread-safe: internal mutex guards frameConsumers_.
+    // [方法说明 / Method Description]
+    // 中文: 添加帧消费者到消费者链，需在startVideoPipeline前调用。线程安全
+    // English: Append frame consumer to consumer chain. Call before startVideoPipeline(). Thread-safe
     void addFrameConsumer(std::unique_ptr<FrameConsumer> consumer);
 
-    // Accessors for engagement loop (Phase C)
+    // [方法说明 / Method Description]
+    // 中文: 获取深度内参（用于闭环Phase C）
+    // English: Get depth intrinsic (for Phase C engagement loop)
     const DynalgoIntrinsic& depthIntrinsic() const { return sensorInfo_.depthIntrinsic; }
+    
+    // [方法说明 / Method Description]
+    // 中文: 获取深度缩放因子
+    // English: Get depth scale factor
     float depthScale() const { return depthScale_; }
 
-    // Store engagement loop components (keeps model/actuator alive for session lifetime)
-    // Raw pointers are used to avoid header dependency on dynalgo_engagement_loop.hpp.
-    // Ownership is transferred; session deletes them in its destructor.
+    // [方法说明 / Method Description]
+    // 中文: 存储闭环组件（模型/执行器），会话生命周期内保持存活。使用原始指针避免头文件依赖
+    // English: Store engagement loop components (keeps model/actuator alive for session lifetime). Raw pointers avoid header dependency on dynalgo_engagement_loop.hpp. Ownership transferred; session deletes in destructor
     void setEngagementLoop(DynalgoEngagementLoop* loop,
                            DynalgoModelBackend* model,
                            DynalgoActuator* actuator);
 
+    // [方法说明 / Method Description]
+    // 中文: 是否有IMU传感器
+    // English: Has IMU sensor
     bool hasIMU() const {
         return sensorInfo_.hasAccel && sensorInfo_.hasGyro;
     }
+    
+    // [方法说明 / Method Description]
+    // 中文: 是否支持融合
+    // English: Supports fusion
     bool canFuse() const {
         return canFuse_;
     }
+    
+    // [方法说明 / Method Description]
+    // 中文: 是否有视频管道
+    // English: Has video pipeline
     bool hasVideoPipeline() const {
         return pipeline_ != nullptr;
     }
+    
+    // [方法说明 / Method Description]
+    // 中文: 获取并重置指定类型帧计数
+    // English: Get and reset frame count for type
     uint64_t getAndResetFrameCount(DynalgoFrameType type);
+    
+    // [方法说明 / Method Description]
+    // 中文: 获取并重置融合帧计数
+    // English: Get and reset fusion frame count
     uint64_t getAndResetFusionCount();
 
 private:

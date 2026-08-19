@@ -3,6 +3,10 @@
 //
 // dynalgo_kalman_tracker.cpp — Single-target 6D constant-velocity Kalman filter.
 //
+// [文件说明 / File Description]
+// 中文：单目标6D恒定速度卡尔曼滤波器实现，所有矩阵使用固定大小数组避免依赖Eigen
+// English: Single-target 6D constant-velocity Kalman filter implementation, all matrices use fixed-size arrays to avoid Eigen dependency
+//
 // All matrices are fixed-size std::array<double, N*N>. Kept inline / explicit
 // to avoid pulling Eigen (dynalgo_core stays dependency-free). See header for
 // the contract and intended usage.
@@ -15,9 +19,13 @@ namespace dynalgo {
 
 namespace {
 
-// Small fixed-size linear-algebra helpers over row-major arrays.
+// [内部辅助函数 / Internal Helper Functions]
+// 中文：小型固定大小线性代数辅助函数，操作行主序数组
+// English: Small fixed-size linear-algebra helpers over row-major arrays
 
-// C = A (m×n) times B (n×p) → C (m×p).
+// [矩阵乘法 / Matrix Multiplication]
+// 中文：矩阵乘法 C = A (m×n) × B (n×p) → C (m×p)
+// English: Matrix multiplication C = A (m×n) times B (n×p) → C (m×p)
 template <size_t M, size_t N, size_t P>
 std::array<double, M*P> matMul(const std::array<double, M*N>& A,
                                const std::array<double, N*P>& B) {
@@ -32,7 +40,9 @@ std::array<double, M*P> matMul(const std::array<double, M*N>& A,
     return C;
 }
 
-// Y (m) = A (m×n) times x (n).
+// [矩阵向量乘法 / Matrix-Vector Multiplication]
+// 中文：矩阵向量乘法 Y (m) = A (m×n) × x (n)
+// English: Matrix-vector multiplication Y (m) = A (m×n) times x (n)
 template <size_t M, size_t N>
 std::array<double, M> matVec(const std::array<double, M*N>& A,
                              const std::array<double, N>& x) {
@@ -46,17 +56,18 @@ std::array<double, M> matVec(const std::array<double, M*N>& A,
     return y;
 }
 
-// Add identity-scaled noise: P = P + qI  (size n×n).
+// [对角线加法 / Diagonal Addition]
+// 中文：添加单位缩放噪声 P = P + qI (n×n)
+// English: Add identity-scaled noise: P = P + qI (size n×n)
 template <size_t N>
 void addToDiagonal(std::array<double, N*N>& P, double q) {
     for (size_t i = 0; i < N; ++i)
         P[i * N + i] += q;
 }
 
-// Solve (S) K = H P^T  via Gaussian elimination for 4×4; S is symmetric.
-// Returns K (4×6). We solve S (4×4) K_row = H P^T (4×6) — i.e. 6 right-hand
-// columns. Implemented as one Gaussian elimination with 6 RHS.
-// S is supposed to be symmetric positive-definite.
+// [卡尔曼增益求解 / Kalman Gain Solution]
+// 中文：通过高斯消元法求解卡尔曼增益 K = P H^T S^{-1}，S是4×4对称正定矩阵
+// English: Solve Kalman gain K = P H^T S^{-1} via Gaussian elimination for 4×4 symmetric positive-definite S
 std::array<double, 24> solveKalmanGain(const std::array<double, 16>& S,
                                        const std::array<double, 24>& HPt) {
     // Augmented 4×(4+6) for Gaussian elimination.
@@ -104,11 +115,17 @@ std::array<double, 24> solveKalmanGain(const std::array<double, 16>& S,
 
 } // namespace
 
+// [构造函数 / Constructor]
+// 中文：初始化状态向量和协方差矩阵为零
+// English: Initialize state vector and covariance matrix to zero
 DynalgoKalmanTracker::DynalgoKalmanTracker() {
     x_.fill(0.0);
     P_.fill(0.0);
 }
 
+// [方法说明 / Method Description]
+// 中文：用检测结果初始化状态，设置初始位置、大小和速度
+// English: Initialize state with detection result, set initial position, size and velocity
 void DynalgoKalmanTracker::init(const DynalgoDetectionResult& det) {
     x_[0] = det.x + 0.5 * det.w;   // cx
     x_[1] = det.y + 0.5 * det.h;   // cy
@@ -117,20 +134,25 @@ void DynalgoKalmanTracker::init(const DynalgoDetectionResult& det) {
     x_[4] = 0.0;                   // vx
     x_[5] = 0.0;                   // vy
     P_.fill(0.0);
-    // Modest initial uncertainty.
+    // [初始不确定性 / Initial Uncertainty]
+    // 中文：设置初始不确定性，速度不确定性较高因为未知
+    // English: Set initial uncertainty, velocity uncertainty high since unknown
     P_[0 * 6 + 0] = P_[1 * 6 + 1] = 10.0;  // position
     P_[2 * 6 + 2] = P_[3 * 6 + 3] = 10.0;  // size
     P_[4 * 6 + 4] = P_[5 * 6 + 5] = 100.0; // velocity — high, since unknown
     initialised_ = true;
 }
 
+// [方法说明 / Method Description]
+// 中文：合并测量值，执行预测和更新步骤，返回平滑后的边界框
+// English: Incorporate measurement, perform predict and update steps, return smoothed bounding box
 DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult& det) {
     if (!initialised_)
         init(det);
 
-    // 1) Predict step (constant-velocity, dt = dt_).
-    // F is 6×6: identity with dt in (vx→cx, vy→cy) slots.
-    // Only need x_ = F x_ and P_ = F P_ F^T + Q.
+    // [预测步骤 / Predict Step]
+    // 中文：恒定速度模型预测，状态转移矩阵F是6×6单位矩阵加上dt在速度位置槽
+    // English: Constant-velocity model predict, state transition matrix F is 6×6 identity with dt in velocity-position slots
     {
         // x_ = F x_  (F has 1 on diagonal and dt_ at [0][4] and [1][5]).
         double newCx = x_[0] + dt_ * x_[4];
@@ -159,7 +181,9 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
         addToDiagonal<6>(P_, processNoise_);
     }
 
-    // 2) Update step with measurement z = [cx, cy, w, h].
+    // [更新步骤 / Update Step]
+    // 中文：使用测量值z = [cx, cy, w, h]更新状态
+    // English: Update step with measurement z = [cx, cy, w, h]
     std::array<double, 4> z{
         det.x + 0.5 * det.w,
         det.y + 0.5 * det.h,
@@ -167,20 +191,26 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
         det.h
     };
 
-    // H is 4×6 selecting cx, cy, w, h.
+    // [观测矩阵 / Observation Matrix]
+    // 中文：H是4×6矩阵，选择cx, cy, w, h状态分量
+    // English: H is 4×6 matrix selecting cx, cy, w, h state components
     std::array<double, 24> H{}; // 4×6
     H[0 * 6 + 0] = 1.0;
     H[1 * 6 + 1] = 1.0;
     H[2 * 6 + 2] = 1.0;
     H[3 * 6 + 3] = 1.0;
 
-    // Innovation y = z − H x.
+    // [新息 / Innovation]
+    // 中文：新息 y = z − H x，测量值与预测值的差异
+    // English: Innovation y = z − H x, difference between measurement and prediction
     std::array<double, 4> Hx = matVec<4, 6>(H, x_);
     std::array<double, 4> innov{};
     for (size_t i = 0; i < 4; ++i)
         innov[i] = z[i] - Hx[i];
 
-    // S = H P H^T + R.
+    // [新息协方差 / Innovation Covariance]
+    // 中文：新息协方差 S = H P H^T + R
+    // English: Innovation covariance S = H P H^T + R
     std::array<double, 24> Htrans{}; // store transpose-of-H is unnecessary; compute H P^T below.
     // HP (4×6) = H * P.
     std::array<double, 24> HP = matMul<4, 6, 6>(H, P_);
@@ -194,14 +224,9 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
     for (size_t i = 0; i < 4; ++i)
         S[i * 4 + i] += measNoise_;
 
-    // Kalman gain K = P H^T S^{-1}. Equivalently solve S K^T = (H P)^T, then transpose.
-    // K is 6×4. (H P)^T is 6×4, equal to Ht*P^T... but we already have HP (4×6); its
-    // transpose is 6×4 and is the RHS we need: solve S (4×4) * K_row(4×6) = HP (4×6)
-    // would give K as 4×6 = P H^T S^{-1} — but K must be 6×4 = P H^T S^{-1}. We actually
-    // have K^T = S^{-1} H P, so K = (S^{-1} H P)^T = (HP)^T * S^{-1}?
-    //
-    // Cleaner direct route: K (6×4) = P H^T (6×4) * S^{-1} (4×4).
-    // P H^T = Ht's mirror — we need P (6×6) * H^T (6×4) ⇒ 6×4.
+    // [卡尔曼增益 / Kalman Gain]
+    // 中文：计算卡尔曼增益 K = P H^T S^{-1}，通过求解线性方程组得到
+    // English: Compute Kalman gain K = P H^T S^{-1} by solving linear system
     std::array<double, 24> PHt = matMul<6, 6, 4>(P_, Ht);
     // Solve S * X = PHt^T  ⇒ X (4×6) = S^{-1} * (PHt)^T = K^T.
     // PHt is 6×4; (PHt)^T is 4×6 — call it Rt.
@@ -216,12 +241,16 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
         for (size_t j = 0; j < 6; ++j)
             K[j * 4 + i] = Kt[i * 6 + j];
 
-    // State update: x = x + K * innov.
+    // [状态更新 / State Update]
+    // 中文：状态更新 x = x + K * innov
+    // English: State update: x = x + K * innov
     std::array<double, 6> Kinnov = matVec<6, 4>(K, innov);
     for (size_t i = 0; i < 6; ++i)
         x_[i] += Kinnov[i];
 
-    // Covariance update: P = (I − K H) P.
+    // [协方差更新 / Covariance Update]
+    // 中文：协方差更新 P = (I − K H) P
+    // English: Covariance update: P = (I − K H) P
     std::array<double, 36> KH = matMul<6, 4, 6>(K, H);   // 6×6
     std::array<double, 36> eye{}; // 6×6 identity
     for (size_t i = 0; i < 6; ++i) eye[i * 6 + i] = 1.0;
@@ -230,7 +259,9 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
         IKH[i] = eye[i] - KH[i];
     P_ = matMul<6, 6, 6>(IKH, P_);
 
-    // Emit smoothed box.
+    // [输出平滑框 / Emit Smoothed Box]
+    // 中文：输出平滑后的边界框
+    // English: Emit smoothed box
     DynalgoDetectionResult out = det; // copies label/stream metadata
     out.x = static_cast<float>(x_[0] - 0.5 * x_[2]);
     out.y = static_cast<float>(x_[1] - 0.5 * x_[3]);
@@ -239,14 +270,20 @@ DynalgoDetectionResult DynalgoKalmanTracker::update(const DynalgoDetectionResult
     return out;
 }
 
+// [方法说明 / Method Description]
+// 中文：在没有测量值的情况下时间传播状态，返回预测的边界框
+// English: Time-propagate state without measurement, return predicted bounding box
 DynalgoDetectionResult DynalgoKalmanTracker::predict() {
     if (!initialised_) {
-        // Nothing to propagate — return a zero-size box.
+        // [未初始化 / Not Initialized]
+        // 中文：没有可传播的状态，返回零大小框
+        // English: Nothing to propagate — return a zero-size box
         DynalgoDetectionResult r;
         return r;
     }
-    // Time-propagate the state without a measurement. Same F as update(),
-    // but skip the measurement correction and return the a-priori box.
+    // [时间传播 / Time Propagation]
+    // 中文：无测量值的时间传播，跳过测量修正返回先验框
+    // English: Time-propagate state without measurement, skip measurement correction and return a-priori box
     double cx = x_[0] + dt_ * x_[4];
     double cy = x_[1] + dt_ * x_[5];
     DynalgoDetectionResult r;

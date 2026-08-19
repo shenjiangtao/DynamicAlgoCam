@@ -19,6 +19,9 @@
 
 namespace dynalgo {
 
+// [函数说明 / Function Description]
+// 中文: 解析 Orbbec 扩展目录路径，优先使用环境变量，其次尝试相对路径
+// English: Resolve Orbbec extensions directory path, prefer env var then relative paths
 #ifdef ENABLE_ORBBEC
 static std::string resolveOrbbecExtensionsDir() {
     const char* envDir = getenv("ORBBEC_EXTENSIONS_DIR");
@@ -38,6 +41,9 @@ static std::string resolveOrbbecExtensionsDir() {
     return "";
 }
 
+// [函数说明 / Function Description]
+// 中文: 解析 Orbbec SDK 配置文件路径，优先使用环境变量，其次尝试相对路径
+// English: Resolve Orbbec SDK config file path, prefer env var then relative paths
 static std::string resolveOrbbecConfigPath() {
     const char* envCfg = getenv("ORBBEC_CONFIG_PATH");
     if (envCfg && envCfg[0] != '\0')
@@ -58,6 +64,9 @@ static std::string resolveOrbbecConfigPath() {
 }
 #endif
 
+// [函数说明 / Function Description]
+// 中文: 发现所有可用设备并创建 DynalgoDevice+DynalgoPipeline 对
+// English: Discover all available devices and create DynalgoDevice+DynalgoPipeline pairs
 std::vector<DiscoveredDevice> discoverDevices(const DriverConfig& cfg) {
     std::vector<DiscoveredDevice> result;
 

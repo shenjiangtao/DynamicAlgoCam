@@ -10,6 +10,9 @@
 
 namespace dynalgo {
 
+// [函数说明 / Function Description]
+// 中文: 根据策略从多个检测中选择一个目标
+// English: Pick one detection among multiple detections based on strategy
 std::optional<DynalgoDetectionResult> pickTarget(const std::vector<DynalgoDetectionResult>& detections,
                                                    SelectorStrategy strategy,
                                                    const std::vector<float>* depthSortedMeters)

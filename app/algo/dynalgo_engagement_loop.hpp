@@ -24,9 +24,15 @@
 
 namespace dynalgo {
 
+// [类说明 / Class Description]
+// 中文: 交互循环，协调模型后端、目标选择器、轨迹包和执行器
+// English: Engagement loop orchestrating ModelBackend, TargetSelector, TrackBundle, and Actuator
 class DynalgoEngagementLoop
 {
 public:
+    // [结构体说明 / Struct Description]
+    // 中文: 交互循环配置参数
+    // English: Engagement loop configuration parameters
     struct Config
     {
         int lockingFramesRequired = 3;     // consecutive detections to enter TRACKING
@@ -45,14 +51,19 @@ public:
 
     ~DynalgoEngagementLoop() = default;
 
-    // Called once per fused frame-set from the capture pipeline.
-    // frameSet must contain a D2C-aligned depth frame (Y16) at index 0 or 1.
+    // [方法说明 / Method Description]
+    // 中文: 每帧融合帧集调用一次
+    // English: Called once per fused frame-set from the capture pipeline
     void onFrame(const DynalgoFrameSet& frameSet);
 
-    // Request graceful shutdown (sets internal stop flag; onFrame becomes no-op).
+    // [方法说明 / Method Description]
+    // 中文: 请求优雅关闭
+    // English: Request graceful shutdown
     void stop() { stop_ = true; }
 
-    // Current state for external logging / HMI.
+    // [枚举说明 / Enum Description]
+    // 中文: 交互循环状态
+    // English: Engagement loop states
     enum class State { IDLE, LOCKING, TRACKING, FIRING, LOST };
     State state() const { return state_; }
 
@@ -72,8 +83,17 @@ private:
     State state_ = State::IDLE;
     bool stop_ = false;
 
+    // [方法说明 / Method Description]
+    // 中文: 状态转换处理
+    // English: Handle state transition
     void transitionTo(State newState);
+    // [方法说明 / Method Description]
+    // 中文: 尝试执行射击动作
+    // English: Attempt to fire the actuator
     bool tryFire(const DynalgoDetectionResult& det);
+    // [方法说明 / Method Description]
+    // 中文: 从帧集中提取深度帧
+    // English: Extract depth frame from frame set
     bool depthFrameFromSet(const DynalgoFrameSet& fs, DynalgoFrame& outDepth) const;
 };
 

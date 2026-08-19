@@ -3,6 +3,10 @@
 //
 // dynalgo_actuator_factory.hpp — Factory for creating DynalgoActuator instances.
 //
+// [文件说明 / File Description]
+// 中文：DynalgoActuator实例的工厂，隐藏具体后端类，后端通过链接/初始化时的钩子自注册
+// English: Factory for creating DynalgoActuator instances, hides concrete backend classes, backends self-register via link/init hooks
+//
 // Mirrors the pattern of DynalgoActuatorFactory (see dynalgo_model_factory.hpp):
 // a single createActuator() entry point hides concrete backend classes from
 // the application layer. Backends register themselves via a hook at link /
@@ -17,11 +21,16 @@
 
 namespace dynalgo {
 
-// Create an actuator instance. Returns nullptr if `type` is NONE or no
-// backend is registered for that type under the current build configuration.
+// [工厂函数 / Factory Function]
+// 中文：创建执行器实例，类型为NONE或未注册返回nullptr
+// English: Create an actuator instance, returns nullptr if type is NONE or no backend registered
 std::unique_ptr<DynalgoActuator> createActuator(DynalgoActuatorType type);
 
 // ---- Backend registration hook (used by backend implementations) ----
+//
+// [注册钩子 / Registration Hook]
+// 中文：后端注册钩子，后端通过静态初始化块自注册，注册表是进程单例
+// English: Backend registration hook, backends self-register via static-init blocks, registry is process-singleton
 //
 // A Creator returns a fresh DynalgoActuator each call. Backends call
 // registerActuator(DynalgoActuatorType, Creator) during their construction

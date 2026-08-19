@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 //
 // dynalgo_config_validator.cpp — Factory for creating vendor-specific validators instances.
+//
+// [文件说明 / File Description]
+// 中文：供应商特定验证器实例的工厂，根据供应商类型创建相应的验证器
+// English: Factory for creating vendor-specific validators instances, creates appropriate validator based on vendor type
 
 #include "dynalgo_config_validator.hpp"
 
@@ -15,6 +19,9 @@
 
 namespace dynalgo {
 
+// [工厂函数 / Factory Function]
+// 中文：为给定供应商创建验证器实例，不支持的供应商返回nullptr
+// English: Create validator instance for given vendor, returns nullptr for unsupported vendors
 std::unique_ptr<ConfigValidator> createValidator(DriverVendor vendor) {
     switch (vendor) {
     case DriverVendor::ORBBEC:

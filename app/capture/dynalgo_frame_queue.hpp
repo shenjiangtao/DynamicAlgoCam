@@ -25,14 +25,32 @@
 
 namespace dynalgo {
 
+// [类说明 / Class Description]
+// 中文: 有界线程安全队列，用于生产者-消费者模式。队列满时丢弃最旧数据，保证消费者总是获取最新数据
+// English: Bounded thread-safe queue for producer-consumer pattern. Drops oldest when full, ensuring consumer always gets freshest data
 template <typename T>
 class FrameQueue
 {
 public:
+    // [方法说明 / Method Description]
+    // 中文: 构造函数，指定队列容量
+    // English: Constructor, specify queue capacity
     explicit FrameQueue(size_t capacity);
+    // [方法说明 / Method Description]
+    // 中文: 推入数据，队列满时覆盖最旧数据
+    // English: Push data, overwrites oldest when full
     void push(T item);
+    // [方法说明 / Method Description]
+    // 中文: 弹出数据，带超时等待
+    // English: Pop data with timeout wait
     bool pop(T& item, uint32_t timeoutMs = 100);
+    // [方法说明 / Method Description]
+    // 中文: 关闭队列，唤醒所有等待线程
+    // English: Shutdown queue, wake all waiting threads
     void shutdown();
+    // [方法说明 / Method Description]
+    // 中文: 唤醒所有等待的消费者线程
+    // English: Wake all waiting consumer threads
     void wakeAll();
 
 private:

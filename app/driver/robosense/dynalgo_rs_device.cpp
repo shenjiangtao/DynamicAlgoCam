@@ -17,9 +17,15 @@ namespace dynalgo {
 
 // === RsDevice ===
 
+// [构造函数 / Constructor]
+// 中文: 构造函数，保存设备索引和 UUID
+// English: Constructor, stores device index and UUID
 RsDevice::RsDevice(uint32_t deviceIndex, const std::string& deviceUuid)
 : deviceIndex_(deviceIndex), deviceUuid_(deviceUuid) {}
 
+// [函数说明 / Function Description]
+// 中文: 获取设备信息（名称、VID、PID、连接类型、序列号，带缓存）
+// English: Get device info (name, VID, PID, connection type, serial number, with caching)
 DynalgoDeviceInfo RsDevice::getDeviceInfo() const {
     if (!deviceInfoQueried_) {
         cachedDevInfo_.name = "RoboSense_AC1";
@@ -33,14 +39,26 @@ DynalgoDeviceInfo RsDevice::getDeviceInfo() const {
     return cachedDevInfo_;
 }
 
+// [函数说明 / Function Description]
+// 中文: 与主机同步时间戳（空实现）
+// English: Sync timestamp with host (no-op)
 void RsDevice::timerSyncWithHost() {}
 
+// [函数说明 / Function Description]
+// 中文: 检查是否支持全局时间戳（RS-AC1 支持）
+// English: Check if global timestamp is supported (RS-AC1 supports it)
 bool RsDevice::isGlobalTimestampSupported() const {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 启用/禁用全局时间戳（空实现）
+// English: Enable/disable global timestamp (no-op)
 void RsDevice::enableGlobalTimestamp(bool) {}
 
+// [函数说明 / Function Description]
+// 中文: 获取传感器信息（颜色、深度、IMU 等固定规格）
+// English: Get sensor info (fixed specs for color, depth, IMU, etc.)
 DynalgoSensorInfo RsDevice::getSensorInfo() const {
     DynalgoSensorInfo si;
     si.hasColor = true;
@@ -64,10 +82,16 @@ DynalgoSensorInfo RsDevice::getSensorInfo() const {
     return si;
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取整数属性（返回 0）
+// English: Get integer property (returns 0)
 int32_t RsDevice::getIntProperty(int) {
     return 0;
 }
 
+// [函数说明 / Function Description]
+// 中文: 配置管道（返回固定传感器信息和深度比例）
+// English: Configure pipeline (returns fixed sensor info and depth scale)
 DynalgoSensorInfo RsDevice::setupPipeline(DynalgoPipeline& /*pipeline*/) {
     DynalgoSensorInfo si = getSensorInfo();
     si.depthScale = rs::AC1::DEPTH_SCALE;
@@ -76,8 +100,14 @@ DynalgoSensorInfo RsDevice::setupPipeline(DynalgoPipeline& /*pipeline*/) {
 
 // === RsPipeline ===
 
+// [构造函数 / Constructor]
+// 中文: 构造函数，保存设备共享指针
+// English: Constructor, stores device shared pointer
 RsPipeline::RsPipeline(std::shared_ptr<RsDevice> device) : rsDevice_(std::move(device)) {}
 
+// [函数说明 / Function Description]
+// 中文: 启用流（颜色流配置格式/分辨率/帧率，IMU 配置帧率）
+// English: Enable stream (color stream config format/resolution/fps, IMU config fps)
 void RsPipeline::enableStream(const DynalgoStreamConfig& cfg) {
     if (cfg.frameType == DynalgoFrameType::COLOR) {
         enableImage_ = true;
@@ -94,21 +124,39 @@ void RsPipeline::enableStream(const DynalgoStreamConfig& cfg) {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 禁用流（颜色流）
+// English: Disable stream (color stream)
 void RsPipeline::disableStream(DynalgoFrameType type) {
     if (type == DynalgoFrameType::COLOR)
         enableImage_ = false;
 }
 
+// [函数说明 / Function Description]
+// 中文: 设置聚合模式（空实现）
+// English: Set aggregate mode (no-op)
 void RsPipeline::setAggregateAllTypeFrameRequire(bool) {}
 
+// [函数说明 / Function Description]
+// 中文: 设置对齐模式（空实现，RS-AC1 固定硬件对齐）
+// English: Set align mode (no-op, RS-AC1 fixed HW alignment)
 void RsPipeline::setAlignMode(DynalgoAlignMode) {}
 
+// [函数说明 / Function Description]
+// 中文: 检查硬件 D2C 支持（总是返回 true）
+// English: Check HW D2C support (always returns true)
 bool RsPipeline::checkHWD2CSupport(int, int, DynalgoFormat, int, int, DynalgoFormat, int) {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 启用帧同步（空实现）
+// English: Enable frame sync (no-op)
 void RsPipeline::enableFrameSync() {}
 
+// [函数说明 / Function Description]
+// 中文: 启动视频流（初始化驱动参数、注册回调、启动处理线程）
+// English: Start video stream (init driver params, register callbacks, start processing threads)
 bool RsPipeline::start(DynalgoVideoCallback callback) {
     videoCallback_ = callback;
 
@@ -184,6 +232,9 @@ bool RsPipeline::start(DynalgoVideoCallback callback) {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 启动 IMU 流（延迟绑定 IMU 线程）
+// English: Start IMU stream (late-bind IMU thread)
 bool RsPipeline::startImu(DynalgoImuCallback callback) {
     imuCallback_ = callback;
     imuStarted_ = true;
@@ -194,6 +245,9 @@ bool RsPipeline::startImu(DynalgoImuCallback callback) {
     return true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 停止视频流（停止驱动、等待线程结束）
+// English: Stop video stream (stop driver, join threads)
 void RsPipeline::stop() {
     if (started_) {
         running_ = false;
@@ -209,17 +263,26 @@ void RsPipeline::stop() {
         imuThread_.join();
 }
 
+// [函数说明 / Function Description]
+// 中文: 停止 IMU 流（RS-AC1 无法独立停止 IMU）
+// English: Stop IMU stream (RS-AC1 cannot stop IMU independently)
 void RsPipeline::stopImu() {
     // IMU cannot be stopped independently for RS-AC1.
     imuStarted_ = false;
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取关联的设备
+// English: Get associated device
 std::shared_ptr<DynalgoDevice> RsPipeline::getDevice() const {
     return rsDevice_;
 }
 
 // --- Processing threads ---
 
+// [函数说明 / Function Description]
+// 中文: 处理点云队列（生成深度帧和点云帧，尝试发射 FrameSet）
+// English: Process cloud queue (generate depth frame and point frame, try emit FrameSet)
 void RsPipeline::processCloud() {
     setThreadName("rs_cloud");
     DYNALGO_LOG_DEBUG("RS-AC1 cloud processing thread started");
@@ -241,6 +304,9 @@ void RsPipeline::processCloud() {
     DYNALGO_LOG_DEBUG("RS-AC1 cloud processing thread stopped");
 }
 
+// [函数说明 / Function Description]
+// 中文: 处理图像数据队列（生成颜色帧，尝试发射 FrameSet）
+// English: Process image data queue (generate color frame, try emit FrameSet)
 void RsPipeline::processImageData() {
     setThreadName("rs_image");
     DYNALGO_LOG_DEBUG("RS-AC1 image processing thread started");
@@ -260,6 +326,9 @@ void RsPipeline::processImageData() {
     DYNALGO_LOG_DEBUG("RS-AC1 image processing thread stopped");
 }
 
+// [函数说明 / Function Description]
+// 中文: 处理 IMU 队列（格式化为 CSV 并推送回调）
+// English: Process IMU queue (format as CSV and push via callback)
 void RsPipeline::processImu() {
     setThreadName("rs_imu");
     DYNALGO_LOG_DEBUG("RS-AC1 IMU processing thread started");
@@ -275,6 +344,9 @@ void RsPipeline::processImu() {
 
 // --- FrameSet synthesis ---
 
+// [函数说明 / Function Description]
+// 中文: 尝试发射 FrameSet（颜色+深度都就绪时，重用最新深度帧）
+// English: Try emit FrameSet (when both color and depth ready, reuse latest depth frame)
 void RsPipeline::tryEmitFrameSet() {
     // Must be called with syncMtx_ held.
     // Emit only when a fresh depth frame is available (D2C fusion trigger).
@@ -298,6 +370,9 @@ void RsPipeline::tryEmitFrameSet() {
     // No emission occurs here.
 }
 
+// [函数说明 / Function Description]
+// 中文: 格式化 IMU 数据并推送回调
+// English: Format IMU data and push via callback
 void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& imu) {
     if (!imu || !imuCallback_)
         return;
@@ -312,15 +387,24 @@ void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& i
 static constexpr uint16_t RS_AC1_VID = rs::AC1::USB_ID.vid;
 static constexpr uint16_t RS_AC1_PID = rs::AC1::USB_ID.pid;
 
+// [构造函数 / Constructor]
+// 中文: 构造函数，初始化 libusb 上下文
+// English: Constructor, initializes libusb context
 RsContext::RsContext() {
     libusb_init(&usbCtx_);
 }
 
+// [析构函数 / Destructor]
+// 中文: 析构函数，清理 libusb 上下文
+// English: Destructor, cleans up libusb context
 RsContext::~RsContext() {
     if (usbCtx_)
         libusb_exit(usbCtx_);
 }
 
+// [函数说明 / Function Description]
+// 中文: 扫描 USB 总线查找 RS-AC1 设备，缓存 VID/PID 匹配项
+// English: Scan USB bus for RS-AC1 devices; cache VID/PID matches
 void RsContext::scanDevices() {
     if (scanned_)
         return;
@@ -362,11 +446,17 @@ void RsContext::scanDevices() {
     scanned_ = true;
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取设备数量
+// English: Get device count
 uint32_t RsContext::getDeviceCount() {
     scanDevices();
     return static_cast<uint32_t>(deviceUuids_.size());
 }
 
+// [函数说明 / Function Description]
+// 中文: 根据索引获取设备
+// English: Get device by index
 std::shared_ptr<DynalgoDevice> RsContext::getDevice(uint32_t index) {
     scanDevices();
     if (index >= deviceUuids_.size())

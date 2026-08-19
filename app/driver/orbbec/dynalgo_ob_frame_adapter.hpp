@@ -18,8 +18,9 @@
 
 namespace dynalgo {
 
-// Convert ob::FrameSet → DynalgoFrameSet (deep copy pixel data).
-// Extracts all video frames present in the FrameSet.
+// [函数说明 / Function Description]
+// 中文: 将 ob::FrameSet 转换为 DynalgoFrameSet（深拷贝像素数据）
+// English: Convert ob::FrameSet to DynalgoFrameSet (deep copy pixel data)
 inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
     DynalgoFrameSet nioFs;
 
@@ -43,7 +44,7 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
                            << static_cast<int>(nioType));
         }
 
-        // Depth scale
+        // Depth scale / 深度比例
         if (obType == OB_FRAME_DEPTH) {
             try {
                 auto df = frame->as<ob::DepthFrame>();
@@ -69,6 +70,9 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
     extract(OB_FRAME_IR_RIGHT, DynalgoFrameType::IR_RIGHT);
 
     // Point cloud: wrap raw OB_FORMAT_POINT data in self-describing wire format
+    // [处理说明 / Processing Note]
+    // 中文: 将原始点云数据包装为自描述线缆格式
+    // English: Wrap raw point cloud data in self-describing wire format
     auto pointFrameRaw = obFs->getFrame(OB_FRAME_POINTS);
     if (pointFrameRaw) {
         auto* srcData = pointFrameRaw->getData();
@@ -103,7 +107,9 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
     return nioFs;
 }
 
-// Extract IMU samples from ob::FrameSet → vector<DynalgoImuSample>.
+// [函数说明 / Function Description]
+// 中文: 从 ob::FrameSet 提取 IMU 样本为 vector<DynalgoImuSample>
+// English: Extract IMU samples from ob::FrameSet to vector<DynalgoImuSample>
 inline std::vector<DynalgoImuSample> obImuToNioSamples(std::shared_ptr<ob::FrameSet> obFs) {
     std::vector<DynalgoImuSample> samples;
 

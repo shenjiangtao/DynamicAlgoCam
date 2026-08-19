@@ -9,6 +9,9 @@
 
 namespace dynalgo {
 
+// [方法说明 / Method Description]
+// 中文: 加载虚拟模型后端配置
+// English: Load dummy model backend configuration
 bool DummyModelBackend::load(const DynalgoModelConfig& cfg)
 {
     (void)cfg;
@@ -16,6 +19,9 @@ bool DummyModelBackend::load(const DynalgoModelConfig& cfg)
     return true;
 }
 
+// [方法说明 / Method Description]
+// 中文: 执行虚拟模型推理
+// English: Run dummy model inference
 bool DummyModelBackend::infer(const DynalgoFrame& frame, std::vector<DynalgoDetectionResult>& out)
 {
     if (!enabled_)
@@ -38,7 +44,9 @@ bool DummyModelBackend::infer(const DynalgoFrame& frame, std::vector<DynalgoDete
     return true;
 }
 
-// Self-registration (same pattern as DummyActuator)
+// [自注册说明 / Self-registration Description]
+// 中文: 虚拟模型后端自注册
+// English: DummyModelBackend self-registration
 namespace {
 struct DummyModelBackendRegistrar
 {

@@ -10,13 +10,25 @@
 
 namespace dynalgo {
 
+// [类说明 / Class Description]
+// 中文: 虚拟模型后端，用于干跑运行和单元测试
+// English: Dummy model backend for dry-run and unit tests
 class DummyModelBackend : public DynalgoModelBackend
 {
 public:
     DummyModelBackend() = default;
 
+    // [方法说明 / Method Description]
+    // 中文: 加载模型配置
+    // English: Load model configuration
     bool load(const DynalgoModelConfig& cfg) override;
+    // [方法说明 / Method Description]
+    // 中文: 执行模型推理
+    // English: Run model inference
     bool infer(const DynalgoFrame& frame, std::vector<DynalgoDetectionResult>& out) override;
+    // [方法说明 / Method Description]
+    // 中文: 获取模型后端名称
+    // English: Get model backend name
     const char* name() const override { return "DUMMY"; }
 
     // Test knobs

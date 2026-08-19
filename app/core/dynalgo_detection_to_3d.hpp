@@ -4,6 +4,10 @@
 // dynalgo_detection_to_3d.hpp — Back-project a 2D detection box center into the
 // camera optical frame (meters), given a D2C-aligned depth frame.
 //
+// [文件说明 / File Description]
+// 中文：将2D检测框中心反投影到相机光学坐标系（米），需要D2C对齐的深度帧
+// English: Back-project a 2D detection box center into the camera optical frame (meters), given a D2C-aligned depth frame
+//
 // Header-only; nio_core consumes no extra source. Mirrors the pinhole model
 // already used by PointcloudFrameConsumer::backprojectToPointCloud() (see
 // app/capture/dynalgo_frame_consumer.cpp:144-174):
@@ -56,6 +60,10 @@
 
 namespace dynalgo {
 
+// [方法说明 / Method Description]
+// 中文：将检测框中心反投影到相机坐标系，使用针孔模型和中值滤波深度
+// English: Back-project detection box center to camera coordinate system using pinhole model and median-filtered depth
+//
 // Returns false when the centre sits outside the depth frame, the depth frame
 // is not Y16 / wrong-sized, the Y16 value(s) in the window are all zero (invalid),
 // or the intrinsic is degenerate (fx/fy == 0). Output values are unchanged on

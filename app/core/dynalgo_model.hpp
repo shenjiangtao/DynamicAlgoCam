@@ -3,6 +3,10 @@
 //
 // dynalgo_model.hpp — SDK-neutral model inference abstraction layer.
 //
+// [文件说明 / File Description]
+// 中文：SDK中立的模型推理抽象层，定义可插拔算法/推理后端的接口契约
+// English: SDK-neutral model inference abstraction layer, defines the contract for pluggable algorithm/inference backends
+//
 // Defines the contract for pluggable algorithm / inference backends
 // (YOLOv8, ONNX Runtime, TensorRT, dummy, ...). Backends live outside
 // dynalgo_core (e.g. under app/driver or app/models); this header only states
@@ -31,7 +35,9 @@
 
 namespace dynalgo {
 
-// Algorithm / inference backend type. Mirrors DynalgoDriverVendor's pattern.
+// [枚举说明 / Enum Description]
+// 中文：算法/推理后端类型，与DynalgoDriverVendor模式保持一致
+// English: Algorithm / inference backend type. Mirrors DynalgoDriverVendor's pattern.
 enum class DynalgoModelType {
     NONE = 0,      // no backend — infer() is a no-op
     DUMMY,         // in-process stub for unit tests / dry runs
@@ -40,8 +46,9 @@ enum class DynalgoModelType {
     TENSORRT       // future: TensorRT backend
 };
 
-// One detection / classification result, SDK-neutral.
-// Keep POD-like; backends map their own output schema onto this.
+// [结构体说明 / Struct Description]
+// 中文：检测/分类结果，SDK中立，保持POD结构，后端可映射自己的输出格式
+// English: One detection / classification result, SDK-neutral. Keep POD-like; backends map their own output schema onto this.
 struct DynalgoDetectionResult {
     int classId = -1;            // category index (model-specific)
     float score = 0.0f;          // confidence in [0,1]
@@ -52,8 +59,9 @@ struct DynalgoDetectionResult {
     std::string label;           // human-readable class label (optional)
 };
 
-// Backend configuration. Reserved for backend-specific params (weights path,
-// device hint, conf threshold, ...). Backends cast/handle keys they understand.
+// [结构体说明 / Struct Description]
+// 中文：后端配置，保留用于后端特定参数（权重路径、设备提示、置信度阈值等）
+// English: Backend configuration. Reserved for backend-specific params (weights path, device hint, conf threshold, ...).
 struct DynalgoModelConfig {
     std::string modelPath;       // weights / model file or model name
     std::string deviceHint;      // e.g. "cpu", "gpu", "cuda:0", empty = default
@@ -61,24 +69,27 @@ struct DynalgoModelConfig {
     float iouThreshold = 0.45f;  // NMS IoU threshold (when applicable)
 };
 
-// Abstract inference backend. Concrete implementations are created by
-// DynalgoModelFactory (see dynalgo_model_factory.hpp) and live in driver/model code.
+// [类说明 / Class Description]
+// 中文：抽象推理后端基类，具体实现由DynalgoModelFactory创建
+// English: Abstract inference backend. Concrete implementations are created by DynalgoModelFactory.
 class DynalgoModelBackend
 {
 public:
     virtual ~DynalgoModelBackend() = default;
 
-    // Load weights / initialise backend. Returns true on success.
-    // Must be called once before infer().
+    // [方法说明 / Method Description]
+    // 中文：加载权重/初始化后端，成功返回true，必须在infer()之前调用
+    // English: Load weights / initialise backend. Returns true on success. Must be called once before infer().
     virtual bool load(const DynalgoModelConfig& cfg) = 0;
 
-    // Run inference on one frame. Implementations should be thread-safe
-    // if they intend to be called from multiple capture threads.
-    // Returns true on success; results appended to `out` (NOT cleared by
-    // the interface — caller controls output buffer lifecycle).
+    // [方法说明 / Method Description]
+    // 中文：对单帧运行推理，结果追加到out向量，线程安全实现需支持多线程调用
+    // English: Run inference on one frame. Results appended to `out`. Thread-safe implementations should support multi-threaded calls.
     virtual bool infer(const DynalgoFrame& frame, std::vector<DynalgoDetectionResult>& out) = 0;
 
-    // Human-readable backend name, e.g. "YOLOV8_PY", "DUMMY".
+    // [方法说明 / Method Description]
+    // 中文：返回人类可读的后端名称
+    // English: Return human-readable backend name
     virtual const char* name() const = 0;
 };
 

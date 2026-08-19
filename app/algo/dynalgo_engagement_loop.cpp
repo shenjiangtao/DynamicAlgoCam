@@ -11,6 +11,9 @@
 
 namespace dynalgo {
 
+// [构造函数说明 / Constructor Description]
+// 中文: 初始化交互循环
+// English: Initialize engagement loop
 DynalgoEngagementLoop::DynalgoEngagementLoop(const Config& cfg,
                                               DynalgoModelBackend* model,
                                               DynalgoActuator* actuator,
@@ -34,6 +37,9 @@ DynalgoEngagementLoop::DynalgoEngagementLoop(const Config& cfg,
     }
 }
 
+// [方法说明 / Method Description]
+// 中文: 处理每帧数据
+// English: Process each frame
 void DynalgoEngagementLoop::onFrame(const DynalgoFrameSet& frameSet)
 {
     if (stop_)
@@ -145,6 +151,9 @@ void DynalgoEngagementLoop::onFrame(const DynalgoFrameSet& frameSet)
     }
 }
 
+// [方法说明 / Method Description]
+// 中文: 从帧集中提取深度帧
+// English: Extract depth frame from frame set
 bool DynalgoEngagementLoop::depthFrameFromSet(const DynalgoFrameSet& fs, DynalgoFrame& outDepth) const
 {
     // Convention: fused frame-set from CaptureSession puts D2C-aligned depth at DEPTH type.
@@ -155,6 +164,9 @@ bool DynalgoEngagementLoop::depthFrameFromSet(const DynalgoFrameSet& fs, Dynalgo
     return false;
 }
 
+// [方法说明 / Method Description]
+// 中文: 执行状态转换
+// English: Perform state transition
 void DynalgoEngagementLoop::transitionTo(State newState)
 {
     if (newState == state_)
@@ -172,6 +184,9 @@ void DynalgoEngagementLoop::transitionTo(State newState)
     }
 }
 
+// [方法说明 / Method Description]
+// 中文: 尝试执行射击动作
+// English: Attempt to fire the actuator
 bool DynalgoEngagementLoop::tryFire(const DynalgoDetectionResult& det)
 {
     if (!actuator_ || !bundle_.hasFix())

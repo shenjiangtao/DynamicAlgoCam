@@ -12,30 +12,52 @@
 
 namespace dynalgo {
 
+// [枚举说明 / Enum Description]
+// 中文: 点云保存模式
+// English: Pointcloud save mode
 enum class PcdMode {
-    Stream,
-    Single
+    Stream,  // 中文: 连续流模式 / English: Continuous stream mode
+    Single   // 中文: 单帧文件模式 / English: Single frame file mode
 };
 
+// [结构体说明 / Struct Description]
+// 中文: 采集配置结构体，包含CLI解析后的所有配置参数
+// English: Capture configuration struct, contains all parsed CLI parameters
 struct CaptureConfig
 {
+    // 中文: 相机类型过滤器 / English: Camera type filter
     std::vector<std::string> cameraFilter;
+    // 中文: 保存目录 / English: Save directory
     std::string saveDir;
+    // 中文: 深度叠加透明度 0.0-1.0 / English: Depth overlay opacity 0.0-1.0
     float alpha = 0.5f;
+    // 中文: 深度色图最小值(米) / English: Min depth in meters for colormap
     float depthMinM = 0.3f;
+    // 中文: 深度色图最大值(米) / English: Max depth in meters for colormap
     float depthMaxM = 5.0f;
+    // 中文: 是否启用融合 / English: Enable fusion
     bool enableFusion = true;
+    // 中文: 禁用融合标志 / English: Disable fusion flag
     bool noFusion = false;
+    // 中文: 禁用SDL预览 / English: Disable SDL preview
     bool noShow = false;
+    // 中文: 深度转点云标志 / English: Depth to pointcloud flag
     bool depthToPcd = false;
+    // 中文: 点云保存模式 / English: Pointcloud save mode
     PcdMode pcdMode = PcdMode::Single;
 
     // Engagement loop (Phase C)
+    // 中文: 模型后端类型 / English: Model backend type
     std::string engageModel;    // e.g. "DUMMY", "YOLOV8_PY" — empty = disabled
+    // 中文: 执行器类型 / English: Actuator type
     std::string engageActuator; // e.g. "DUMMY" — empty = disabled
+    // 中文: 模型权重/配置路径 / English: Model weights/config path
     std::string engageModelPath; // model weights / config path
 };
 
+// [函数说明 / Function Description]
+// 中文: 打印使用帮助
+// English: Print usage help
 inline void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options] [camera_name_filter...]\n"
               << "\nOptions:\n"
@@ -63,6 +85,9 @@ inline void printUsage(const char* prog) {
               << std::endl;
 }
 
+// [函数说明 / Function Description]
+// 中文: 解析命令行参数
+// English: Parse command line arguments
 inline CaptureConfig parseArgs(int argc, char** argv) {
     CaptureConfig cfg;
     static struct option longOpts[] = { { "alpha", required_argument, nullptr, 'a' },

@@ -16,6 +16,9 @@
 
 namespace dynalgo {
 
+// [函数: frameToBGR / Function: frameToBGR]
+// 中文: 根据帧格式分派转换逻辑：直接拷贝、cvtColor 颜色空间转换、或 imdecode 解码 MJPEG。
+// English: Dispatch conversion based on frame format: direct copy, cvtColor color space conversion, or imdecode for MJPEG.
 cv::Mat frameToBGR(const DynalgoFrame& frame) {
     int w = frame.width;
     int h = frame.height;
@@ -92,6 +95,9 @@ cv::Mat frameToBGR(const DynalgoFrame& frame) {
     return cv::Mat();
 }
 
+// [函数: colorizeDepth / Function: colorizeDepth]
+// 中文: Y16 深度转浮点米 -> 归一化到 [0,1] -> 应用 JET 色图 -> 无效像素置黑。
+// English: Y16 depth to float meters -> normalize to [0,1] -> apply JET colormap -> invalid pixels to black.
 cv::Mat colorizeDepth(const DynalgoFrame& depthFrame, float depthMinM, float depthMaxM) {
     int w = depthFrame.width;
     int h = depthFrame.height;

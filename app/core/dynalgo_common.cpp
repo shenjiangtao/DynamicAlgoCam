@@ -3,6 +3,10 @@
 //
 // dynalgo_common.cpp — Implementation of shared NIO utilities.
 //
+// [文件说明 / File Description]
+// 中文：共享NIO工具实现，包括信号处理、时间戳、目录创建、SEI NAL单元写入和设备匹配
+// English: Shared NIO utilities implementation, including signal handling, timestamps, directory creation, SEI NAL unit writing, and device matching
+//
 // Sections:
 //   1. Signal handling + g_running
 //   2. Timestamp helpers
@@ -26,25 +30,40 @@ namespace dynalgo {
 
 // === Section 1: Signal handling ===
 
+// [全局变量 / Global Variable]
+// 中文：运行标志，初始为true，收到SIGINT/SIGTERM时设置为false
+// English: Running flag, initially true, set to false on SIGINT/SIGTERM
 std::atomic<bool> g_running{ true };
 
+// [信号处理器 / Signal Handler]
+// 中文：信号处理器，将运行标志设置为false
+// English: Signal handler, sets running flag to false
 void signalHandler(int) {
     g_running = false;
 }
 
 // === Section 2: Timestamp helpers ===
 
+// [方法说明 / Method Description]
+// 中文：获取当前时间戳字符串（毫秒）
+// English: Get current timestamp string in milliseconds
 std::string getTimestampMs() {
     auto now = std::chrono::system_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     return std::to_string(ms);
 }
 
+// [方法说明 / Method Description]
+// 中文：获取当前时间戳整数（毫秒）
+// English: Get current timestamp integer in milliseconds
 uint64_t getTimestampMsInt() {
     auto now = std::chrono::system_clock::now();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
 }
 
+// [方法说明 / Method Description]
+// 中文：获取ISO格式时间戳字符串
+// English: Get ISO format timestamp string
 std::string getTimestampIso() {
     auto now = std::chrono::system_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -60,6 +79,9 @@ std::string getTimestampIso() {
 
 // === Section 3: mkdirp — recursive mkdir -p (ignores EEXIST) ===
 
+// [方法说明 / Method Description]
+// 中文：递归创建目录，忽略EEXIST错误
+// English: Recursively create directories, ignoring EEXIST errors
 void mkdirp(const std::string& path) {
     size_t pos = 0;
     std::string tmp;
@@ -71,20 +93,19 @@ void mkdirp(const std::string& path) {
 }
 
 // === Section 4: SEI NAL unit writer ===
-// Writes H.264 unregistered SEI NAL (type 6, payload type 5) with:
-//   - 16-byte UUID prefix (first 16 chars of uuid string)
-//   - payload string (copyright notice or "dts=..." timestamp)
-//   - RBSP trailing bits + emulation prevention byte stuffing
-//
-// NAL structure: [00 00 00 01] [06 05] [size bytes] [UUID+payload RBSP] [80]
 
+// [全局常量 / Global Constant]
+// 中文：SEI版权信息字符串
+// English: SEI copyright information string
 const char* SEI_COPYRIGHT = "Copyright jiangtao.shen@nio.com";
 
+// [方法说明 / Method Description]
+// 中文：写入H.264未注册SEI NAL单元，包含16字节UUID前缀和载荷字符串
+// English: Write H.264 unregistered SEI NAL unit with 16-byte UUID prefix and payload string
 void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mutex& mtx, const char* uuid) {
-    // Reuse thread-local buffers across frames: each EncodeStreamTask runs
-    // on its own StreamTask thread, so thread_local gives one stable buffer
-    // per encoder thread. clear() preserves capacity — no per-frame malloc
-    // after the first call. Hot path: 30fps x N streams.
+    // [线程本地缓冲区 / Thread-Local Buffers]
+    // 中文：跨帧重用线程本地缓冲区，每个编码器线程一个稳定缓冲区
+    // English: Reuse thread-local buffers across frames, one stable buffer per encoder thread
     static thread_local std::vector<uint8_t> rbsp;
     static thread_local std::vector<uint8_t> nal;
     rbsp.clear();
@@ -110,6 +131,9 @@ void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mu
     }
     nal.push_back(static_cast<uint8_t>(payloadSize));
 
+    // [仿真实现防止字节 / Emulation Prevention Byte Stuffing]
+    // 中文：插入仿真实现防止字节，避免NAL单元中的起始码冲突
+    // English: Insert emulation prevention byte stuffing to avoid start code conflicts in NAL unit
     int zeroCount = 0;
     for (size_t i = 0; i < rbsp.size(); i++) {
         uint8_t b = rbsp[i];
@@ -133,9 +157,10 @@ void writeSEINalUnit(std::ofstream& outFile, const std::string& payload, std::mu
 }
 
 // === Section 5: deviceMatches — substring match against filter list ===
-// Returns true if filter is empty (no filter = accept all) or if any
-// filter string appears as a substring of deviceName.
 
+// [方法说明 / Method Description]
+// 中文：设备名称与过滤器列表的子字符串匹配，空列表表示接受所有
+// English: Case-insensitive substring match of device name against filter list, empty list accepts all
 bool deviceMatches(const std::string& deviceName, const std::vector<std::string>& filter) {
     if (filter.empty())
         return true;

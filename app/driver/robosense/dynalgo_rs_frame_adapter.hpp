@@ -19,19 +19,19 @@
 #include <cstring>
 
 namespace dynalgo {
-// RS-AC1 depth grid dimensions (from decoder_RSAC1.hpp constants)
+// RS-AC1 depth grid dimensions (from decoder_RSAC1.hpp constants) / RS-AC1 深度网格尺寸（来自 decoder_RSAC1.hpp 常量）
 static constexpr int RS_AC1_DEPTH_WIDTH = 96;
 static constexpr int RS_AC1_DEPTH_HEIGHT = 288;
-// 5mm per uint16 unit (distance / 0.005)
+// 5mm per uint16 unit (distance / 0.005) / 每个 uint16 单位 5mm（距离 / 0.005）
 static constexpr float RS_AC1_DEPTH_SCALE = 5.0f;
 
-// Convert RS-AC1 PointCloudMsg → DynalgoFrame (synthetic Y16 depth map).
-// Each point[i] maps to pixel(col=i%96, row=i/96).
-// Output is upsampled to AC1_COLOR_W × AC1_COLOR_H (nearest-neighbor, vertical flip).
-// Invalid points (NaN or <0.2m) get depth=0.
+// RS-AC1 color resolution constants / RS-AC1 颜色分辨率常量
 static constexpr int AC1_COLOR_W = 1920;
 static constexpr int AC1_COLOR_H = 1080;
 
+// [函数说明 / Function Description]
+// 中文: 将 RS-AC1 PointCloudMsg 转换为 DynalgoFrame（合成 Y16 深度图）
+// English: Convert RS-AC1 PointCloudMsg to DynalgoFrame (synthetic Y16 depth map)
 inline DynalgoFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     DynalgoFrame f;
     f.type = DynalgoFrameType::DEPTH;
@@ -75,7 +75,9 @@ inline DynalgoFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::Poin
     return f;
 }
 
-// Convert RS-AC1 PointCloudMsg → DynalgoFrame (raw POINT data for PCD recording).
+// [函数说明 / Function Description]
+// 中文: 将 RS-AC1 PointCloudMsg 转换为 DynalgoFrame（原始点云数据，用于 PCD 录制）
+// English: Convert RS-AC1 PointCloudMsg to DynalgoFrame (raw point cloud data for PCD recording)
 // Wire layout (see PcdLayout in dynalgo_types.hpp):
 //   [12B header: srcPointSize(4) + numFields(4) + pointCount(4)]
 //   [numFields * 24B PcdFieldDesc entries]
@@ -119,7 +121,9 @@ inline DynalgoFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::Poin
     return f;
 }
 
-// Convert RS-AC1 ImageData → DynalgoFrame (color frame).
+// [函数说明 / Function Description]
+// 中文: 将 RS-AC1 ImageData 转换为 DynalgoFrame（颜色帧）
+// English: Convert RS-AC1 ImageData to DynalgoFrame (color frame)
 inline DynalgoFrame rsImageToNioFrame(const std::shared_ptr<robosense::lidar::ImageData>& img) {
     DynalgoFrame f;
     f.type = DynalgoFrameType::COLOR;

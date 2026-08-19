@@ -8,11 +8,17 @@
 #include "dynalgo_log.hpp"
 
 using namespace dynalgo::orbbec;
-
 namespace dynalgo {
 
+
+// [构造函数 / Constructor]
+// 中文: 构造函数，保存 ob::Device 共享指针
+// English: Constructor, stores ob::Device shared pointer
 ObDevice::ObDevice(std::shared_ptr<ob::Device> device) : obDevice_(std::move(device)) {}
 
+// [函数说明 / Function Description]
+// 中文: 获取设备信息（名称、序列号、VID、PID、连接类型）
+// English: Get device info (name, serial number, VID, PID, connection type)
 DynalgoDeviceInfo ObDevice::getDeviceInfo() const {
     auto di = obDevice_->getDeviceInfo();
     DynalgoDeviceInfo info;
@@ -24,18 +30,30 @@ DynalgoDeviceInfo ObDevice::getDeviceInfo() const {
     return info;
 }
 
+// [函数说明 / Function Description]
+// 中文: 与主机同步时间戳
+// English: Sync timestamp with host
 void ObDevice::timerSyncWithHost() {
     obDevice_->timerSyncWithHost();
 }
 
+// [函数说明 / Function Description]
+// 中文: 检查是否支持全局时间戳
+// English: Check if global timestamp is supported
 bool ObDevice::isGlobalTimestampSupported() const {
     return obDevice_->isGlobalTimestampSupported();
 }
 
+// [函数说明 / Function Description]
+// 中文: 启用/禁用全局时间戳
+// English: Enable/disable global timestamp
 void ObDevice::enableGlobalTimestamp(bool enable) {
     obDevice_->enableGlobalTimestamp(enable);
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取传感器信息（带缓存）
+// English: Get sensor info (with caching)
 DynalgoSensorInfo ObDevice::getSensorInfo() const {
     if (sensorInfoCached_)
         return cachedSensorInfo_;
@@ -77,15 +95,24 @@ DynalgoSensorInfo ObDevice::getSensorInfo() const {
     return si;
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取整数属性
+// English: Get integer property
 int32_t ObDevice::getIntProperty(int propertyId) {
     return obDevice_->getIntProperty(static_cast<OBPropertyID>(propertyId));
 }
 
+// [函数说明 / Function Description]
+// 中文: 检查是否有 IR 传感器
+// English: Check if IR sensor exists
 bool ObDevice::hasIRSensor() const {
     auto si = getSensorInfo();
     return si.hasIR || si.hasIRLeft || si.hasIRRight;
 }
 
+// [函数说明 / Function Description]
+// 中文: 配置管道流（颜色、深度、IR 等），返回实际启用的传感器信息
+// English: Configure pipeline streams (color, depth, IR, etc.), return enabled sensor info
 DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
     auto* obPipe = dynamic_cast<ObPipeline*>(&pipeline);
     if (!obPipe) {
@@ -287,32 +314,47 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
 
     cachedSensorInfo_ = si;
     sensorInfoCached_ = true;
-    return si;
+return si;
 }
 
 // === ObPipeline ===
 
+// [构造函数 / Constructor]
+// 中文: 构造函数，创建 ob::Pipeline 和 ob::Config，设置聚合模式为 ANY_SITUATION
+// English: Constructor, creates ob::Pipeline and ob::Config, sets aggregate mode to ANY_SITUATION
 ObPipeline::ObPipeline(std::shared_ptr<ob::Device> device) : obDevice_(device) {
     obPipeline_ = std::make_shared<ob::Pipeline>(device);
     obConfig_ = std::make_shared<ob::Config>();
     obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION);
 }
 
+// [函数说明 / Function Description]
+// 中文: 启用流（需要 ob::VideoStreamProfile，由 CaptureSession 实现）
+// English: Enable stream (requires ob::VideoStreamProfile, implemented in CaptureSession)
 void ObPipeline::enableStream(const DynalgoStreamConfig& /*cfg*/) {
     // 流启用需要 ob::VideoStreamProfile，由 CaptureSession 中具体实现。
     // Phase 4 重构时将完整实现。
 }
 
+// [函数说明 / Function Description]
+// 中文: 禁用流
+// English: Disable stream
 void ObPipeline::disableStream(DynalgoFrameType type) {
     obConfig_->disableStream(nioFrameTypeToObSensor(type));
 }
 
+// [函数说明 / Function Description]
+// 中文: 设置聚合模式（任何情况都输出 FrameSet，保持融合 FPS 接近颜色传感器速率）
+// English: Set aggregate mode (emit FrameSet as soon as any stream arrives, keeps fused FPS near color rate)
 void ObPipeline::setAggregateAllTypeFrameRequire(bool /*require*/) {
     // Emit a FrameSet as soon as any stream arrives (colour, depth, IR, etc.).
-    // This mode keeps the fused FPS close to the colour sensor rate (≈30 fps).
+    // This mode keeps the fused FPS close to the colour sensor rate (≈30 fps).
     obConfig_->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION);
 }
 
+// [函数说明 / Function Description]
+// 中文: 设置对齐模式（硬件 D2C 或软件对齐）
+// English: Set align mode (HW D2C or SW alignment)
 void ObPipeline::setAlignMode(DynalgoAlignMode mode) {
     if (mode == DynalgoAlignMode::HW) {
         obConfig_->setAlignMode(ALIGN_D2C_HW_MODE);
@@ -333,6 +375,9 @@ void ObPipeline::setPointCloudEnabled(bool enable) {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 检查硬件 D2C 支持
+// English: Check HW D2C support
 bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, DynalgoFormat /*colorFmt*/, int /*depthW*/,
                                    int /*depthH*/, DynalgoFormat /*depthFmt*/, int /*depthFps*/) {
     if (!colorProfile_ || !depthProfile_)
@@ -353,6 +398,9 @@ bool ObPipeline::checkHWD2CSupport(int /*colorW*/, int /*colorH*/, DynalgoFormat
     return false;
 }
 
+// [函数说明 / Function Description]
+// 中文: 启用帧同步
+// English: Enable frame sync
 void ObPipeline::enableFrameSync() {
     try {
         obPipeline_->enableFrameSync();
@@ -361,6 +409,9 @@ void ObPipeline::enableFrameSync() {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 启动视频流（回调中处理点云、对齐、转换为 DynalgoFrameSet）
+// English: Start video stream (callback processes point cloud, alignment, converts to DynalgoFrameSet)
 bool ObPipeline::start(DynalgoVideoCallback callback) {
     videoCallback_ = std::move(callback);
     try {
@@ -398,6 +449,9 @@ bool ObPipeline::start(DynalgoVideoCallback callback) {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 启动 IMU 流
+// English: Start IMU stream
 bool ObPipeline::startImu(DynalgoImuCallback callback) {
     if (!imuPipeline_) {
         imuPipeline_ = std::make_shared<ob::Pipeline>(obDevice_);
@@ -424,6 +478,9 @@ bool ObPipeline::startImu(DynalgoImuCallback callback) {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 停止视频流
+// English: Stop video stream
 void ObPipeline::stop() {
     if (obPipeline_) {
         try {
@@ -434,6 +491,9 @@ void ObPipeline::stop() {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 停止 IMU 流
+// English: Stop IMU stream
 void ObPipeline::stopImu() {
     if (imuStarted_ && imuPipeline_) {
         try {
@@ -445,10 +505,16 @@ void ObPipeline::stopImu() {
     }
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取关联的设备
+// English: Get associated device
 std::shared_ptr<DynalgoDevice> ObPipeline::getDevice() const {
     return std::make_shared<ObDevice>(obDevice_);
 }
 
+// [函数说明 / Function Description]
+// 中文: 获取当前对齐模式
+// English: Get current align mode
 DynalgoAlignMode ObPipeline::getAlignMode() const {
     if (hwD2CMode_)
         return DynalgoAlignMode::HW;
@@ -461,6 +527,9 @@ DynalgoAlignMode ObPipeline::getAlignMode() const {
 
 bool ObContext::sdkInitialized_ = false;
 
+// [函数说明 / Function Description]
+// 中文: 初始化 Orbbec SDK（设置扩展目录）
+// English: Initialize Orbbec SDK (set extensions directory)
 void ObContext::initSDK(const std::string& extensionsDir) {
     if (sdkInitialized_)
         return;
@@ -471,12 +540,21 @@ void ObContext::initSDK(const std::string& extensionsDir) {
     sdkInitialized_ = true;
 }
 
+// [构造函数 / Constructor]
+// 中文: 构造函数，使用配置文件路径初始化 ob::Context
+// English: Constructor, initializes ob::Context with config file path
 ObContext::ObContext(const std::string& configPath) : ctx_(configPath.c_str()) {}
 
+// [函数说明 / Function Description]
+// 中文: 获取设备数量
+// English: Get device count
 uint32_t ObContext::getDeviceCount() {
     return ctx_.queryDeviceList()->getCount();
 }
 
+// [函数说明 / Function Description]
+// 中文: 根据索引获取设备
+// English: Get device by index
 std::shared_ptr<DynalgoDevice> ObContext::getDevice(uint32_t index) {
     auto dev = ctx_.queryDeviceList()->getDevice(index);
     return std::make_shared<ObDevice>(dev);

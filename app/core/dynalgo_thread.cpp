@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 //
 // dynalgo_thread.cpp — Named thread utilities and StreamTask implementation.
+//
+// [文件说明 / File Description]
+// 中文：命名线程工具和StreamTask实现，提供工作线程管理和帧队列处理
+// English: Named thread utilities and StreamTask implementation, provides worker thread management and frame queue processing
 
 #include "dynalgo_thread.hpp"
 #include "dynalgo_log.hpp"
@@ -15,6 +19,9 @@
 
 namespace dynalgo {
 
+// [方法说明 / Method Description]
+// 中文：设置线程名称，用于调试，在top -H和gdb info threads中可见
+// English: Set thread name for debugging, visible in top -H and gdb info threads
 void setThreadName(const std::string& name) {
 #ifdef __linux__
     std::string truncated = name;
@@ -25,14 +32,23 @@ void setThreadName(const std::string& name) {
     (void)name;
 }
 
+// [构造函数 / Constructor]
+// 中文：初始化流任务，设置名称和队列容量
+// English: Initialize stream task with name and queue capacity
 StreamTask::StreamTask(const std::string& name, size_t queueCapacity) : name_(name), queueCapacity_(queueCapacity) {
     queue_.resize(queueCapacity_ + 1);
 }
 
+// [析构函数 / Destructor]
+// 中文：停止工作线程
+// English: Stop worker thread
 StreamTask::~StreamTask() {
     stop();
 }
 
+// [方法说明 / Method Description]
+// 中文：启动工作线程
+// English: Start worker thread
 void StreamTask::start() {
     if (running_.load())
         return;
@@ -40,6 +56,9 @@ void StreamTask::start() {
     thread_ = std::thread(&StreamTask::run, this);
 }
 
+// [方法说明 / Method Description]
+// 中文：停止工作线程并等待完成
+// English: Stop worker thread and wait for completion
 void StreamTask::stop() {
     running_ = false;
     { std::lock_guard<std::mutex> lock(mtx_); }
@@ -48,6 +67,9 @@ void StreamTask::stop() {
         thread_.join();
 }
 
+// [方法说明 / Method Description]
+// 中文：将帧数据入队，支持深度缩放和范围参数
+// English: Enqueue frame data with depth scaling and range parameters
 bool StreamTask::enqueue(const uint8_t* data, uint32_t size, uint64_t timestampUs, float depthScale, float depthMinM,
                          float depthMaxM) {
     {
@@ -72,10 +94,16 @@ bool StreamTask::enqueue(const uint8_t* data, uint32_t size, uint64_t timestampU
     return true;
 }
 
+// [方法说明 / Method Description]
+// 中文：唤醒工作线程
+// English: Wake up worker thread
 void StreamTask::wakeup() {
     cv_.notify_one();
 }
 
+// [方法说明 / Method Description]
+// 中文：工作线程主循环，处理帧队列中的帧
+// English: Worker thread main loop, processes frames from the frame queue
 void StreamTask::run() {
     setThreadName(name_);
     DYNALGO_LOG_DEBUG_S("StreamTask started: " << name_);

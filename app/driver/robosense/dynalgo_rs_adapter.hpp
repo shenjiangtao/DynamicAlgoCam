@@ -15,7 +15,9 @@
 #include <rs_driver/msg/imu_data_msg.hpp>
 
 namespace dynalgo {
-// RS frame_format_t → DynalgoFormat
+// [函数说明 / Function Description]
+// 中文: RS frame_format_t 转 DynalgoFormat
+// English: RS frame_format_t to DynalgoFormat
 inline DynalgoFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
@@ -32,7 +34,9 @@ inline DynalgoFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
     }
 }
 
-// DynalgoFormat → RS frame_format_t
+// [函数说明 / Function Description]
+// 中文: DynalgoFormat 转 RS frame_format_t
+// English: DynalgoFormat to RS frame_format_t
 inline robosense::lidar::frame_format_t nioFormatToRsFrameFormat(DynalgoFormat fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
@@ -49,7 +53,9 @@ inline robosense::lidar::frame_format_t nioFormatToRsFrameFormat(DynalgoFormat f
     }
 }
 
-// RS ImuData → vector of DynalgoImuSample (one ACCEL + one GYRO)
+// [函数说明 / Function Description]
+// 中文: RS ImuData 转 vector<DynalgoImuSample>（一个 ACCEL + 一个 GYRO）
+// English: RS ImuData to vector<DynalgoImuSample> (one ACCEL + one GYRO)
 inline std::vector<DynalgoImuSample> rsImuToNioSamples(const std::shared_ptr<robosense::lidar::ImuData>& imu) {
     std::vector<DynalgoImuSample> samples;
     auto tsUs = static_cast<uint64_t>(imu->timestamp * 1e6);
