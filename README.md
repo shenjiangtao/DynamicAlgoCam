@@ -1,12 +1,14 @@
 # DynamicAlgoCam
 
-DynamicAlgoCam 表示相机驱动的动态算法加载框架。DynamicAlgoCam 是一个基于 双目相机 和 激光雷达相机 的动态算法加载平台，旨在为多种任务提供统一的感知与执行框架。
+DynamicAlgoCam is a camera-driven dynamic algorithm loading framework. It provides a unified perception and execution platform built on stereo cameras and LiDAR cameras, supporting modular algorithm loading, runtime task switching, and visual-LiDAR fusion.
 
-目标包括：
+**Key capabilities:**
 
-- 提供 模块化算法加载机制，支持在运行时切换或添加任务算法。
-- 利用 视觉 + 激光雷达融合，实现高精度目标检测与环境感知。
-- 面向 特定任务场景（如灭蚊、除草、巡检），快速部署与验证。
+- Modular algorithm loading with runtime task switching
+- Visual + LiDAR fusion for high-precision target detection and environment perception
+- Rapid deployment and validation for domain-specific tasks (e.g., mosquito control, weeding, inspection)
+- Event-driven recording with IMU-aware depth alignment
+- Perceive → Locate → Estimate → Control engagement loop (Phase C)
 
 ## Supported Devices
 
@@ -21,23 +23,162 @@ See [docs/device_comparison.md](docs/device_comparison.md) for detailed hardware
 
 ## Architecture
 
+DynamicAlgoCam uses a **layered architecture** with strict downward-only dependencies. Vendor SDK headers are isolated in the driver layer; all upper layers remain SDK-agnostic.
+
 ```
-┌─────────────────────────────────────────────────┐
-│  dynamic_algo_cam  (executable)                │
-├─────────────────────────────────────────────────┤
-│  dynalgo_capture         (capture logic + encoding) │
-├─────────────────────────────────────────────────┤
-│  dynalgo_drivers         (vendor SDK adapters)       │
-├─────────────────────────────────────────────────┤
-│  dynalgo_core            (SDK-neutral types)        │
-└─────────────────────────────────────────────────┘
-  + dynalgo_opencv_plugin (optional, if OpenCV found)
-  + app/models/         (algorithm / inference models, Python; NOT built by CMake)
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                              dynamic_algo_cam (executable)                           │
+│                                                                                      │
+│  Entry point: CLI parsing → device discovery → session setup → frame pipeline →      │
+│  optional engagement loop (Phase C) → graceful shutdown on SIGINT/SIGTERM            │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                              Algorithm Layer (Phase C)                               │
+│                          ┌─────────────────────────────────┐                         │
+│  dynalgo_algo            │  DynalgoEngagementLoop          │  --engage-model         │
+│  (static lib)            │  ┌───────────┐ ┌───────────┐   │  --engage-actuator      │
+│                          │  │ IDLE      │→│ LOCKING   │   │                         │
+│                          │  └───────────┘ └───────────┘   │  State machine:         │
+│                          │       ↑               ↓         │  perceive → locate →    │
+│                          │  ┌───────────┐ ┌───────────┐   │  estimate → control     │
+│                          │  │ LOST      │←│ FIRING    │   │                         │
+│                          │  └───────────┘ └───────────┘   │  Thresholds:            │
+│                          │       ↑               ↓         │  LOCKING→TRACKING=3     │
+│                          │  ┌───────────┐ ┌───────────┐   │  TRACKING→LOST=5        │
+│                          │  │ IDLE      │←│ TRACKING  │   │  FIRING cooldown=1s     │
+│                          │  └───────────┘ └───────────┘   │                         │
+│                          └─────────────────────────────────┘                         │
+│                                                                                      │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────────┐     │
+│  │ TargetSelector        │  │ TrackBundle           │  │ DummyModelBackend     │     │
+│  │ (pickTarget)          │  │ (KF + 3D cache)       │  │ (DUMMY self-registrar)│     │
+│  │                       │  │                        │  │                        │     │
+│  │ Strategies:           │  │ 6D constant-velocity   │  │ Produces synthetic     │     │
+│  │ • HIGHEST_SCORE       │  │ Kalman filter          │  │ center-frame detection │     │
+│  │ • NEAREST_DEPTH       │  │ [cx,cy,w,h,vx,vy]     │  │ for dry-run testing    │     │
+│  │ • LARGEST_AREA        │  │ init/update/predict    │  │                        │     │
+│  └──────────────────────┘  └──────────────────────┘  └────────────────────────┘     │
+│                                                                                      │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────────┐     │
+│  │ EngagementFrameConsumer│ │ DynalgoModelBackend   │  │ DynalgoKalmanTracker  │     │
+│  │ (FrameConsumer)       │  │ (abstract interface)  │  │ (app/core)            │     │
+│  │                        │  │                        │  │                        │     │
+│  │ consume(shared_ptr     │  │ Types: NONE, DUMMY,   │  │ 6D KF [cx,cy,w,h,     │     │
+│  │   <DynalgoFrameSet>)   │  │ YOLOV8_PY,            │  │  vx,vy]               │     │
+│  │ → loop_->onFrame()     │  │ ONNXRUNTIME, TENSORRT │  │ init/update/predict   │     │
+│  └──────────────────────┘  └──────────────────────┘  └────────────────────────┘     │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                           Capture Layer (dynalgo_capture)                           │
+│                                                                                      │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌────────────────────────┐     │
+│  │ DynalgoCaptureSession │  │ DynalgoCaptureConfig  │  │ DynalgoFrameConsumer  │     │
+│  │                        │  │                        │  │ (abstract interface)  │     │
+│  │ • setupPipeline()      │  │ • CLI arg parsing      │  │                        │     │
+│  │ • depthIntrinsic()     │  │ • D2C profile selection│  │ consume(FrameSet)     │     │
+│  │ • depthScale()         │  │ • --engage-* options    │  │ stopTask()            │     │
+│  │ • addFrameConsumer()   │  │                        │  │                        │     │
+│  │ • setEngagementLoop()  │  │ DynalgoFrameQueue      │  │                        │     │
+│  └──────────────────────┘  │ DynalgoStreamTasks      │  └────────────────────────┘     │
+│                            │ DynalgoH264Encoder      │                                 │
+│  DynalgoSDLViewer          │ DynalgoStreamIO          │  Event-driven recording:       │
+│  DynalgoColorConvert       │ EventWindow              │  ENABLE_EVENT_SIM → EventSim   │
+│  (optional OpenCV plugin)  │ eventSink lambda         │                                │
+│                            └──────────────────────┘                                 │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                           Actuator Layer (dynalgo_actuators)                         │
+│                          ┌─────────────────────────────────┐                         │
+│  dynalgo_actuators       │  DynalgoActuator (abstract)     │  --engage-actuator      │
+│  (static lib)            │  ┌────────────────────────────┐ │                         │
+│                          │  │ config(): dryRun, device,  │ │  Types: NONE, DUMMY,    │
+│                          │  │ channel, ip, port, baud    │ │  LASER_GENERIC,         │
+│                          │  └────────────────────────────┘ │  GIMBAL_GENERIC          │
+│                          │                                  │                         │
+│                          │  DummyActuator (all no-op)       │  Safety: dryRun=true     │
+│                          │  self-registrar via              │  by default              │
+│                          │  registerActuator()              │                         │
+│                          └─────────────────────────────────┘                         │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                           Driver Layer (dynalgo_drivers)                             │
+│                          ┌─────────────────────────────────┐                         │
+│  dynalgo_drivers         │  DynalgoDevice (abstract)        │                         │
+│  (static lib)            │  DynalgoPipeline (abstract)      │                         │
+│                          │  DynalgoContext (abstract)        │                         │
+│                          │  DynalgoDriverFactory             │                         │
+│                          └─────────────────────────────────┘                         │
+│                                                                                      │
+│  ┌──────────────────────┐  ┌──────────────────────┐                                │
+│  │ Orbbec Adapter        │  │ RoboSense Adapter     │                                │
+│  │ (ENABLE_ORBBEC)       │  │ (ENABLE_RS_AC1)       │                                │
+│  │                        │  │                        │                                │
+│  │ DynalgoObDevice       │  │ DynalgoRsDevice       │                                │
+│  │ DynalgoObAdapter      │  │ DynalgoRsAdapter      │                                │
+│  │ DynalgoObFrameAdapter │  │ DynalgoRsFrameAdapter │                                │
+│  │ DynalgoObSpec         │  │ DynalgoRsSpec         │                                │
+│  │ DynalgoObValidator    │  │ DynalgoRsValidator    │                                │
+│  └──────────────────────┘  └──────────────────────┘                                │
+│                                                                                      │
+│  Vendor SDK isolation: OrbbecSDK headers → app/driver/orbbec/ only                  │
+│                        rs_driver headers  → app/driver/robosense/ only              │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                            Core Layer (dynalgo_core)                                 │
+│                          ┌─────────────────────────────────┐                         │
+│  dynalgo_core            │  SDK-neutral types & interfaces  │  No vendor deps         │
+│  (static lib)            │  No OrbbecSDK / rs_driver        │                         │
+│                          └─────────────────────────────────┘                         │
+│                                                                                      │
+│  Types:  DynalgoFrameType, DynalgoFormat, DynalgoIntrinsic, DynalgoAlignMode        │
+│  Frames: DynalgoFrame, DynalgoFrameSet (getFrame accessor)                          │
+│  Abstracts: DynalgoDevice, DynalgoPipeline, DynalgoContext                          │
+│  Model: DynalgoModelBackend, DynalgoModelConfig, DynalgoDetectionResult             │
+│  Actuator: DynalgoActuator, DynalgoActuatorConfig, DynalgoActuatorType              │
+│  Factory: createModelBackend(), createActuator() (self-registration)                │
+│  Infra: DYNALGO_LOG_*, signalHandler(), mkdirp(), getTimestampMs()                  │
+│  Algo: DynalgoKalmanTracker (6D KF), detectionCenterToCamera3D()                   │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+
+Vendor SDKs (NOT part of C++ build — linked at build time):
+  vendors/OrbbecSDK/   →  libOrbbecSDK.so   (linked into dynalgo_drivers)
+  vendors/RoboSense/   →  libusb / libuvc   (statically linked into dynalgo_drivers)
+
+Optional plugins (conditionally built):
+  dynalgo_opencv_plugin →  dynalgo_capture + dynalgo_core + OpenCV  (if OpenCV found)
+  app/models/           →  YOLOv8 (Python, NOT built by CMake, GPL-3.0 license)
 ```
 
-Vendor SDK headers (`libobsensor/`, `rs_driver/`) are **only** allowed in `app/driver/`. All other layers are SDK-agnostic, communicating through abstract `DynalgoDevice` / `DynalgoPipeline` / `DynalgoContext` interfaces.
+### Design Principles
 
-Algorithm / inference model packages live under `app/models/<name>/` (e.g. `app/models/yolov8/`). These are standalone Python packages and are **not** part of the C++ build — see [`app/models/README.md`](app/models/README.md) for the layout convention and license disclosure.
+- **Strict layering**: Dependencies flow downward only. Upper layers never reference vendor SDKs directly.
+- **Vendor isolation**: OrbbecSDK and rs_driver headers are confined to `app/driver/<vendor>/`. All other code communicates through abstract `DynalgoDevice` / `DynalgoPipeline` / `DynalgoContext` interfaces.
+- **Self-registration**: Model backends and actuators register themselves at static-init time via `registerModelBackend()` / `registerActuator()`. New backends only need to be added to the appropriate static lib's CMakeLists.txt.
+- **Dry-run safety**: Actuator `dryRun=true` by default. All control actions are no-ops until explicitly enabled.
+
+### Data Flow
+
+```
+Device (USB)
+    │
+    ▼
+Driver Layer (Orbbec / RoboSense)
+    │  raw frames: COLOR, DEPTH, IR_L, IR_R, IMU, POINT
+    ▼
+Capture Session
+    │  ├── FrameQueue → StreamTasks → H264Encoder → StreamIO (file)
+    │  ├── SDLViewer (preview)
+    │  └── FrameConsumer chain (optional)
+    │         │
+    │         ▼
+    │    EngagementFrameConsumer
+    │         │
+    │         ▼
+    │    EngagementLoop.onFrame()
+    │         │
+    │         ├── TargetSelector.pickTarget(detections, strategy)
+    │         ├── TrackBundle.init/update (Kalman filter)
+    │         ├── detectionCenterToCamera3D() → 3D fix
+    │         └── Actuator.fire() (if state == FIRING)
+    │
+    ▼
+Output Files (.h264, .raw, .txt, .csv)
+```
 
 ## Build
 
@@ -46,11 +187,12 @@ Algorithm / inference model packages live under `app/models/<name>/` (e.g. `app/
 | Dependency | Required | Source |
 |---|---|---|
 | CMake >= 3.10 | Yes | System package |
-| C++14 compiler | Yes | GCC / Clang |
+| C++14 compiler (C++17 for algo) | Yes | GCC / Clang |
 | FFmpeg (libavcodec, libavutil, libswscale, libavformat, libswresample) | Yes | pkg-config |
 | SDL2 | Yes | pkg-config |
 | pthreads | Yes | System |
 | OpenCV | No | Optional — enables `dynalgo_opencv_plugin` |
+| GTest | No | Optional — enables `tests/` (if `BUILD_TESTS=ON`) |
 
 ### Vendor SDK Options
 
@@ -78,7 +220,7 @@ cmake .. -DENABLE_ORBBEC=OFF
 cmake --build . -j$(nproc)
 ```
 
-The executable is `buil./dynamic_algo_cam`. Install with `cmake --install .` (installs to `bin/`).
+The executable is `build/bin/dynamic_algo_cam`. Install with `cmake --install .` (installs to `bin/`).
 
 ### Runtime Library Path
 
@@ -109,6 +251,12 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 
 # Disable D2C fusion output
 ./dynamic_algo_cam --no-fusion
+
+# Dry-run engagement loop (DUMMY model + DUMMY actuator)
+./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --no-show
+
+# Dry-run with synthetic events
+./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim
 ```
 
 ### CLI Parameters
@@ -122,6 +270,9 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 | `--depth-max M` | 5.0 | Max depth for jet colormap (meters) |
 | `--no-fusion` | off | Skip D2C fusion output |
 | `--no-show` | off | Disable SDL preview window |
+| `--engage-model TYPE` | (empty) | Model backend: NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT |
+| `--engage-actuator TYPE` | (empty) | Actuator backend: NONE, DUMMY, LASER_GENERIC, GIMBAL_GENERIC |
+| `--engage-model-path PATH` | (empty) | Path to model weights (used by non-DUMMY backends) |
 | `--help` | — | Show help |
 
 ### Output Structure
@@ -204,6 +355,8 @@ ffmpeg -y -fflags +genpts -r 30 -i <file>.h264 -c copy output.mp4
 | [docs/dynamic_algo_cam/troubleshooting.md](docs/dynamic_algo_cam/troubleshooting.md) | Troubleshooting reference |
 | [docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md](docs/dynamic_algo_cam/dynamic_algo_cam_technical_reference.md) | Technical reference (architecture, algorithms, data formats) |
 | [docs/dynamic_algo_cam/models_overview.md](docs/dynamic_algo_cam/models_overview.md) | Algorithm / inference model packages under `app/models/` (layout, usage, license disclosures) |
+| [docs/dynamic_algo_cam/DEVELOPMENT_PLAN.md](docs/dynamic_algo_cam/DEVELOPMENT_PLAN.md) | Development plan (Phase A–D milestones) |
+| [docs/dynamic_algo_cam/IMPLEMENTATION_TASKS.md](docs/dynamic_algo_cam/IMPLEMENTATION_TASKS.md) | Implementation task checklist with commit hashes |
 
 ## Packaging
 
