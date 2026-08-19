@@ -268,7 +268,7 @@
 
 - [x] **M1** Phase A 完成 — commit hash: `ae23b1d` — 验证 `nm build/lib/libnio_core.a | grep createActuator` 命中（**注意**：重命名工程后此命令演变为 `nm build/lib/libdynalgo_core.a | grep createActuator`；详见 §M6 重命名记录）
 - [x] **M2** Phase B 完成 — commit hash: `3bc3c4d` — 验证 GTest skip 或通过，header install 列表更新
-- [~] **M3** Phase C 完成 — commit hash: `________` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列（构建通过，待运行时环境验证）
+- [~] **M3** Phase C 完成 — commit hash: `6cb8460` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列（构建通过，待运行时环境验证）
 - [ ] **M4** Phase D 完成 — commit hash: `________` — 验证全量构建 + `--help` diff
 - [ ] **M5** 全工程验证：默认行为与 `85a193c` 一致 — 验证 commit 链清晰对应清单项
 - [x] **M6** 工程命名重构 `nio::` → `dynalgo::` 完成 — commit hash: `25be197` — 验证见下方"T1 工程命名重构"段
@@ -282,7 +282,7 @@
 | A0-A5 | `ae23b1d` | 2026-08-14 | Phase A 实现 + 验证完成；commit `ae23b1d` 已 push 至 origin/main（`85a193c..ae23b1d`） |
 | T1 工程命名重构 | `25be197` | 2026-08-14 | 见下方"T1 工程命名重构"段；commit `25be197` 已 push 至 origin/main（`532f7ad..25be197`） |
 | B0-B3 (Phase B 3D 反投影) | `3bc3c4d` | 2026-08-14 | Phase B 实现 + 验证完成；commit `3bc3c4d` 已 push 至 origin/main（`648ddd3..3bc3c4d`） |
-| C0-C4 (Phase C 闭环编排) | `________` | 2026-08-19 | Phase C 实现完成（TargetSelector, TrackBundle, EngagementLoop, DummyModelBackend, EngagementFrameConsumer, CLI wiring），全量构建通过；commit hash 待 push 后回填 |
+| C0-C4 (Phase C 闭环编排) | `6cb8460` | 2026-08-19 | Phase C 实现完成（TargetSelector, TrackBundle, EngagementLoop, DummyModelBackend, EngagementFrameConsumer, CLI wiring），全量构建通过 |
 
 ---
 
