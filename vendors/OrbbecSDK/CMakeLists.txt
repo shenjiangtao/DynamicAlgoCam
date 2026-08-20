@@ -11,7 +11,7 @@ else()
     message(STATUS "Using default SDK library name: ${OB_SDK_LIB_NAME}")
 endif()
 
-project(${OB_SDK_LIB_NAME} VERSION 2.8.6 LANGUAGES CXX C)
+project(${OB_SDK_LIB_NAME} VERSION 2.9.3 LANGUAGES CXX C)
 
 # Check OB_SDK_LIB_NAME and set OB_BUILD_OEM accordingly
 if(${OB_SDK_LIB_NAME} STREQUAL "OrbbecSDK")
@@ -50,7 +50,7 @@ include(cmake/macro.cmake)
 # set compiler flags
 include(cmake/compiler_flags.cmake)
 
-# configure platform-specific settings（contains platform-specific compiler flags）
+# configure platform-specific settings (contains platform-specific compiler flags)
 if(ANDROID_NDK_TOOLCHAIN_INCLUDED)
     include(cmake/android_config.cmake)
 elseif(WIN32)
@@ -95,6 +95,36 @@ if(OB_INSTALL_EXAMPLES_SOURCE AND OB_IS_MAIN_PROJECT)
             endif()
         endif()
     endif()
+endif()
+
+# Bundle license notices into the installed package so binary distributions keep
+# the SDK's own MIT license and the original license text of every bundled
+# third-party library (libusb, live555, libjpeg, libyuv, spdlog, ...). This runs
+# only for standalone SDK packaging; when the SDK is embedded into another project
+# as source, the host project is responsible for collecting these notices.
+if(OB_IS_MAIN_PROJECT AND OB_INSTALL_LICENSES)
+    if(EXISTS ${OB_PROJECT_ROOT_DIR}/LICENSE.txt)
+        install(FILES ${OB_PROJECT_ROOT_DIR}/LICENSE.txt DESTINATION .)
+    endif()
+    if(EXISTS ${OB_3RDPARTY_DIR}/readme.md)
+        install(FILES ${OB_3RDPARTY_DIR}/readme.md DESTINATION licenses RENAME THIRD_PARTY_LICENSES.md)
+    endif()
+    # Collect each library's actual license file (one level per library), avoiding the
+    # empty directories and stray files that install(DIRECTORY ... FILES_MATCHING) leaves behind.
+    file(GLOB _ob_3rdparty_libs RELATIVE ${OB_3RDPARTY_DIR} ${OB_3RDPARTY_DIR}/*)
+    foreach(_lib ${_ob_3rdparty_libs})
+        if(IS_DIRECTORY ${OB_3RDPARTY_DIR}/${_lib})
+            file(GLOB_RECURSE _lib_lics
+                 ${OB_3RDPARTY_DIR}/${_lib}/LICENSE
+                 ${OB_3RDPARTY_DIR}/${_lib}/LICENSE.txt
+                 ${OB_3RDPARTY_DIR}/${_lib}/LICENSE.md
+                 ${OB_3RDPARTY_DIR}/${_lib}/COPYING
+                 ${OB_3RDPARTY_DIR}/${_lib}/COPYING.LESSER)
+            foreach(_lic ${_lib_lics})
+                install(FILES ${_lic} DESTINATION licenses/${_lib})
+            endforeach()
+        endif()
+    endforeach()
 endif()
 
 if(OB_BUILD_TESTS)

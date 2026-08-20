@@ -24,7 +24,11 @@ const std::string &GlobalTimestampFitter::GetCurrentSN() const {
 }
 
 GlobalTimestampFitter::GlobalTimestampFitter(IDevice *owner)
-    : DeviceComponentBase(owner), enable_(false), sampleLoopExit_(false), linearFuncParam_({ 0, 0, 0, 0 }), maxValidRtt_(MAX_VALID_RTT) {
+    : DeviceComponentBase(owner), enable_(false), sampleLoopExit_(false), linearFuncParam_({ 0, 0, 0, 0, 0 }), maxValidRtt_(MAX_VALID_RTT) {
+    // RttWindow uses an adaptive floor that scales with the observed RTT median,
+    // so no per-transport (USB/Ethernet/GMSL) tuning is needed here.
+
+    // config
     std::string deviceName = utils::string::removeSpace(owner->getInfo()->name_);
     auto        envConfig  = EnvConfig::getInstance();
     int         value      = 0;
@@ -52,6 +56,14 @@ GlobalTimestampFitter::GlobalTimestampFitter(IDevice *owner)
             }
         });
     }
+    // PTP clock sync enable
+    if(propServer->isPropertySupported(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+        propServer->registerAccessCallback(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL, [&](uint32_t, const uint8_t *, size_t, PropertyOperationType operationType) {
+            if(operationType == PROP_OP_WRITE) {
+                ptpActive_ = propServer->getPropertyValueT<bool>(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL, PROP_ACCESS_INTERNAL);
+            }
+        });
+    }
 
     LOG_DEBUG("GlobalTimestampFitter created: maxQueueSize_={}, refreshIntervalMsec_={}", maxQueueSize_, refreshIntervalMsec_);
 }
@@ -62,18 +74,22 @@ GlobalTimestampFitter::~GlobalTimestampFitter() {
     if(sampleThread_.joinable()) {
         sampleThread_.join();
     }
+    rttWindow_.clear();
 }
 
 LinearFuncParam GlobalTimestampFitter::getLinearFuncParam() {
     std::unique_lock<std::mutex> lock(linearFuncParamMutex_);
-    if(lastCheckDataY != linearFuncParam_.checkDataY) {
-        lastCheckDataY = linearFuncParam_.checkDataY;
-        auto &param    = linearFuncParam_;
-        LOG_DEBUG("GetLinearFuncParam: coefficientA: {}, constantB: {}, checkDataX: {}, checkDataY: {}", param.coefficientA, param.constantB, param.checkDataX,
-                  param.checkDataY);
+    if(lastSysTime_ != linearFuncParam_.sysTime) {
+        lastSysTime_ = linearFuncParam_.sysTime;
+        auto &param  = linearFuncParam_;
+        LOG_DEBUG("GetLinearFuncParam: A={}, ref=({},{}), cur=({},{})", param.coefficientA, param.refDevTime, param.refSysTime, param.devTime, param.sysTime);
     }
 
     return linearFuncParam_;
+}
+
+bool GlobalTimestampFitter::isPtpActive() const {
+    return ptpActive_.load();
 }
 
 void GlobalTimestampFitter::reFitting(bool async) {
@@ -85,11 +101,18 @@ void GlobalTimestampFitter::reFitting(bool async) {
         std::unique_lock<std::mutex> lock(sampleMutex_);
         needCalculation_ = true;
         samplingQueue_.clear();
-        sampleCondVar_.notify_one();
+        // Do NOT notify here: avoid fittingLoop racing with ensureFitting during bootstrap.
     }
 
     if(!async) {
         ensureFitting();
+        needBootstrap_ = true;
+        sampleCondVar_.notify_one();
+    }
+    else {
+        // No one does bootstrap on the calling thread; wake fittingLoop to do it.
+        needBootstrap_ = true;
+        sampleCondVar_.notify_one();
     }
 }
 
@@ -129,8 +152,15 @@ void GlobalTimestampFitter::enable(bool en) {
         if(sampleThread_.joinable()) {
             sampleThread_.join();
         }
-        std::unique_lock<std::mutex> lock(sampleMutex_);
-        samplingQueue_.clear();
+        {
+            std::unique_lock<std::mutex> lock(sampleMutex_);
+            samplingQueue_.clear();
+            rttWindow_.clear();
+        }
+        {
+            std::unique_lock<std::mutex> lock(linearFuncParamMutex_);
+            linearFuncParam_ = { 0, 0, 0, 0, 0 };
+        }
     }
     LOG_DEBUG("GlobalTimestampFitter@{} enable state changed: {}", reinterpret_cast<uint64_t>(this), enable_);
 }
@@ -141,13 +171,17 @@ bool GlobalTimestampFitter::isEnabled() const {
 
 void GlobalTimestampFitter::calcLinearParam(uint64_t sysTimestamp, uint64_t devTimestamp) {
     // Use the first set of data as offset to prevent overflow during calculation
-    uint64_t offset_x  = 0;
-    uint64_t offset_y  = 0;
-    double   Ex        = 0;
-    double   Exx       = 0;
-    double   Ey        = 0;
-    double   Exy       = 0;
-    size_t   queueSize = 0;
+    double offset_x      = 0;
+    double offset_y      = 0;
+    double Exx           = 0;
+    double Exy           = 0;
+    double Eyy           = 0;
+    double W             = 0;
+    double meanDx        = 0;
+    double meanDy        = 0;
+    size_t queueSize     = 0;
+    double residualRmsUs = 0;
+
     {
         std::unique_lock<std::mutex> lock(sampleMutex_);
 
@@ -155,93 +189,267 @@ void GlobalTimestampFitter::calcLinearParam(uint64_t sysTimestamp, uint64_t devT
             return;
         }
 
-        auto it = samplingQueue_.begin();
-
-        offset_x  = samplingQueue_.front().deviceTimestamp;
-        offset_y  = samplingQueue_.front().systemTimestamp;
+        // 1. Use the first element as a base offset to prevent precision loss
+        // when converting large uint64_t to double.
+        offset_x  = (double)(samplingQueue_.front().deviceTimestamp);
+        offset_y  = (double)(samplingQueue_.front().systemTimestamp);
         queueSize = samplingQueue_.size();
 
-        while(it != samplingQueue_.end()) {
-            auto systemTimestamp = it->systemTimestamp - offset_y;
-            auto deviceTimestamp = it->deviceTimestamp - offset_x;
-            Ex += deviceTimestamp;
-            Exx += deviceTimestamp * deviceTimestamp;
-            Ey += systemTimestamp;
-            Exy += deviceTimestamp * systemTimestamp;
-            it++;
+        // Exponential decay weight: w_i = exp(-lambda * age_ms)
+        // age_ms = newest device timestamp - sample device timestamp (device clock in ms)
+        // lambda = ln(2) / (halfLife * 1000); when halfLife == 0, all weights = 1 (unweighted)
+        // Use equal weights during early convergence (queueSize < MATURE_QUEUE_SIZE) to avoid
+        // staircase artifacts; switch to EWLR only after enough samples are accumulated.
+        double newestDevTs      = (double)samplingQueue_.back().deviceTimestamp;
+        double effective_lambda = (queueSize >= MATURE_QUEUE_SIZE && decayHalfLifeSec_ > 0.0) ? std::log(2.0) / (decayHalfLifeSec_ * 1000.0) : 0.0;
+
+        // 2. First pass: compute weighted means.
+        double sumWdx = 0.0, sumWdy = 0.0;
+        for(const auto &item: samplingQueue_) {
+            double age_ms = newestDevTs - (double)item.deviceTimestamp;
+            double w      = (effective_lambda > 0.0) ? std::exp(-effective_lambda * age_ms) : 1.0;
+            W += w;
+            sumWdx += w * (double)(item.deviceTimestamp - offset_x);
+            sumWdy += w * (double)(item.systemTimestamp - offset_y);
+        }
+        meanDx = sumWdx / W;
+        meanDy = sumWdy / W;
+
+        // 3. Second pass: weighted sums of squares and cross-products.
+        for(const auto &item: samplingQueue_) {
+            double age_ms = newestDevTs - (double)item.deviceTimestamp;
+            double w      = (effective_lambda > 0.0) ? std::exp(-effective_lambda * age_ms) : 1.0;
+            double dx     = ((double)(item.deviceTimestamp - offset_x)) - meanDx;
+            double dy     = ((double)(item.systemTimestamp - offset_y)) - meanDy;
+            Exx += w * dx * dx;
+            Exy += w * dx * dy;
+            Eyy += w * dy * dy;
+        }
+
+        if(std::abs(Exx) < 1e-9) {
+            LOG_DEBUG("LinearParam update error! QueueSize: {}", queueSize);
+            return;
         }
         needCalculation_ = false;
+
+        // Compute weighted residual RMS (in us) to assess fit quality:
+        //   SSres = Σw*(dy - A*dx)^2 = Eyy - A*Exy   (since A = Exy/Exx)
+        //   rms   = sqrt(SSres / W)
+        // This is device-frequency independent because dy is in microseconds.
+        double slope = Exy / Exx;
+        double SSres = Eyy - slope * Exy;
+        if(SSres < 0.0) {
+            SSres = 0.0;  // guard against tiny negative due to floating-point error
+        }
+        residualRmsUs = std::sqrt(SSres / W);
     }
 
     {
         std::unique_lock<std::mutex> linearFuncParamLock(linearFuncParamMutex_);
-        // Linear regression to find a and b: y=ax+b
-        linearFuncParam_.coefficientA = (Exy * queueSize - Ex * Ey) / (queueSize * Exx - Ex * Ex);
-        linearFuncParam_.constantB    = (Exx * Ey - Exy * Ex) / (queueSize * Exx - Ex * Ex) + offset_y - linearFuncParam_.coefficientA * offset_x;
-        linearFuncParam_.checkDataX   = devTimestamp;
-        linearFuncParam_.checkDataY   = sysTimestamp;
+        double                       new_slope = Exy / Exx;
+        double                       avgX      = meanDx + offset_x;
+        double                       avgY      = meanDy + offset_y;
 
-        // auto fixDevTsp = (double)devTime *linearFuncParam_.coefficientA + linearFuncParam_.constantB;
-        // auto fixDiff   = fixDevTsp -sysTspUsec;
-        // LOG_TRACE("a = {}, b = {}, fix={}, diff={}", linearFuncParam_.coefficientA, linearFuncParam_.constantB, fixDevTsp, fixDiff);
+        linearFuncParam_.coefficientA = new_slope;
+        // OLS intercept (avgY - new_slope * avgX) is not stored: consumers always evaluate
+        // via the point-slope form anchored at (refDevTime, refSysTime), which avoids the
+        // catastrophic cancellation of subtracting two ~1e15 numbers.
+        linearFuncParam_.refDevTime = (uint64_t)avgX;
+        linearFuncParam_.refSysTime = (uint64_t)avgY;
+        linearFuncParam_.devTime    = devTimestamp;
+        linearFuncParam_.sysTime    = sysTimestamp;
+        // residualRmsUs: diagnostic only; drift is handled in updateSampleQueue.
 
         auto &param = linearFuncParam_;
-        LOG_DEBUG("LinearParam update! QueueSize: {}, coefficientA: {}, constantB: {}, checkDataX: {}, checkDataY: {}", queueSize, param.coefficientA,
-                  param.constantB, param.checkDataX, param.checkDataY);
-        linearFuncParamCondVar_.notify_all();
+        LOG_DEBUG("LinearParam update! N={}, A={}, ref=({},{}), cur=({},{}), rmsUs={:.1f}", queueSize, param.coefficientA, param.refDevTime, param.refSysTime,
+                  param.devTime, param.sysTime, residualRmsUs);
     }
+    // notify
+    linearFuncParamCondVar_.notify_all();
 }
 
-bool GlobalTimestampFitter::ensureFitting() {
-    uint64_t     sysTspUsec = 0;
+void GlobalTimestampFitter::ensureFitting() {
+    OBTimeSample timeSample{};
     OBDeviceTime devTime{};
     bool         calc = false;
 
-    {
-        auto    owner          = getOwner();
-        auto    propertyServer = owner->getPropertyServer();
-        uint8_t count          = 0;
+    // Hold samplingOpMutex_ for the whole bootstrap so the background fittingLoop
+    // cannot interleave its own sampling/queue updates with ours.
+    std::lock_guard<std::mutex> opLock(samplingOpMutex_);
 
-        sampleCondVar_.notify_all();
+    {
+        uint8_t                      count = 0;
         std::unique_lock<std::mutex> lock(sampleMutex_);
         while(samplingQueue_.size() < 6 && count < 6) {
             ++count;
-            auto sysTsp1Usec = utils::getNowTimesUs();
-            devTime          = propertyServer->getStructureDataT<OBDeviceTime>(OB_STRUCT_DEVICE_TIME);
-            auto sysTsp2Usec = utils::getNowTimesUs();
-            sysTspUsec       = (sysTsp2Usec + sysTsp1Usec) / 2;
-            devTime.rtt      = sysTsp2Usec - sysTsp1Usec;
-            if(devTime.rtt > maxValidRtt_) {
-                LOG_DEBUG("Get device time rtt is too large! rtt={}", devTime.rtt);
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            // Drop the lock during the blocking I/O so other threads (e.g. reFitting) can progress.
+            lock.unlock();
+            bool ok = acquireSample(timeSample, devTime);
+            lock.lock();
+            if(!ok) {
                 continue;
             }
-            LOG_DEBUG("sys={}, dev={}, rtt={}", sysTspUsec, devTime.time, devTime.rtt);
-
-            // Clearing and refitting when the timestamp is out of order
-            if(!samplingQueue_.empty()) {
-                auto last = samplingQueue_.back().deviceTimestamp;
-                if(devTime.time < last) {
-                    LOG_DEBUG("Device time is out of order, clear queue. Last={}, current={}", last, devTime.time);
-                    samplingQueue_.clear();
-                }
+            if(!samplingQueue_.empty() && (devTime.time < samplingQueue_.back().deviceTimestamp)) {
+                samplingQueue_.clear();
             }
             needCalculation_ = true;
             calc             = true;
-            samplingQueue_.push_back({ sysTspUsec, devTime.time });
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            samplingQueue_.push_back({ timeSample.time, devTime.time });
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));  // short interval
         }
         if(samplingQueue_.size() < 4) {
             LOG_WARN("Error, sampling queue size is too small: {}", samplingQueue_.size());
-            return false;
+            return;
         }
     }
 
     if(calc) {
-        calcLinearParam(sysTspUsec, devTime.time);
+        calcLinearParam(timeSample.time, devTime.time);
+    }
+}
+
+bool GlobalTimestampFitter::acquireSample(OBTimeSample &timeSample, OBDeviceTime &devTime) {
+    try {
+        auto                  owner          = getOwner();
+        auto                  propertyServer = owner->getPropertyServer();
+        utils::TransferTiming timing;
+        devTime    = propertyServer->getStructureDataT<OBDeviceTime>(OB_STRUCT_DEVICE_TIME, PROP_ACCESS_INTERNAL, &timing);
+        timeSample = rttWindow_.estimate(timing.send.startUs, timing.send.endUs);
+        if(timeSample.rtt > maxValidRtt_) {
+            LOG_DEBUG("Get device time rtt is too large! rtt={}", timeSample.rtt);
+            return false;
+        }
+        LOG_DEBUG("start={}, steady={}, dev={}, rtt={}, rttRef={}, rttReal={}", timing.send.startUs, timeSample.time, devTime.time, timeSample.rtt,
+                  timeSample.rttRef, timing.recv.endUs - timing.send.startUs);
+        return true;
+    }
+    catch(...) {
+        return false;
+    }
+}
+
+bool GlobalTimestampFitter::updateSampleQueue(const OBTimeSample &timeSample, const OBDeviceTime &devTime) {
+    // Snapshot current fit and compare residual jump against the latest accepted sample.
+    // Absolute residual drift is expected to be handled by EWLR + calculator-side EMA; only
+    // abrupt discontinuities (e.g. device time retimed by PTP or timestamp jumps) rebuild the queue.
+    double coefficientA      = 0;
+    double refDevTime        = 0;
+    double refSysTime        = 0;
+    double residualUs        = 0;
+    double residualJumpUs    = 0;
+    bool   haveDiscontinuity = false;
+    {
+        std::unique_lock<std::mutex> lock(linearFuncParamMutex_);
+        if(linearFuncParam_.coefficientA > 0) {
+            coefficientA = linearFuncParam_.coefficientA;
+            refDevTime   = (double)linearFuncParam_.refDevTime;
+            refSysTime   = (double)linearFuncParam_.refSysTime;
+        }
+    }
+    if(coefficientA > 0) {
+        std::unique_lock<std::mutex> lock(sampleMutex_);
+        auto                         size = samplingQueue_.size();
+        if(size >= MATURE_QUEUE_SIZE) {
+            double predicted = refSysTime + coefficientA * ((double)devTime.time - refDevTime);
+            residualUs       = (double)timeSample.time - predicted;
+
+            const auto &lastSample     = samplingQueue_.back();
+            double      lastPredicted  = refSysTime + coefficientA * ((double)lastSample.deviceTimestamp - refDevTime);
+            double      lastResidualUs = (double)lastSample.systemTimestamp - lastPredicted;
+            residualJumpUs             = residualUs - lastResidualUs;
+            haveDiscontinuity          = std::abs(residualJumpUs) > (double)RESIDUAL_JUMP_THRESHOLD_US;
+        }
     }
 
-    return true;
+    // Discontinuity suspected: collect REVERIFY_SAMPLES extra samples and classify each as agreeing
+    // (same residual jump direction from the pre-jump baseline) or normal. Decision is by vote.
+    if(haveDiscontinuity) {
+        bool sign = residualJumpUs > 0;
+        struct R {
+            OBTimeSample ts;
+            OBDeviceTime dt;
+            bool         agree;
+        };
+        std::vector<R> reverify;
+        reverify.reserve(REVERIFY_SAMPLES);
+
+        for(uint32_t i = 0; i < REVERIFY_SAMPLES; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(REVERIFY_INTERVAL_MS));
+            if(sampleLoopExit_.load()) {
+                return false;
+            }
+            OBTimeSample ts{};
+            OBDeviceTime dt{};
+            if(!acquireSample(ts, dt)) {
+                continue;
+            }
+            double predicted = refSysTime + coefficientA * ((double)dt.time - refDevTime);
+            double r         = (double)ts.time - predicted;
+            double jump      = r - (residualUs - residualJumpUs);
+            bool   agree     = (std::abs(jump) > (double)RESIDUAL_JUMP_THRESHOLD_US) && ((jump > 0) == sign);
+            reverify.push_back({ ts, dt, agree });
+        }
+
+        size_t agreeCount = 1;  // trigger itself counts
+        for(const auto &p: reverify) {
+            if(p.agree) {
+                ++agreeCount;
+            }
+        }
+        size_t totalCount = 1 + reverify.size();
+
+        if(agreeCount >= DRIFT_MIN_AGREE) {
+            // Real drift: rebuild queue from agreeing samples only. Mixing old samples (fit to a
+            // stale regime) with new ones biases the refit, so clear completely.
+            std::unique_lock<std::mutex> lock(sampleMutex_);
+            samplingQueue_.clear();
+            samplingQueue_.push_back({ timeSample.time, devTime.time });
+            for(const auto &p: reverify) {
+                if(p.agree) {
+                    samplingQueue_.push_back({ p.ts.time, p.dt.time });
+                }
+            }
+            needCalculation_ = true;
+            LOG_INFO("Timestamp discontinuity confirmed (residual jump {:.1f}ms, residual {:.1f}ms, {}/{} agree), queue rebuilt with {} fresh samples",
+                     residualJumpUs / 1000.0, residualUs / 1000.0, agreeCount, totalCount, samplingQueue_.size());
+            return samplingQueue_.size() >= 4;
+        }
+
+        // Trigger looks like noise. Fold non-agreeing reverify samples into the queue
+        // (perfectly normal samples, no point wasting the I/O).
+        std::unique_lock<std::mutex> lock(sampleMutex_);
+        size_t                       kept = 0;
+        for(const auto &p: reverify) {
+            if(p.agree)
+                continue;
+            if(samplingQueue_.size() >= maxQueueSize_) {
+                samplingQueue_.pop_front();
+            }
+            if(!samplingQueue_.empty() && (p.dt.time < samplingQueue_.back().deviceTimestamp)) {
+                samplingQueue_.clear();
+            }
+            samplingQueue_.push_back({ p.ts.time, p.dt.time });
+            ++kept;
+        }
+        if(kept > 0) {
+            needCalculation_ = true;
+        }
+        LOG_DEBUG("Residual jump {:.1f}ms not confirmed ({}/{} agree), trigger discarded, kept {} normal reverify samples", residualJumpUs / 1000.0, agreeCount,
+                  totalCount, kept);
+        return kept > 0 && samplingQueue_.size() >= 4;
+    }
+
+    // Normal path: enqueue with size cap and out-of-order protection.
+    std::unique_lock<std::mutex> lock(sampleMutex_);
+    if(samplingQueue_.size() >= maxQueueSize_) {
+        samplingQueue_.pop_front();
+    }
+    if(!samplingQueue_.empty() && (devTime.time < samplingQueue_.back().deviceTimestamp)) {
+        samplingQueue_.clear();
+    }
+    samplingQueue_.push_back({ timeSample.time, devTime.time });
+    needCalculation_ = true;
+    return samplingQueue_.size() >= 4;
 }
 
 void GlobalTimestampFitter::fittingLoop() {
@@ -249,83 +457,60 @@ void GlobalTimestampFitter::fittingLoop() {
 
     int retryCount = 0;
     do {
+        // Consume the bootstrap signal before acquiring samplingOpMutex_.
+        needBootstrap_ = false;
 
-        uint64_t     sysTspUsec = 0;
-        OBDeviceTime devTime;
+        OBTimeSample timeSample{};
+        OBDeviceTime devTime{};
 
-        try {
-            auto owner          = getOwner();
-            auto propertyServer = owner->getPropertyServer();
-
-            auto sysTsp1Usec = utils::getNowTimesUs();
-            devTime          = propertyServer->getStructureDataT<OBDeviceTime>(OB_STRUCT_DEVICE_TIME);
-            auto sysTsp2Usec = utils::getNowTimesUs();
-            sysTspUsec       = (sysTsp2Usec + sysTsp1Usec) / 2;
-            devTime.rtt      = sysTsp2Usec - sysTsp1Usec;
-            if(devTime.rtt > maxValidRtt_) {
-                LOG_DEBUG("Get device time rtt is too large! rtt={}", devTime.rtt);
-                THROW_INVALID_DATA_EXCEPTION("RTT too large");
-            }
-            LOG_DEBUG("sys={}, dev={}, rtt={}", sysTspUsec, devTime.time, devTime.rtt);
-        }
-        catch(...) {
-            retryCount++;
-            if(retryCount > MAX_RETRY_COUNT) {
-                std::unique_lock<std::mutex> lock(sampleMutex_);
-                auto                         interval = refreshIntervalMsec_;
-                if(samplingQueue_.size() >= 15) {
-                    interval *= 10;
-                }
-                LOG_DEBUG("The device time RTT has reached the upper limit several times. Sleep for {}ms and retry", interval);
-                sampleCondVar_.wait_for(lock, std::chrono::milliseconds(interval));
-                retryCount = 0;
-            }
-            else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            continue;
-        }
-
-        // Successfully obtain timestamp, the number of retries is reset to zero
-        retryCount = 0;
+        // Hold samplingOpMutex_ for one work cycle (sample + update + fit). Released
+        // before wait_for so ensureFitting() can preempt between cycles.
         {
-            std::unique_lock<std::mutex> lock(sampleMutex_);
-            if(samplingQueue_.size() > maxQueueSize_) {
-                samplingQueue_.pop_front();
-            }
+            std::lock_guard<std::mutex> opLock(samplingOpMutex_);
 
-            // Clearing and refitting when the timestamp is out of order
-            if(!samplingQueue_.empty() && (devTime.time < samplingQueue_.back().deviceTimestamp)) {
-                samplingQueue_.clear();
-            }
-
-            needCalculation_ = true;
-            samplingQueue_.push_back({ sysTspUsec, devTime.time });
-
-            if(samplingQueue_.size() < 4) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if(!acquireSample(timeSample, devTime)) {
+                retryCount++;
+                if(retryCount > MAX_RETRY_COUNT) {
+                    std::unique_lock<std::mutex> lock(sampleMutex_);
+                    auto                         interval = refreshIntervalMsec_;
+                    if(samplingQueue_.size() >= MATURE_QUEUE_SIZE) {
+                        interval *= 10;
+                    }
+                    LOG_DEBUG("The device time RTT has reached the upper limit several times. Sleep for {}ms and retry", interval);
+                    sampleCondVar_.wait_for(lock, std::chrono::milliseconds(interval));
+                    retryCount = 0;
+                }
+                else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
                 continue;
             }
-        }
+            retryCount = 0;
 
-        // calc linear param
-        calcLinearParam(sysTspUsec, devTime.time);
-
-        // wait for a moment
-        {
-            std::unique_lock<std::mutex> lock(sampleMutex_);
-            auto                         interval = refreshIntervalMsec_;
-            if(samplingQueue_.size() >= 15) {
-                interval *= 10;
+            // Unified queue update: drift detection + reverify + enqueue + clear.
+            if(updateSampleQueue(timeSample, devTime)) {
+                calcLinearParam(timeSample.time, devTime.time);
             }
-            sampleCondVar_.wait_for(lock, std::chrono::milliseconds(interval));
         }
 
+        // Wait. Fast path while bootstrapping (queue < 4); slower once we have enough samples.
+        std::unique_lock<std::mutex> lock(sampleMutex_);
+        uint32_t                     interval;
+        if(samplingQueue_.size() < 4) {
+            interval = 50;
+        }
+        else if(samplingQueue_.size() >= MATURE_QUEUE_SIZE) {
+            interval = refreshIntervalMsec_ * 10;
+        }
+        else {
+            interval = refreshIntervalMsec_;
+        }
+        sampleCondVar_.wait_for(lock, std::chrono::milliseconds(interval), [this]() { return sampleLoopExit_.load() || needBootstrap_.load(); });
+        if(needBootstrap_.load()) {
+            // Sleep briefly to ensure enough interval from reFitting for accurate sampling.
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
     } while(!sampleLoopExit_);
-
-    if(retryCount > MAX_RETRY_COUNT) {
-        LOG_ERROR("GlobalTimestampFitter fittingLoop retry count exceed max retry count!");
-    }
 
     LOG_DEBUG("GlobalTimestampFitter fittingLoop exit");
 }

@@ -4,8 +4,9 @@
 #include "PublicTypeHelper.hpp"
 #include "exception/ObException.hpp"
 
-#include <map>
 #include <algorithm>
+#include <cmath>
+#include <map>
 
 namespace libobsensor {
 namespace utils {
@@ -294,6 +295,14 @@ const std::map<uint32_t, OBFormat> fourccToOBFormat = {
     { fourCc2Int('R', 'W', '1', '6'), OB_FORMAT_RW16 }, { fourCc2Int('Y', 'C', 'C', '4'), OB_FORMAT_Y12C4 },
 };
 
+const std::map<OBIMUSampleRate, float> IMUSampleRate_Value_Map = {
+    { OB_SAMPLE_RATE_1_5625_HZ, 1.5625f }, { OB_SAMPLE_RATE_3_125_HZ, 3.125f }, { OB_SAMPLE_RATE_6_25_HZ, 6.25f }, { OB_SAMPLE_RATE_12_5_HZ, 12.5f },
+    { OB_SAMPLE_RATE_25_HZ, 25.f },        { OB_SAMPLE_RATE_50_HZ, 50.f },      { OB_SAMPLE_RATE_100_HZ, 100.f },  { OB_SAMPLE_RATE_200_HZ, 200.f },
+    { OB_SAMPLE_RATE_400_HZ, 400.f },      { OB_SAMPLE_RATE_500_HZ, 500.f },    { OB_SAMPLE_RATE_800_HZ, 800.f },  { OB_SAMPLE_RATE_1_KHZ, 1000.f },
+    { OB_SAMPLE_RATE_2_KHZ, 2000.f },      { OB_SAMPLE_RATE_4_KHZ, 4000.f },    { OB_SAMPLE_RATE_8_KHZ, 8000.f },  { OB_SAMPLE_RATE_16_KHZ, 16000.f },
+    { OB_SAMPLE_RATE_32_KHZ, 32000.f },
+};
+
 OBFormat uvcFourccToOBFormat(uint32_t fourcc) {
     auto it = fourccToOBFormat.find(fourcc);
     if(it != fourccToOBFormat.end()) {
@@ -311,44 +320,23 @@ uint32_t obFormatToUvcFourcc(OBFormat format) {
 }
 
 float mapIMUSampleRateToValue(OBIMUSampleRate rate) {
-    switch(rate) {
-    case OB_SAMPLE_RATE_1_5625_HZ:
-        return 1.5625f;
-    case OB_SAMPLE_RATE_3_125_HZ:
-        return 3.125f;
-    case OB_SAMPLE_RATE_6_25_HZ:
-        return 6.25f;
-    case OB_SAMPLE_RATE_12_5_HZ:
-        return 12.5f;
-    case OB_SAMPLE_RATE_25_HZ:
-        return 25.f;
-    case OB_SAMPLE_RATE_50_HZ:
-        return 50.f;
-    case OB_SAMPLE_RATE_100_HZ:
-        return 100.f;
-    case OB_SAMPLE_RATE_200_HZ:
-        return 200.f;
-    case OB_SAMPLE_RATE_500_HZ:
-        return 500.f;
-    case OB_SAMPLE_RATE_1_KHZ:
-        return 1000.f;
-    case OB_SAMPLE_RATE_2_KHZ:
-        return 2000.f;
-    case OB_SAMPLE_RATE_4_KHZ:
-        return 4000.f;
-    case OB_SAMPLE_RATE_8_KHZ:
-        return 8000.f;
-    case OB_SAMPLE_RATE_16_KHZ:
-        return 16000.f;
-    case OB_SAMPLE_RATE_32_KHZ:
-        return 32000.f;
-    case OB_SAMPLE_RATE_400_HZ:
-        return 400.f;
-    case OB_SAMPLE_RATE_800_HZ:
-        return 800.f;
-    default:
-        return 0.f;
+    auto it = IMUSampleRate_Value_Map.find(rate);
+    if(it != IMUSampleRate_Value_Map.end()) {
+        return it->second;
     }
+
+    return 0.f;
+}
+
+OBIMUSampleRate mapValueToIMUSampleRate(float value) {
+    for(const auto &entry: IMUSampleRate_Value_Map) {
+        const float rateValue = entry.second;
+        if(std::abs(rateValue - value) < 1e-5f) {
+            return entry.first;
+        }
+    }
+
+    return OB_SAMPLE_RATE_UNKNOWN;
 }
 
 float mapLiDARScanRateToValue(OBLiDARScanRate rate) {
@@ -420,6 +408,13 @@ const std::map<OBStreamType, std::string> Stream_Str_Map = { { OB_STREAM_UNKNOWN
                                                              { OB_STREAM_LIDAR, "LiDAR" },
                                                              { OB_STREAM_COLOR_LEFT, "Left Color" },
                                                              { OB_STREAM_COLOR_RIGHT, "Right Color" } };
+
+const std::map<OBAlignMode, std::string> AlignMode_Str_Map = {
+    { ALIGN_DISABLE, "Disable" },
+    { ALIGN_D2C_HW_MODE, "D2C(HW)" },
+    { ALIGN_D2C_SW_MODE, "D2C(SW)" },
+    { ALIGN_C2D_SW_MODE, "C2D(SW)" },
+};
 
 const std::map<OBIMUSampleRate, std::string> ImuRate_Str_Map = {
     { OB_SAMPLE_RATE_UNKNOWN, "UNKNOWN" }, { OB_SAMPLE_RATE_1_5625_HZ, "1_5625_HZ" }, { OB_SAMPLE_RATE_3_125_HZ, "3_125_HZ" },
@@ -556,6 +551,14 @@ const std::string &obSensorToStr(OBSensorType type) {
     return it->second;
 }
 
+const std::string &obAlignModeToStr(OBAlignMode type) {
+    auto it = AlignMode_Str_Map.find(type);
+    if(it == AlignMode_Str_Map.end()) {
+        THROW_INVALID_PARAM_EXCEPTION("Unregistered align mode");
+    }
+    return it->second;
+}
+
 const std::string &obImuRateToStr(OBIMUSampleRate type) {
     auto it = ImuRate_Str_Map.find(type);
     if(it == ImuRate_Str_Map.end()) {
@@ -631,6 +634,15 @@ OBSensorType strToOBSensor(const std::string str) {
         }
     }
     THROW_INVALID_PARAM_EXCEPTION("Unregistered sensor type");
+}
+
+OBAlignMode strToOBAlignMode(const std::string str) {
+    for(auto it = AlignMode_Str_Map.begin(); it != AlignMode_Str_Map.end(); ++it) {
+        if(it->second == str) {
+            return it->first;
+        }
+    }
+    THROW_INVALID_PARAM_EXCEPTION("Unregistered align mode");
 }
 
 OBIMUSampleRate strToObImuRate(const std::string str) {
@@ -920,6 +932,9 @@ std::ostream &operator<<(std::ostream &os, const OBExceptionType &type) {
     case OB_EXCEPTION_TYPE_RESOURCE_BUSY:
         os << "RESOURCE_BUSY";
         break;
+    case OB_EXCEPTION_TYPE_LICENSE_VERIFY_FAILED:
+        os << "LICENSE_VERIFY_FAILED";
+        break;
     default:
         os << "UNKNOWN";
         break;
@@ -1108,5 +1123,21 @@ std::ostream &operator<<(std::ostream &os, const OBDeviceAccessMode &mode) {
     }
 
     os << "(" << static_cast<uint32_t>(mode) << ")";
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const OBClockType &type) {
+    switch(type) {
+    case OB_CLOCK_TYPE_REALTIME:
+        os << "realtime";
+        break;
+    case OB_CLOCK_TYPE_MONOTONIC:
+        os << "monotonic";
+        break;
+    default:
+        os << "unknown type";
+        break;
+    }
+    os << "(" << static_cast<uint32_t>(type) << ")";
     return os;
 }

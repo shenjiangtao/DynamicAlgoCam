@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #include "RecordDevice.hpp"
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "frame/FrameFactory.hpp"
 #include "DeviceBase.hpp"
 #include "IAlgParamManager.hpp"
@@ -173,29 +173,11 @@ void RecordDevice::writeMetadataProperty() {
     auto devInfo = device_->getInfo();
     auto vid     = devInfo->vid_;
     auto pid     = devInfo->pid_;
-    if(devInfo->backendType_ == OB_UVC_BACKEND_TYPE_V4L2 && (isDeviceInContainer(G330DevPids, vid, pid) || isDeviceInOrbbecSeries(G305DevPids, vid, pid))) {
-        // color sensor property
-        // writePropertyT<bool>(OB_PROP_COLOR_AUTO_EXPOSURE_BOOL);
-        // writePropertyT<int>(OB_PROP_COLOR_AUTO_EXPOSURE_PRIORITY_INT);
-        // writePropertyT<bool>(OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL);
-        // writePropertyT<int>(OB_PROP_COLOR_WHITE_BALANCE_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_BRIGHTNESS_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_CONTRAST_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_SATURATION_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_SHARPNESS_INT);
-        writePropertyT<int>(OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_HUE_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_GAMMA_INT);
-        // writePropertyT<int>(OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT);
 
-        // depth sensor property
-        // writePropertyT<bool>(OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL);
-        writePropertyT<int>(OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT);
-
-        // depth & color struct property
+    // depth & color struct property
+    {
         std::vector<std::pair<OBPropertyID, PropertyAccessType>> propertyList = { { OB_STRUCT_DEPTH_AE_ROI, PROP_ACCESS_USER },
                                                                                   { OB_STRUCT_COLOR_AE_ROI, PROP_ACCESS_USER },
-                                                                                  { OB_STRUCT_DEPTH_HDR_CONFIG, PROP_ACCESS_USER },
                                                                                   { OB_STRUCT_DEVICE_TIME, PROP_ACCESS_INTERNAL } };
 
         auto server = device_->getPropertyServer();
@@ -222,21 +204,27 @@ void RecordDevice::writeMetadataProperty() {
     }
 
     writePropertyT<int>(OB_PROP_DISP_SEARCH_RANGE_MODE_INT);
+    writePropertyT<int>(OB_PROP_DISP_SEARCH_OFFSET_INT);
 }
 
 void RecordDevice::writeExposureAndGainProperty() {
     // laser
     writePropertyT<int>(OB_PROP_LASER_CONTROL_INT);
     writePropertyT<int>(OB_PROP_LASER_POWER_LEVEL_CONTROL_INT);
+    writePropertyT<bool>(OB_PROP_LDP_BOOL);
+
+    // device property
+    writePropertyT<int>(OB_PROP_DEVICE_AE_REFERENCE_INT);
+    writePropertyT<int>(OB_PROP_DEVICE_AE_STRATEGY_INT);
+    writePropertyT<int>(OB_PROP_USB_SYNC_VOLTAGE_LEVEL_INT);
 
     // depth property
     writePropertyT<bool>(OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL);
+    writePropertyT<int>(OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT);
     writePropertyT<int>(OB_PROP_DEPTH_EXPOSURE_INT);
     writePropertyT<int>(OB_PROP_DEPTH_GAIN_INT);
 
     // color property
-    writePropertyT<int>(OB_PROP_DEVICE_AE_REFERENCE_INT);
-    writePropertyT<int>(OB_PROP_DEVICE_AE_STRATEGY_INT);
     writePropertyT<bool>(OB_PROP_COLOR_AUTO_EXPOSURE_BOOL);
     writePropertyT<bool>(OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL);
     writePropertyT<int>(OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT);
@@ -252,6 +240,7 @@ void RecordDevice::writeExposureAndGainProperty() {
     writePropertyT<int>(OB_PROP_COLOR_GAMMA_INT);
     writePropertyT<int>(OB_PROP_COLOR_HUE_INT);
     writePropertyT<int>(OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT);
+    writePropertyT<int>(OB_PROP_MJPEG_QUALITY_INT);
     writePropertyT<int>(OB_PROP_COLOR_DENOISING_LEVEL_INT);
     writePropertyT<int>(OB_PROP_COLOR_PRESET_PRIORITY_INT);
     writePropertyT<bool>(OB_PROP_COLOR_ANTI_FLICKER_BOOL);
@@ -271,6 +260,17 @@ void RecordDevice::writeCalibrationParamProperty() {
         auto d2cProfileList = algParamManager->getD2CProfileList();
         writer_->writeProperty(OB_RAW_DATA_D2C_ALIGN_SUPPORT_PROFILE_LIST, reinterpret_cast<uint8_t *>(d2cProfileList.data()),
                                static_cast<uint32_t>(d2cProfileList.size() * sizeof(OBD2CProfile)));
+
+        // Write the hardware D2C color pre-process profile list so playback can reconstruct the correct
+        // OBD2CPreProcessParam (colorScale, alignLeft, alignTop, etc.) for each color resolution.
+        // This list is parallel to the first N hardware-D2C entries of d2cProfileList by index.
+        // Non-DaBaiA devices return an empty list from the default IAlgParamManager implementation,
+        // so nothing is written for them and their recording files are not affected.
+        const auto &colorPreProcessList = algParamManager->getD2CColorPreProcessProfileList();
+        if(!colorPreProcessList.empty()) {
+            writer_->writeProperty(OB_RAW_DATA_D2C_ALIGN_COLOR_PRE_PROCESS_PROFILE_LIST, reinterpret_cast<const uint8_t *>(colorPreProcessList.data()),
+                                   static_cast<uint32_t>(colorPreProcessList.size() * sizeof(OBD2CColorPreProcessProfile)));
+        }
 
         // calibration param list
         auto calibrationList = algParamManager->getCalibrationCameraParamList();

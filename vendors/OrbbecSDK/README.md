@@ -47,7 +47,7 @@ Here is the device support list of OrbbecSDK v1 (v1.x) and Orbbec SDK v2 (v2.x):
       <td>recommended for new designs</td>
     </tr>
     <tr>
-      <td rowspan="8" style="text-align: center; font-weight: bold;">Gemini 330</td>
+      <td rowspan="10" style="text-align: center; font-weight: bold;">Gemini 330</td>
       <td>Gemini 335Le</td>
       <td>not supported</td>
       <td>recommended for new designs</td>
@@ -84,6 +84,16 @@ Here is the device support list of OrbbecSDK v1 (v1.x) and Orbbec SDK v2 (v2.x):
     </tr>
     <tr>
       <td>Gemini 335Lg</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+    <tr>
+      <td>Gemini 338Lg</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+    <tr>
+      <td>Gemini 338Le</td>
       <td>not supported</td>
       <td>recommended for new designs</td>
     </tr>
@@ -199,10 +209,10 @@ To enhance performance and meet the diverse needs of our customers, the Orbbec S
 
 #### Upgrade Recommendation
 
-For projects currently utilizing version Orbbec SDK v1.x that are considering an upgrade to Orbbec SDK v2.x, we advise using the pre-compiled binaries available in the [Release](https://github.com/orbbec/OrbbecSDK_v2/releases) page. This ensures a seamless transition and maintains consistency with your existing setup.
+For projects currently utilizing version Orbbec SDK v1.x that are considering an upgrade to Orbbec SDK v2.x, we advise using the pre-compiled binaries available in the [Release](https://github.com/orbbec/OrbbecSDK_v2/releases) page. This ensures a seamless transition and maintains consistency with your existing setup.
 
 #### API Compatibility
-We have made every effort to maintain backward compatibility with the previous API. However, in pursuit of higher performance and an improved user experience, several updates have been introduced. Some interfaces were modified or removed due to infrequent use or design limitations. These adjustments were made carefully to minimize disruption and do not affect the SDK’s standard functionality.
+We have made every effort to maintain backward compatibility with the previous API. However, in pursuit of higher performance and an improved user experience, several updates have been introduced. Some interfaces were modified or removed due to infrequent use or design limitations. These adjustments were made carefully to minimize disruption and do not affect the SDK's standard functionality.
 
 #### Migration Resources
 
@@ -213,18 +223,18 @@ We have made every effort to maintain backward compatibility with the previous A
 
 If you wish to continue using Orbbec SDK v1.x, the pre-compiled binaries remain available in our [OrbbecSDK v1](https://github.com/orbbec/OrbbecSDK) repository.
 Nonetheless, we strongly encourage migration to Orbbec SDK v2.x, which offers enhanced features, better performance, and ongoing support.
-Our commitment to SDK v2.x reflects Orbbec’s long-term strategy to provide robust support, foster an open-source community, and drive continuous innovation.
+Our commitment to SDK v2.x reflects Orbbec's long-term strategy to provide robust support, foster an open-source community, and drive continuous innovation.
 
 ### 1.2 Upgrading from OpenNI Protocol to UVC Protocol
 
 #### Timeline and Scope
 Starting from October 2025 (Orbbec SDK v2.5.5), we will begin upgrading devices that use the OpenNI protocol to the UVC protocol, enabling full compatibility with Orbbec SDK v2.
 
-Already upgraded devices and future upgrade schedule：
+Already upgraded devices and future upgrade schedule:
 
 | **Already Upgraded Devices** | **Future Upgrade Schedule** |
 |---|---|
-| • Astra Mini S Pro<br>• Astra Mini Pro | • Gemini E, Gemini UW, Gemini EW<br>• DaBai Max, DaBai Max Pro<br>• DaBai DW, DaBai DCW, DaBai DCW2, DaBai DW2 |
+| - Astra Mini S Pro<br>- Astra Mini Pro | - Gemini E, Gemini UW, Gemini EW<br>- DaBai Max, DaBai Max Pro<br>- DaBai DW, DaBai DCW, DaBai DCW2, DaBai DW2 |
 
 #### OpenNI-to-UVC Firmware Upgrade Tool
 Orbbec provides a dedicated [firmware upgrade tool](https://github.com/orbbec/OrbbecFirmware) that enables devices to switch from the OpenNI protocol to the UVC protocol.
@@ -258,17 +268,19 @@ After upgrading to the UVC protocol, these devices will have a firmware major ve
 | Gemini 345        | 1.7.04                     |        1.9.03                   |
 | Gemini 345Lg        | 1.7.04                     |        1.9.03                   |
 | Gemini 435Le        | 1.2.4                     |        1.3.19                   |
-| Gemini 335Le        | 1.5.31                     |        1.6.00                     |
-| Gemini 330        | 1.2.20                       |        1.6.00                       |
-| Gemini 330L       | 1.2.20                       |       1.6.00                      |
-| Gemini 335        | 1.2.20                       |       1.6.00                        |
-| Gemini 335L       | 1.2.20                       |        1.6.00                       |
-| Gemini 336        | 1.2.20                       |       1.6.00                        |
-| Gemini 336L       | 1.2.20                       |        1.6.00                       |
-| Gemini 335Lg      | 1.3.46                       |        1.6.00                       |
+| Gemini 335Le        | 1.5.31                     |        1.8.10                     |
+| Gemini 330        | 1.2.20                       |        1.8.10                       |
+| Gemini 330L       | 1.2.20                       |       1.8.10                      |
+| Gemini 335        | 1.2.20                       |       1.8.10                        |
+| Gemini 335L       | 1.2.20                       |        1.8.10                       |
+| Gemini 336        | 1.2.20                       |       1.8.10                        |
+| Gemini 336L       | 1.2.20                       |        1.8.10                       |
+| Gemini 335Lg      | 1.3.46                       |        1.8.10                       |
+| Gemini 338Lg      | 1.8.17                       |        1.8.17                       |
+| Gemini 338Le      | 1.8.17                       |        1.8.17                       |
 | Femto Bolt        | 1.1.2                  |              1.1.3                       |
 | Femto Mega        | 1.3.0                  |              1.3.1                       |
-| Femto Mega I        | 2.0.4                  |            2.0.4                     |
+| Femto Mega I        | 2.0.4                  |            2.0.5                     |
 | Astra 2           | 2.8.20                       |         2.8.20                      |
 | Gemini 2 L        | 1.4.53                       |        1.5.2                       |
 | Gemini 2          | 1.4.92               |                1.4.98                       |
@@ -296,7 +308,7 @@ For windows, you need to register the metadata associated with frames (this incl
 
 - Metadata registration follow this:[/scripts/env_setup/obsensor_metadata_win10.md](scripts/env_setup/obsensor_metadata_win10.md)
 
-*Notes: If the metadata is not registered, the device timestamp will be abnormal, thereby affecting the SDK’s internal frame synchronization functionality.*
+*Notes: If the metadata is not registered, the device timestamp will be abnormal, thereby affecting the SDK's internal frame synchronization functionality.*
 
 #### Linux
 
@@ -317,7 +329,7 @@ If you do not want to compile the Orbbec SDK, you can use the SDK installation p
 
 1. The file `OrbbecSDK_vx.x.x_win64.exe` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Windows.
 2. The file `OrbbecSDK_vx.x.x_amd64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on Linux x86_64, likes ubuntu.
-3. The file `OrbbecSDK_vx.x.x_arm64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on ARM64，likes  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX.
+3. The file `OrbbecSDK_vx.x.x_arm64.deb` serves as the installation package for the Orbbec SDK and Orbbec Viewer tools on ARM64, likes  NVIDIA Jetson AGX Orin , NVIDIA Jetson Orin NX , NVIDIA Jetson Orin Nano , NVIDIA Jetson AGX Xavier , NVIDIA Jetson Xavier NX.
 
 #### Linux Install via .deb Package
 - On the Linux x64 (ubuntu) platform, install using the following command. (If you are using the Arm64 platform, please use `OrbbecSDK_vx.x.x_arm64.deb`)
@@ -418,7 +430,7 @@ sudo apt-get install zenity
 3. Start the Orbbec Viewer under Linux OS and proceed with the firmware update work flow.
 
 ### 3.3 DepthQualityTool
-[Depth Quality Tool](https://github.com/orbbec/OrbbecTools/releases/tag/DepthQualityTool) enables users to evaluate the camera’s depth quality across key metrics: Depth Accuracy, Spatial Precision, Temporal Precision, and Fill Rate.
+[Depth Quality Tool](https://github.com/orbbec/OrbbecTools/releases/tag/DepthQualityTool) enables users to evaluate the camera's depth quality across key metrics: Depth Accuracy, Spatial Precision, Temporal Precision, and Fill Rate.
 Users can easily view and interpret these metrics in real time or record the data for offline analysis.
 
 

@@ -3,7 +3,7 @@
 
 #include "G210Device.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 
 #include "utils/Utils.hpp"
@@ -492,12 +492,7 @@ void G210Device::initProperties() {
     auto baseLinePropertyAccessor = std::make_shared<BaselinePropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_BASELINE_CALIBRATION_PARAM, "r", "r", baseLinePropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
-}
-
-std::vector<std::shared_ptr<IFilter>> G210Device::createRecommendedPostProcessingFilters(OBSensorType type) {
-    utils::unusedVar(type);
-    return {};
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
 }  // namespace libobsensor

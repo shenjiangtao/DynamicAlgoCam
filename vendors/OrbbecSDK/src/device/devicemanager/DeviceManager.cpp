@@ -134,6 +134,7 @@ std::shared_ptr<IDevice> DeviceManager::createNetDevice(std::string address, uin
 #else
     utils::unusedVar(address);
     utils::unusedVar(port);
+    utils::unusedVar(accessMode);
     THROW_UNSUPPORTED_OPERATION_EXCEPTION("The library currently compiled does not support network functions. "
                                           "Please turn on the CMAKE \"BUILD_NET_PAL\" option and recompile.");
 #endif
@@ -259,6 +260,8 @@ OBGvcpPortScheme DeviceManager::getGvcpPortscheme() const {
         }
     }
     LOG_DEBUG("Network device enumeration is disabled now, return the default scheme");
+    return OB_GVCP_PORT_SCHEME_STANDARD;
+#else
     return OB_GVCP_PORT_SCHEME_STANDARD;
 #endif
 }
@@ -388,6 +391,61 @@ void DeviceManager::enableDeviceClockSync(void *caller, uint64_t repeatInterval)
         } while(multiDeviceSyncIntervalMs_ > 0 && !destroy_);
     });
     multiDeviceSyncCaller_.store(caller);
+}
+
+bool DeviceManager::syncDeviceHardwarePPSTime(uint64_t hardwarePPSTime) {
+    if(hardwarePPSTime == 0) {
+        LOG_ERROR("Sync Device Hardware PPS Time failed: invalid hardwarePPSTime=0");
+        return false;
+    }
+
+    std::vector<std::shared_ptr<IDevice>> devices;
+    {
+        std::unique_lock<std::mutex> lock(createdDevicesMutex_);
+        devices.reserve(createdDevices_.size());
+        for(auto &item: createdDevices_) {
+            auto dev = item.second.lock();
+            if(dev) {
+                devices.emplace_back(std::move(dev));
+            }
+        }
+    }
+
+    bool anyTried   = false;
+    bool allSuccess = true;
+    for(auto &dev: devices) {
+        auto synchronizer = dev->getComponentT<IDeviceClockSynchronizer>(OB_DEV_COMPONENT_DEVICE_CLOCK_SYNCHRONIZER, false);
+        if(!synchronizer) {
+            continue;
+        }
+
+        auto propertyManager = dev->getPropertyServer();
+        if(!propertyManager->isPropertySupported(OB_PROP_CHECK_PPS_SYNC_IN_SIGNAL_BOOL, PROP_OP_READ, PROP_ACCESS_INTERNAL)) {
+            LOG_DEBUG("Device does not support hardware PPS sync, skipping.");
+            continue;
+        }
+
+        anyTried = true;
+        try {
+            bool syncOk = synchronizer->syncDeviceHardwarePPSTime(hardwarePPSTime);
+            allSuccess  = allSuccess && syncOk;
+        }
+        catch(const std::exception &e) {
+            LOG_ERROR("syncDeviceHardwarePPSTime exception: {}", e.what());
+            allSuccess = false;
+        }
+        catch(...) {
+            LOG_ERROR("syncDeviceHardwarePPSTime exception: unknown");
+            allSuccess = false;
+        }
+    }
+
+    if(!anyTried) {
+        LOG_WARN("No eligible created device for hardware PPS sync.");
+        return false;
+    }
+
+    return allSuccess;
 }
 
 void DeviceManager::disableDeviceClockSync() {

@@ -11,7 +11,7 @@ namespace libobsensor {
 const size_t DEFAULT_FRAME_QUEUE_CAPACITY = 10;
 
 FilterExtension::FilterExtension(const std::string &name) : name_(name), enabled_(true), configChanged_(false) {
-    srcFrameQueue_ = std::make_shared<FrameQueue<const Frame>>(DEFAULT_FRAME_QUEUE_CAPACITY);  // todo： read from config file to set the size of frame queue
+    srcFrameQueue_ = std::make_shared<FrameQueue<const Frame>>(DEFAULT_FRAME_QUEUE_CAPACITY);  // todo: read from config file to set the size of frame queue
     LOG_DEBUG("Filter {} created with frame queue capacity {}", name_, srcFrameQueue_->capacity());
 }
 
@@ -26,22 +26,30 @@ const std::string &FilterExtension::getName() const {
 void FilterExtension::pushFrame(std::shared_ptr<const Frame> frame) {
     if(!srcFrameQueue_->isStarted()) {
         srcFrameQueue_->start([&](std::shared_ptr<const Frame> frameToProcess) {
-            std::shared_ptr<Frame> rstFrame;
-            if(enabled_) {
-                checkAndUpdateConfig();
-                BEGIN_TRY_EXECUTE({ rstFrame = process(frameToProcess); })
-                CATCH_EXCEPTION_AND_EXECUTE({  // catch all exceptions to avoid crashing on the inner thread
-                    LOG_WARN("Filter {}: exception caught while processing frame {}#{}, this frame will be dropped", name_, frameToProcess->getType(),
-                             frameToProcess->getNumber());
-                    return;
-                })
+            try {
+                std::shared_ptr<Frame> rstFrame;
+                if(enabled_) {
+                    checkAndUpdateConfig();
+                    BEGIN_TRY_EXECUTE({ rstFrame = process(frameToProcess); })
+                    CATCH_EXCEPTION_AND_EXECUTE({  // catch all exceptions to avoid crashing on the inner thread
+                        LOG_WARN("Filter {}: exception caught while processing frame {}#{}, this frame will be dropped", name_, frameToProcess->getType(),
+                                 frameToProcess->getNumber());
+                        return;
+                    })
+                }
+                else {
+                    rstFrame = FrameFactory::createFrameFromOtherFrame(frameToProcess, true);
+                }
+                std::unique_lock<std::mutex> lock(callbackMutex_);
+                if(callback_ && rstFrame) {
+                    callback_(rstFrame);
+                }
             }
-            else {
-                rstFrame = FrameFactory::createFrameFromOtherFrame(frameToProcess, true);
+            catch(const std::exception &e) {
+                LOG_ERROR("Filter {}: unhandled exception in frame callback: {}", name_, e.what());
             }
-            std::unique_lock<std::mutex> lock(callbackMutex_);
-            if(callback_ && rstFrame) {
-                callback_(rstFrame);
+            catch(...) {
+                LOG_ERROR("Filter {}: unknown exception in frame callback, frame dropped", name_);
             }
         });
         LOG_DEBUG("Filter {}: start frame queue", name_);
@@ -315,6 +323,14 @@ std::shared_ptr<Frame> FilterDecorator::process(std::shared_ptr<const Frame> fra
 
     std::unique_lock<std::mutex> lock(processMutex_);
     return baseFilter_->process(frame);
+}
+
+std::shared_ptr<IDevice> FilterDecorator::getActivatedDevice() const {
+    return baseFilter_->getActivatedDevice();
+}
+
+void FilterDecorator::activate(std::shared_ptr<IDevice> device, const ob_priv_filter_activate_options *options) {
+    baseFilter_->activate(device, options);
 }
 
 std::shared_ptr<IFilterBase> FilterDecorator::getBaseFilter() const {

@@ -3,14 +3,15 @@
 
 #include "PlaybackDevice.hpp"
 #include "PlaybackDeviceParamManager.hpp"
-#include "PlaybackFilterCreationStrategy.hpp"
 #include "PlaybackDepthWorkModeManager.hpp"
 #include "PlaybackPresetManager.hpp"
 #include "PlaybackDeviceSyncConfigurator.hpp"
 #include "PlaybackDepthPostFilterParamsManager.hpp"
 #include "exception/ObException.hpp"
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "component/frameprocessor/FrameProcessor.hpp"
+#include "component/colorpreset/ColorPresetManager.hpp"
+#include "component/colorpreset/ColorPresetMaps.hpp"
 #include "component/sensor/video/DisparityBasedSensor.hpp"
 #include "component/metadata/FrameMetadataParserContainer.hpp"
 #include "component/timestamp/GlobalTimestampFitter.hpp"
@@ -28,12 +29,16 @@
 #include "FilterFactory.hpp"
 #include "PlaybackFrameInterleaveManager.hpp"
 #include "gemini330/G330FrameInterleaveManager.hpp"
+#include "gemini330/G330PresetManager.hpp"
+#include "gemini330/DaBaiAPresetManager.hpp"
+#include "femtomega/FemtoMegaPresetManager.hpp"
+#include "femtobolt/FemtoBoltPresetManager.hpp"
 #include "gemini2/G435LeFrameInterleaveManager.hpp"
 #include "gemini305/G305FrameMetadataParserContainer.hpp"
 #include "gemini305/G305FrameInterleaveManager.hpp"
+#include "gemini305/G305PresetManager.hpp"
 
 namespace libobsensor {
-using namespace playback;
 
 PlaybackDevice::PlaybackDevice(const std::string &filePath) : filePath_(filePath), port_(std::make_shared<PlaybackDevicePort>(filePath)) {
     isPlaybackDevice_ = true;
@@ -139,11 +144,59 @@ void PlaybackDevice::init() {
         registerComponent(OB_DEV_COMPONENT_DEPTH_WORK_MODE_MANAGER, depthWorkModeManager);
     }
 
-    if(isDeviceInContainer(G330DevPids, vid, pid) || isDeviceInOrbbecSeries(FemtoMegaDevPids, vid, pid) || isDeviceInOrbbecSeries(FemtoBoltDevPids, vid, pid)
-       || isDeviceInOrbbecSeries(G305DevPids, vid, pid)) {
-        // preset manager
-        auto presetManager = std::make_shared<PlaybackPresetManager>(this);
+    // preset manager
+    std::shared_ptr<IPresetManager> delegateManager;
+    if(isDeviceInContainer(G330DevPids, vid, pid)) {
+        if(isDeviceInContainer(DaBaiADevPids, vid, pid)) {
+            // DabaiA
+            delegateManager = std::make_shared<DaBaiAPresetManager>(this);
+        }
+        else {
+            // 330 others
+            delegateManager = std::make_shared<G330PresetManager>(this);
+        }
+    }
+    else if(isDeviceInOrbbecSeries(FemtoMegaDevPids, vid, pid)) {
+        // Mega
+        delegateManager = std::make_shared<MegaPresetManager>(this);
+    }
+    else if(isDeviceInOrbbecSeries(FemtoBoltDevPids, vid, pid)) {
+        // Bolt
+        delegateManager = std::make_shared<BoltPresetManager>(this);
+    }
+    else if(isDeviceInOrbbecSeries(G305DevPids, vid, pid)) {
+        // G305
+        delegateManager = std::make_shared<G305PresetManager>(this);
+    }
+    if(delegateManager) {
+        auto presetManager = std::make_shared<PlaybackPresetManager>(this, delegateManager);
         registerComponent(OB_DEV_COMPONENT_PRESET_MANAGER, presetManager);
+    }
+
+    // color preset: reuse the live device component, but expose only the recorded preset from the shared mapping.
+    if(port_->isPropertySupported(OB_PROP_COLOR_PRESET_PRIORITY_INT)) {
+        const std::map<int32_t, std::string> *colorPresetMap = nullptr;
+        if(isDeviceInOrbbecSeries(G305DevPids, vid, pid)) {
+            colorPresetMap = &getG305ColorPresetMap();
+        }
+        else if(isDeviceInContainer(G330DevPids, vid, pid)) {
+            colorPresetMap = &getG330ColorPresetMap();
+        }
+
+        if(colorPresetMap) {
+            OBPropertyValue recordedPreset{};
+            port_->getRecordedPropertyValue(OB_PROP_COLOR_PRESET_PRIORITY_INT, &recordedPreset);
+
+            // keep only the recorded preset; unknown values are left to ColorPresetManager
+            std::map<int32_t, std::string> currentPreset;
+            auto                           it = colorPresetMap->find(recordedPreset.intValue);
+            if(it != colorPresetMap->end()) {
+                currentPreset.emplace(it->first, it->second);
+            }
+
+            registerComponent(OB_DEV_COMPONENT_COLOR_PRESET_MANAGER,
+                              [this, currentPreset]() { return std::make_shared<ColorPresetManager>(this, currentPreset); });
+        }
     }
 
     auto fwVersion                = getFirmwareVersionInt();
@@ -151,14 +204,18 @@ void PlaybackDevice::init() {
     if(isDeviceInContainer(DaBaiADevPids, vid, pid) && fwVersion > 10800) {
         isSupportDepthPostFilter = true;
     }
+    else if(isDeviceInContainer(G330DevPids, vid, pid) && fwVersion >= 10621) {
+        isSupportDepthPostFilter = true;
+    }
+
     if(isSupportDepthPostFilter) {
         auto propertyServer         = getComponentT<PropertyServer>(OB_DEV_COMPONENT_PROPERTY_SERVER).get();
         auto vendorPropertyAccessor = getComponentT<PlaybackVendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR).get();
         registerPropertyCondition(propertyServer, OB_RAW_DATA_DEPTH_POST_FILTER_PARAMS, "", "r", vendorPropertyAccessor);
 
         // depth post filter param
-        auto depthEngineParamsManager = std::make_shared<PlaybackDepthPostFilterParamsManager>(this, port_);
-        registerComponent(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, depthEngineParamsManager);
+        auto depthPostFilterParamsManager = std::make_shared<PlaybackDepthPostFilterParamsManager>(this, port_);
+        registerComponent(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, depthPostFilterParamsManager);
     }
 
     if(port_->isPropertySupported(OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL)) {
@@ -170,12 +227,14 @@ void PlaybackDevice::init() {
             if(isDeviceInContainer(G330DevPids, vid, pid)) {
                 devFrameInterleaveManager = std::make_shared<G330FrameInterleaveManager>(this);
             }
-            else {
+            else if(isDeviceInContainer(G435LeDevPids, vid, pid)) {
                 devFrameInterleaveManager = std::make_shared<G435LeFrameInterleaveManager>(this);
             }
 
-            auto frameInterleaveManagerProxy = std::make_shared<libobsensor::PlaybackFrameInterleaveManager>(devFrameInterleaveManager);
-            registerComponent(OB_DEV_COMPONENT_FRAME_INTERLEAVE_MANAGER, frameInterleaveManagerProxy);
+            if(devFrameInterleaveManager) {
+                auto frameInterleaveManagerProxy = std::make_shared<libobsensor::PlaybackFrameInterleaveManager>(devFrameInterleaveManager);
+                registerComponent(OB_DEV_COMPONENT_FRAME_INTERLEAVE_MANAGER, frameInterleaveManagerProxy);
+            }
         }
     }
 }
@@ -596,7 +655,7 @@ void PlaybackDevice::initSensorList() {
 
 void PlaybackDevice::initProperties() {
     auto propertyServer = std::make_shared<PropertyServer>(this);
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     if(isDeviceInOrbbecSeries(LiDARDevPids, deviceInfo_->vid_, deviceInfo_->pid_)) {
         // LiDAR: no any property for playback device
@@ -635,10 +694,12 @@ void PlaybackDevice::initProperties() {
     // laser
     registerPropertyCondition(propertyServer, OB_PROP_LASER_CONTROL_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, "r", "r", vendorAccessor);
+    registerPropertyCondition(propertyServer, OB_PROP_LDP_BOOL, "r", "r", vendorAccessor);
 
     // G305 device properties
     registerPropertyCondition(propertyServer, OB_PROP_DEVICE_AE_STRATEGY_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_DEVICE_AE_REFERENCE_INT, "r", "r", vendorAccessor);
+    registerPropertyCondition(propertyServer, OB_PROP_USB_SYNC_VOLTAGE_LEVEL_INT, "r", "r", vendorAccessor);
     // Exposure properties
     // Depth sensor properties
     registerPropertyCondition(propertyServer, OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL, "r", "r", vendorAccessor);
@@ -662,6 +723,7 @@ void PlaybackDevice::initProperties() {
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_GAMMA_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_HUE_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT, "r", "r", vendorAccessor);
+    registerPropertyCondition(propertyServer, OB_PROP_MJPEG_QUALITY_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_DENOISING_LEVEL_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_PRESET_PRIORITY_INT, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_COLOR_ANTI_FLICKER_BOOL, "r", "r", vendorAccessor);
@@ -681,6 +743,7 @@ void PlaybackDevice::initProperties() {
     registerPropertyCondition(propertyServer, OB_STRUCT_DEPTH_AE_ROI, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_STRUCT_DEVICE_TIME, "r", "r", vendorAccessor);
     registerPropertyCondition(propertyServer, OB_PROP_DISP_SEARCH_RANGE_MODE_INT, "r", "r", vendorAccessor);
+    registerPropertyCondition(propertyServer, OB_PROP_DISP_SEARCH_OFFSET_INT, "r", "r", vendorAccessor);
 
     // Interleave config property
     registerPropertyCondition(propertyServer, OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL, "r", "r", vendorAccessor);
@@ -724,15 +787,6 @@ void PlaybackDevice::initProperties() {
     }
 }
 
-std::vector<std::shared_ptr<IFilter>> PlaybackDevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterStrategyFactory = FilterCreationStrategyFactory::getInstance();  // namespace playback
-    auto filterStrategy        = filterStrategyFactory->create(deviceInfo_->vid_, deviceInfo_->pid_, this);
-    if(filterStrategy) {
-        return filterStrategy->createFilters(type);
-    }
-    return {};
-}
-
 void PlaybackDevice::registerPropertyCondition(std::shared_ptr<PropertyServer> server, uint32_t propertyId, const std::string &userPermsStr,
                                                const std::string &intPermsStr, std::shared_ptr<IPropertyAccessor> accessor, ConditionCheckHandler condition,
                                                bool skipSupportCheck) {
@@ -769,6 +823,16 @@ uint64_t PlaybackDevice::getDuration() const {
 
 uint64_t PlaybackDevice::getPosition() const {
     return port_->getPosition();
+}
+
+bool PlaybackDevice::isSensorExists(OBSensorType type) const {
+    for(auto sensorType: sensorTypeList_) {
+        if(sensorType == type) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 std::vector<OBSensorType> PlaybackDevice::getSensorTypeList() const {

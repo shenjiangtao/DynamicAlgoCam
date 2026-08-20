@@ -4,6 +4,7 @@
 #pragma once
 
 #include "frame/Frame.hpp"
+#include "utils/SteadyCondVar.hpp"
 
 #include <queue>
 
@@ -98,7 +99,11 @@ public:
                 }
 
                 if(frame) {
-                    callback_(frame);
+                    try {
+                        callback_(frame);
+                    }
+                    catch(...) {
+                    }
                 }
             }
             stopped_ = true;
@@ -147,7 +152,7 @@ public:
 
 private:
     std::mutex                     mutex_;
-    std::condition_variable        condition_;
+    utils::SteadyCondVar           condition_;
     std::queue<std::shared_ptr<T>> queue_;
     size_t                         capacity_;
 

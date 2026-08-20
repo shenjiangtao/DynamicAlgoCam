@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #include "OpenNIDeviceBase.hpp"
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 #include "utils/Utils.hpp"
 #include "environment/EnvConfig.hpp"
@@ -25,7 +25,6 @@
 #include "firmwareupdater/FirmwareUpdater.hpp"
 #include "firmwareupdater/firmwareupdateguard/FirmwareUpdateGuards.hpp"
 #include "OpenNIDisparitySensor.hpp"
-#include "DevicePids.hpp"
 #include <algorithm>
 
 namespace libobsensor {
@@ -134,6 +133,11 @@ void OpenNIDeviceBase::initProperties() {
     propertyServer->registerProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL, "rw", "rw", privatePropertyAccessor);
     propertyServer->registerProperty(OB_PROP_DEPTH_MAX_DIFF_INT, "rw", "rw", privatePropertyAccessor);
     propertyServer->registerProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, "rw", "rw", privatePropertyAccessor);
+    if(deviceInfo_->pid_ == OB_DEVICE_MAX_PRO_PID || deviceInfo_->pid_ == OB_DEVICE_GEMINI_UW_PID
+       || deviceInfo_->pid_ == OB_DEVICE_DABAI_MAX_PID) {
+        propertyServer->registerProperty(OB_PROP_DEPTH_OUTLIERS_FILTER_BOOL, "rw", "rw", privatePropertyAccessor);
+        propertyServer->registerProperty(OB_PROP_DEPTH_OUTLIERS_FILTER_SEARCH_MODE_INT, "rw", "rw", privatePropertyAccessor);
+    }
 
     auto frameTransformPropertyAccessor = std::make_shared<OpenNIFrameTransformPropertyAccessor>(this);
     propertyServer->registerProperty(OB_PROP_DEPTH_MIRROR_BOOL, "rw", "rw", frameTransformPropertyAccessor);
@@ -188,89 +192,7 @@ void OpenNIDeviceBase::initProperties() {
     propertyServer->aliasProperty(OB_PROP_IR_EXPOSURE_INT, OB_PROP_DEPTH_EXPOSURE_INT);
     propertyServer->aliasProperty(OB_PROP_IR_GAIN_INT, OB_PROP_DEPTH_GAIN_INT);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
-}
-
-std::vector<std::shared_ptr<IFilter>> OpenNIDeviceBase::createRecommendedPostProcessingFilters(OBSensorType type) {
-    if(type != OB_SENSOR_DEPTH) {
-        return {};
-    }
-    auto                                  filterFactory = FilterFactory::getInstance();
-    std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-    if(filterFactory->isFilterCreatorExists("EdgeNoiseRemovalFilter")) {
-        auto enrFilter = filterFactory->createFilter("EdgeNoiseRemovalFilter");
-        enrFilter->enable(false);
-        std::vector<std::string> params = { "6", "0", "120", "120", "1", "1280", "800" };
-        enrFilter->updateConfig(params);
-        depthFilterList.push_back(enrFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("MgcNoiseRemovalFilter")) {
-        auto mgcNRFilter = filterFactory->createFilter("MgcNoiseRemovalFilter");
-        mgcNRFilter->enable(false);
-        std::vector<std::string> params = { "80", "80", "640", "6", "0", "120", "120", "1280", "800" };
-        mgcNRFilter->updateConfig(params);
-        depthFilterList.push_back(mgcNRFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("LutNoiseRemovalFilter")) {
-        auto lutNRFilter = filterFactory->createFilter("LutNoiseRemovalFilter");
-        lutNRFilter->enable(false);
-        std::vector<std::string> params = { "1920", "1920", "1920", "1920", "1920", "200", "200", "1920", "800", "200",
-                                            "200",  "800",  "800",  "800",  "800",  "800", "256", "1280", "800" };
-        lutNRFilter->updateConfig(params);
-        depthFilterList.push_back(lutNRFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("SpatialFastFilter")) {
-        auto spatFilter = filterFactory->createFilter("SpatialFastFilter");
-        spatFilter->enable(false);
-        // radius
-        std::vector<std::string> params = { "3" };
-        spatFilter->updateConfig(params);
-        depthFilterList.push_back(spatFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("SpatialModerateFilter")) {
-        auto spatFilter = filterFactory->createFilter("SpatialModerateFilter");
-        spatFilter->enable(false);
-        // magnitude, disp_diff, radius
-        std::vector<std::string> params = { "2", "96", "5" };
-        spatFilter->updateConfig(params);
-        depthFilterList.push_back(spatFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-        auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-        spatFilter->enable(false);
-        // magnitude, alpha, disp_diff, radius
-        std::vector<std::string> params = { "1", "0.5", "64", "1" };
-        spatFilter->updateConfig(params);
-        depthFilterList.push_back(spatFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-        auto tempFilter = filterFactory->createFilter("TemporalFilter");
-        tempFilter->enable(false);
-        // diff_scale, weight
-        std::vector<std::string> params = { "0.1", "0.4" };
-        tempFilter->updateConfig(params);
-        depthFilterList.push_back(tempFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-        auto hfFilter = filterFactory->createFilter("HoleFillingFilter");
-        hfFilter->enable(false);
-        depthFilterList.push_back(hfFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-        auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-        depthFilterList.push_back(ThresholdFilter);
-    }
-
-    return depthFilterList;
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
 void OpenNIDeviceBase::loadDefaultPostProcessingConfig() {
@@ -285,7 +207,7 @@ void OpenNIDeviceBase::loadDefaultDepthPostProcessingConfig() {
         std::string nodeName   = std::string("Device.") + deviceName + std::string(".DepthPostProcessing");
         if(envConfig->isNodeContained(nodeName)) {
             bool swNoiseRmEnable = true;
-            auto propertyServer = getPropertyServer();
+            auto propertyServer  = getPropertyServer();
             if(envConfig->getBooleanValue(nodeName + std::string(".SoftwareNoiseRemoveFilter"), swNoiseRmEnable)) {
                 propertyServer->setPropertyValueT(OB_PROP_DEPTH_SOFT_FILTER_BOOL, swNoiseRmEnable, PROP_ACCESS_USER);
             }

@@ -10,6 +10,11 @@
 #include <memory>
 
 namespace libobsensor {
+
+namespace utils {
+struct TransferTiming;
+}
+
 typedef union {
     int32_t intValue;
     float   floatValue;
@@ -47,19 +52,24 @@ public:
 
 class IStructureDataAccessor : virtual public IPropertyAccessor {
 public:
-    virtual ~IStructureDataAccessor() noexcept override                                                         = default;
-    virtual void                        setStructureData(uint32_t propertyId, const std::vector<uint8_t> &data) = 0;
-    virtual const std::vector<uint8_t> &getStructureData(uint32_t propertyId)                                   = 0;
+    virtual ~IStructureDataAccessor() noexcept override                                                  = default;
+    virtual void                 setStructureData(uint32_t propertyId, const std::vector<uint8_t> &data) = 0;
+    virtual std::vector<uint8_t> getStructureData(uint32_t propertyId)                                   = 0;
+    virtual std::vector<uint8_t> getStructureData(uint32_t propertyId, utils::TransferTiming *timing) {
+        (void)propertyId;
+        (void)timing;
+        THROW_NOT_IMPLEMENTED_EXCEPTION("getStructureData with timing is not implemented for this accessor");
+    }
 };
 
 class IStructureDataAccessorV1_1 : virtual public IPropertyAccessor {
 public:
     virtual ~IStructureDataAccessorV1_1() noexcept override = default;
 
-    virtual uint16_t                    getCmdVersionProtoV1_1(uint32_t propertyId)                                                           = 0;
-    virtual const std::vector<uint8_t> &getStructureDataProtoV1_1(uint32_t propertyId, uint16_t cmdVersion)                                   = 0;
-    virtual void                        setStructureDataProtoV1_1(uint32_t propertyId, const std::vector<uint8_t> &data, uint16_t cmdVersion) = 0;
-    virtual const std::vector<uint8_t> &getStructureDataListProtoV1_1(uint32_t propertyId, uint16_t cmdVersion)                               = 0;
+    virtual uint16_t             getCmdVersionProtoV1_1(uint32_t propertyId)                                                           = 0;
+    virtual std::vector<uint8_t> getStructureDataProtoV1_1(uint32_t propertyId, uint16_t cmdVersion)                                   = 0;
+    virtual void                 setStructureDataProtoV1_1(uint32_t propertyId, const std::vector<uint8_t> &data, uint16_t cmdVersion) = 0;
+    virtual std::vector<uint8_t> getStructureDataListProtoV1_1(uint32_t propertyId, uint16_t cmdVersion)                               = 0;
 };
 
 class IRawDataAccessor : virtual public IPropertyAccessor {
@@ -85,8 +95,12 @@ class IPropertyServer {
 public:
     virtual ~IPropertyServer() noexcept = default;
 
-    virtual void registerAccessCallback(uint32_t propertyId, PropertyAccessCallback callback)               = 0;
-    virtual void registerAccessCallback(std::vector<uint32_t> propertyIds, PropertyAccessCallback callback) = 0;
+    virtual uint64_t registerAccessCallback(uint32_t propertyId, PropertyAccessCallback callback)               = 0;
+    virtual uint64_t registerAccessCallback(std::vector<uint32_t> propertyIds, PropertyAccessCallback callback) = 0;
+
+    // Unregister a callback previously registered via registerAccessCallback, using the token it returned.
+    // Removes the callback from every property it was registered on. A token of 0 or an unknown token is ignored.
+    virtual void unregisterAccessCallback(uint64_t token) = 0;
 
     virtual void registerProperty(uint32_t propertyId, OBPermissionType userPerms, OBPermissionType intPerms, std::shared_ptr<IPropertyAccessor> accessor) = 0;
     virtual void registerProperty(uint32_t propertyId, const std::string &userPerms, const std::string &intPerms,
@@ -103,17 +117,18 @@ public:
     virtual void getPropertyValue(uint32_t propertyId, OBPropertyValue *value, PropertyAccessType accessType) = 0;
     virtual void getPropertyRange(uint32_t propertyId, OBPropertyRange *range, PropertyAccessType accessType) = 0;
 
-    virtual void                        setStructureData(uint32_t propertyId, const std::vector<uint8_t> &data, PropertyAccessType accessType) = 0;
-    virtual const std::vector<uint8_t> &getStructureData(uint32_t propertyId, PropertyAccessType accessType)                                   = 0;
+    virtual void                 setStructureData(uint32_t propertyId, const std::vector<uint8_t> &data, PropertyAccessType accessType) = 0;
+    virtual std::vector<uint8_t> getStructureData(uint32_t propertyId, PropertyAccessType accessType)                                   = 0;
+    virtual std::vector<uint8_t> getStructureData(uint32_t propertyId, PropertyAccessType accessType, utils::TransferTiming *timing)    = 0;
 
     virtual void getRawData(uint32_t propertyId, GetDataCallback callback, PropertyAccessType accessType) = 0;
 
     virtual uint16_t getCmdVersionProtoV1_1(uint32_t propertyId, PropertyAccessType accessType) = 0;
 
-    virtual const std::vector<uint8_t> &getStructureDataProtoV1_1(uint32_t propertyId, uint16_t cmdVersion, PropertyAccessType accessType)            = 0;
+    virtual std::vector<uint8_t> getStructureDataProtoV1_1(uint32_t propertyId, uint16_t cmdVersion, PropertyAccessType accessType)                   = 0;
     virtual void setStructureDataProtoV1_1(uint32_t propertyId, const std::vector<uint8_t> &data, uint16_t cmdVersion, PropertyAccessType accessType) = 0;
 
-    virtual const std::vector<uint8_t> &getStructureDataListProtoV1_1(uint32_t propertyId, uint16_t cmdVersion, PropertyAccessType accessType) = 0;
+    virtual std::vector<uint8_t> getStructureDataListProtoV1_1(uint32_t propertyId, uint16_t cmdVersion, PropertyAccessType accessType) = 0;
 
 public:  // template functions to simplify the usage of IPropertyServer
     template <typename T>
@@ -186,11 +201,12 @@ public:  // template functions to simplify the usage of IPropertyServer
         setStructureData(propertyId, vec, accessType);
     }
 
-    template <typename T> T getStructureDataT(uint32_t propertyId, PropertyAccessType accessType = PROP_ACCESS_INTERNAL) {
-        std::vector<uint8_t> vec = getStructureData(propertyId, accessType);
-        T                    data;
+    template <typename T>
+    T getStructureDataT(uint32_t propertyId, PropertyAccessType accessType = PROP_ACCESS_INTERNAL, utils::TransferTiming *timing = nullptr) {
+        std::vector<uint8_t> vec = getStructureData(propertyId, accessType, timing);
+        T                    data{};
         if(vec.size() != sizeof(T) && vec.size() + 1 != sizeof(T) && vec.size() - 1 != sizeof(T)) {
-            LOG_WARN("Firmware data size is not match with property type");
+            LOG_WARN("Firmware data size mismatch for property type. Expected: {}, Actual: {}", sizeof(T), vec.size());
         }
         std::memcpy(&data, vec.data(), std::min(vec.size(), sizeof(T)));
         return data;
@@ -198,9 +214,9 @@ public:  // template functions to simplify the usage of IPropertyServer
 
     template <typename T, uint32_t CMD_VER> T getStructureDataProtoV1_1_T(uint32_t propertyId, PropertyAccessType accessType = PROP_ACCESS_INTERNAL) {
         std::vector<uint8_t> vec = getStructureDataProtoV1_1(propertyId, CMD_VER, accessType);
-        T                    data;
+        T                    data{};
         if(vec.size() != sizeof(T) && vec.size() + 1 != sizeof(T) && vec.size() - 1 != sizeof(T)) {
-            LOG_WARN("Firmware data size is not match with property type");
+            LOG_WARN("Firmware data size mismatch for property type. Expected: {}, Actual: {}", sizeof(T), vec.size());
         }
         std::memcpy(&data, vec.data(), std::min(vec.size(), sizeof(T)));
         return data;

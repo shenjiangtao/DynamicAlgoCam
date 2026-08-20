@@ -24,11 +24,14 @@ Frame::Frame(uint8_t *data, size_t dataBufSize, OBFrameType type, FrameBufferRec
       number_(0),
       timeStampUsec_(0),
       systemTimeStampUsec_(0),
+      steadyTimeStampUsec_(0),
       globalTimeStampUsec_(0),
       metadataSize_(0),
       metadata_{},
       metadataPhasers_(nullptr),
       streamProfile_(nullptr),
+      frameToken_(0),
+      deviceInfo_(nullptr),
       type_(type),
       frameData_(data),
       dataBufSize_(dataBufSize),
@@ -104,12 +107,28 @@ void Frame::setSystemTimeStampUsec(uint64_t ts) {
     systemTimeStampUsec_ = ts;
 }
 
+uint64_t Frame::getSteadyTimeStampUsec() const {
+    return steadyTimeStampUsec_;
+}
+
+void Frame::setSteadyTimeStampUsec(uint64_t ts) {
+    steadyTimeStampUsec_ = ts;
+}
+
 uint64_t Frame::getGlobalTimeStampUsec() const {
     return globalTimeStampUsec_;
 }
 
 void Frame::setGlobalTimeStampUsec(uint64_t ts) {
     globalTimeStampUsec_ = ts;
+}
+
+bool Frame::isDeviceTimestampFromHost() const {
+    return deviceTimestampFromHost_;
+}
+
+void Frame::setDeviceTimestampFromHost(bool enable) {
+    deviceTimestampFromHost_ = enable;
 }
 
 uint32_t VideoFrame::getFps() const {
@@ -222,6 +241,22 @@ int64_t Frame::getMetadataValue(OBFrameMetadataType type) const {
     return parser->getValue(metadata_, metadataSize_);
 }
 
+void Frame::setAuthToken(uint64_t token) {
+    frameToken_ = token;
+}
+
+uint64_t Frame::getAuthToken() const {
+    return frameToken_;
+}
+
+void Frame::setDeviceInfo(std::shared_ptr<const DeviceInfo> info) {
+    deviceInfo_ = std::move(info);
+}
+
+std::shared_ptr<const DeviceInfo> Frame::getDeviceInfo() const {
+    return deviceInfo_;
+}
+
 std::shared_ptr<const StreamProfile> Frame::getStreamProfile() const {
     return streamProfile_;
 }
@@ -231,14 +266,18 @@ void Frame::setStreamProfile(std::shared_ptr<const StreamProfile> streamProfile)
 }
 
 void Frame::copyInfoFromOther(const std::shared_ptr<const Frame> otherFrame) {
-    number_              = otherFrame->number_;
-    timeStampUsec_       = otherFrame->timeStampUsec_;
-    systemTimeStampUsec_ = otherFrame->systemTimeStampUsec_;
-    globalTimeStampUsec_ = otherFrame->globalTimeStampUsec_;
+    number_                  = otherFrame->number_;
+    timeStampUsec_           = otherFrame->timeStampUsec_;
+    systemTimeStampUsec_     = otherFrame->systemTimeStampUsec_;
+    steadyTimeStampUsec_     = otherFrame->steadyTimeStampUsec_;
+    globalTimeStampUsec_     = otherFrame->globalTimeStampUsec_;
+    deviceTimestampFromHost_ = otherFrame->deviceTimestampFromHost_;
 
     metadataSize_ = otherFrame->metadataSize_;
     memcpy(metadata_, otherFrame->metadata_, metadataSize_);
     metadataPhasers_ = otherFrame->metadataPhasers_;
+    frameToken_      = otherFrame->frameToken_;
+    deviceInfo_      = otherFrame->deviceInfo_;
 }
 
 size_t Frame::getDataBufSize() const {

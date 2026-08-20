@@ -186,12 +186,14 @@ void DeviceMonitor::disableHeartbeat() {
         LOG_DEBUG("Heartbeat already disabled!");
         return;
     }
-    auto owner = getOwner();
 
-    OBPropertyValue value;
-    value.intValue    = 0;
-    auto propAccessor = owner->getComponentT<IBasicPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
-    propAccessor->setPropertyValue(OB_PROP_HEARTBEAT_BOOL, value);
+    TRY_EXECUTE({
+        auto            owner = getOwner();
+        OBPropertyValue value;
+        value.intValue    = 0;
+        auto propAccessor = owner->getComponentT<IBasicPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+        propAccessor->setPropertyValue(OB_PROP_HEARTBEAT_BOOL, value);
+    });
 
     heartbeatEnabled_ = false;
     heartbeatPaused_  = false;
@@ -246,9 +248,9 @@ void DeviceMonitor::resumeHeartbeat() {
 
 void DeviceMonitor::sendAndReceiveData(const uint8_t *sendData, uint32_t sendDataSize, uint8_t *receiveData, uint32_t *receiveDataSize) {
     std::lock_guard<std::mutex> lock(commMutex_);
-    uint32_t recvLen = 0;
+    uint32_t                    recvLen = 0;
     try {
-        recvLen = vendorDataPort_->sendAndReceive(sendData, sendDataSize, receiveData, *receiveDataSize);
+        recvLen = vendorDataPort_->sendAndReceive(sendData, sendDataSize, receiveData, *receiveDataSize, nullptr);
     }
     catch(const libobsensor_exception &e) {
         LOG_ERROR("sendAndReceiveData failed: {}", e.getMessage());

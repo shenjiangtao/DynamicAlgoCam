@@ -7,6 +7,7 @@
 #include "utils/PublicTypeHelper.hpp"
 
 #include "frame/Frame.hpp"
+#include <atomic>
 
 namespace libobsensor {
 
@@ -19,7 +20,13 @@ StreamProfileBackendLifeSpan::~StreamProfileBackendLifeSpan() {
     logger_.reset();
 }
 
-StreamProfile::StreamProfile(std::shared_ptr<LazySensor> owner, OBStreamType type, OBFormat format) : owner_(owner), type_(type), format_(format), index_(0) {}
+uint64_t StreamProfile::allocateInstanceId() {
+    static std::atomic<uint64_t> nextInstanceId{ 1 };
+    return nextInstanceId.fetch_add(1, std::memory_order_relaxed);
+}
+
+StreamProfile::StreamProfile(std::shared_ptr<LazySensor> owner, OBStreamType type, OBFormat format)
+    : owner_(owner), type_(type), format_(format), index_(0), instanceId_(allocateInstanceId()) {}
 
 std::shared_ptr<LazySensor> StreamProfile::getOwner() const {
     return owner_.lock();
@@ -51,6 +58,10 @@ void StreamProfile::setIndex(uint8_t index) {
 
 uint8_t StreamProfile::getIndex() const {
     return index_;
+}
+
+uint64_t StreamProfile::getInstanceId() const {
+    return instanceId_;
 }
 
 void StreamProfile::bindExtrinsicTo(std::shared_ptr<const StreamProfile> targetStreamProfile, const OBExtrinsic &extrinsic) {
@@ -149,7 +160,8 @@ uint32_t VideoStreamProfile::getMaxFrameDataSize() const {
 }
 
 std::shared_ptr<StreamProfile> VideoStreamProfile::clone() const {
-    auto sp            = std::make_shared<VideoStreamProfile>(owner_.lock(), type_, format_, width_, height_, fps_);
+    auto sp = std::make_shared<VideoStreamProfile>(owner_.lock(), type_, format_, width_, height_, fps_);
+    sp->setDecimationConfig(decimationConfig_);
     auto intrinsicsMgr = StreamIntrinsicsManager::getInstance();
     if(intrinsicsMgr->containsVideoStreamIntrinsics(shared_from_this())) {
         auto intrinsic = intrinsicsMgr->getVideoStreamIntrinsics(shared_from_this());
@@ -178,7 +190,8 @@ void DisparityBasedStreamProfile::bindDisparityParam(const OBDisparityParam &par
 }
 
 std::shared_ptr<StreamProfile> DisparityBasedStreamProfile::clone() const {
-    auto sp            = std::make_shared<DisparityBasedStreamProfile>(owner_.lock(), type_, format_, width_, height_, fps_);
+    auto sp = std::make_shared<DisparityBasedStreamProfile>(owner_.lock(), type_, format_, width_, height_, fps_);
+    sp->setDecimationConfig(decimationConfig_);
     auto intrinsicsMgr = StreamIntrinsicsManager::getInstance();
     if(intrinsicsMgr->containsVideoStreamIntrinsics(shared_from_this())) {
         auto intrinsic = intrinsicsMgr->getVideoStreamIntrinsics(shared_from_this());
@@ -198,8 +211,11 @@ std::shared_ptr<StreamProfile> DisparityBasedStreamProfile::clone() const {
 
 AccelStreamProfile::AccelStreamProfile(std::shared_ptr<LazySensor> owner, OBAccelFullScaleRange fullScaleRange, OBAccelSampleRate sampleRate)
     : StreamProfile{ owner, OB_STREAM_ACCEL, OB_FORMAT_ACCEL }, fullScaleRange_(fullScaleRange), sampleRate_(sampleRate) {}
+
 bool VideoStreamProfile::operator==(const VideoStreamProfile &other) const {
-    return (type_ == other.type_) && (format_ == other.format_) && (width_ == other.width_) && (height_ == other.height_) && (fps_ == other.fps_);
+    return (type_ == other.type_) && (format_ == other.format_) && (width_ == other.width_) && (height_ == other.height_) && (fps_ == other.fps_)
+           && (decimationConfig_.originWidth == other.decimationConfig_.originWidth) && (decimationConfig_.originHeight == other.decimationConfig_.originHeight)
+           && (decimationConfig_.factor == other.decimationConfig_.factor);
 }
 
 std::ostream &VideoStreamProfile::operator<<(std::ostream &os) const {

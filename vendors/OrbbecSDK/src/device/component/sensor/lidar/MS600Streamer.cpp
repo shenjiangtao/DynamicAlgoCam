@@ -10,7 +10,7 @@
 #include "utils/Utils.hpp"
 #include "property/InternalProperty.hpp"
 #include "IDevice.hpp"
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -309,6 +309,8 @@ void MS600Streamer::parseLiDARData(std::shared_ptr<Frame> frame) {
     auto timestamp = utils::getNowTimesUs();
     frame_->setTimeStampUsec(timestamp);
     frame_->setSystemTimeStampUsec(timestamp);
+    frame_->setSteadyTimeStampUsec(utils::getSteadyTimeUs());
+    frame_->setDeviceTimestampFromHost(true);
 
     if(header->dataBlockNum >= maxDataBlockNum) {
         // reach the max data block num - all data for a circle

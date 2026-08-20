@@ -7,6 +7,7 @@
 #include "StreamProfile.hpp"
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace libobsensor {
@@ -23,7 +24,10 @@ public:
 
     ~StreamExtrinsicsManager() noexcept;
 
-    void registerExtrinsics(const std::shared_ptr<const StreamProfile> &from, const std::shared_ptr<const StreamProfile> &to, const OBExtrinsic &extrinsics);
+    void registerExtrinsics(const std::shared_ptr<const StreamProfile> &from, const std::shared_ptr<const StreamProfile> &to, const OBExtrinsic &extrinsics,bool cleanExpired = true);
+    /**
+     * @brief Register extrinsics from stream profile `from` to stream profile of type `type`. If there is no stream profile of the specified type, an exception will be thrown.
+     */
     void registerExtrinsics(const std::shared_ptr<const StreamProfile> &from, const OBStreamType &type, const OBExtrinsic &extrinsics);
     void registerSameExtrinsics(const std::shared_ptr<const StreamProfile> &from, const std::shared_ptr<const StreamProfile> &to);
 
@@ -44,6 +48,8 @@ private:
     std::recursive_mutex                                                mutex_;
     std::map<uint64_t, std::vector<std::weak_ptr<const StreamProfile>>> streamProfileMap_;  // vertices
     std::map<uint64_t, std::vector<std::pair<uint64_t, OBExtrinsic>>>   extrinsicsGraph_;   // graph adjacency list
+
+    std::unordered_map<uint64_t, uint64_t> profileToIdMap_;
 };
 
 }  // namespace libobsensor

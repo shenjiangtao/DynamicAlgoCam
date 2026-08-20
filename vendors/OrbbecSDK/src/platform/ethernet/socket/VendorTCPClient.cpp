@@ -154,6 +154,7 @@ bool VendorTCPClient::checkConnectReady(SOCKET socket, uint32_t timeoutMs) {
 #if(defined(OS_IOS) || defined(OS_MACOS) || defined(__ANDROID__))
     // Since the traditional `fcntl` cannot be used on iOS to set socketFd as non-blocking, leading to select blocking, reduce connTimeout and use polling to
     // avoid the issue.
+    (void)timeoutMs;
     bool status = false;
     int  retry  = 5;
     do {
@@ -292,12 +293,13 @@ void VendorTCPClient::socketReconnect() {
     socketConnect();
 }
 
-int VendorTCPClient::read(uint8_t *data, const uint32_t dataLen) {
+int VendorTCPClient::read(uint8_t *data, const uint32_t dataLen, utils::TimeInterval *interval) {
     std::lock_guard<std::mutex> lock(tcpMtx_);
     {
         uint8_t retry = 2;
         while(retry-- && !flushed_) {
-            int rst = 0;
+            utils::TimingScope guard(interval);
+            int                rst = 0;
 #if defined(__linux__)
             rst = recv(socketFd_, (char *)data, dataLen, MSG_NOSIGNAL);
 #else
@@ -330,12 +332,13 @@ int VendorTCPClient::read(uint8_t *data, const uint32_t dataLen) {
     }
 }
 
-void VendorTCPClient::write(const uint8_t *data, const uint32_t dataLen) {
+void VendorTCPClient::write(const uint8_t *data, const uint32_t dataLen, utils::TimeInterval *interval) {
     std::lock_guard<std::mutex> lock(tcpMtx_);
     {
         uint8_t retry = 2;
         while(retry-- && !flushed_) {
-            int rst = 0;
+            utils::TimingScope guard(interval);
+            int                rst = 0;
 #if defined(__linux__)
             rst = send(socketFd_, (const char *)data, dataLen, MSG_NOSIGNAL);
 #else

@@ -36,6 +36,7 @@
 #include "FemtoMegaFrameTimestampCalculator.hpp"
 #include "firmwareupdater/FirmwareUpdater.hpp"
 #include "monitor/DeviceMonitor.hpp"
+#include "monitor/DeviceActivityRecorder.hpp"
 
 #if defined(BUILD_NET_PAL)
 #include "ethernet/RTSPStreamPort.hpp"
@@ -447,73 +448,10 @@ void FemtoMegaUsbDevice::initProperties() {
     propertyServer->aliasProperty(OB_PROP_DEPTH_EXPOSURE_INT, OB_PROP_TOF_EXPOSURE_TIME_INT);
     propertyServer->aliasProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, OB_PROP_FEMTO_MEGA_HARDWARE_D2C_BOOL);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_DEVICE_COMMUNICATION_TYPE_INT, OB_COMM_USB); })
     CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device communication type to usb mode failed!"); })
-}
-
-std::vector<std::shared_ptr<IFilter>> FemtoMegaUsbDevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "5", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            filter->enable(false);
-        }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-
-    return {};
 }
 
 FemtoMegaNetDevice::FemtoMegaNetDevice(const std::shared_ptr<const IDeviceEnumInfo> &info) : DeviceBase(info) {
@@ -581,6 +519,15 @@ void FemtoMegaNetDevice::init() {
         TRY_EXECUTE({ firmwareUpdater = std::make_shared<FirmwareUpdater>(this); })
         return firmwareUpdater;
     });
+
+    registerComponent(
+        OB_DEV_COMPONENT_DEVICE_ACTIVITY_RECORDER,
+        [this]() {
+            std::shared_ptr<DeviceActivityRecorder> activityRecorder;
+            TRY_EXECUTE({ activityRecorder = std::make_shared<DeviceActivityRecorder>(this); })
+            return activityRecorder;
+        },
+        false);
 }
 
 void FemtoMegaNetDevice::fetchDeviceInfo() {
@@ -930,7 +877,7 @@ void FemtoMegaNetDevice::initProperties() {
 
     auto femtoMegaTempPropertyAccessor = std::make_shared<FemtoMegaTempPropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_DEVICE_TEMPERATURE, "r", "r", femtoMegaTempPropertyAccessor);
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     auto frameTransformPropertyAccessor = std::make_shared<MonocularFrameTransformPropertyAccessor>(this);
     propertyServer->registerProperty(OB_PROP_DEPTH_MIRROR_BOOL, "rw", "rw", frameTransformPropertyAccessor);  // depth
@@ -1030,69 +977,6 @@ void FemtoMegaNetDevice::fetchAllVideoStreamProfileList() {
     else {
         LOG_WARN("Get stream profile list failed!");
     }
-}
-
-std::vector<std::shared_ptr<IFilter>> FemtoMegaNetDevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "5", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            filter->enable(false);
-        }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-
-    return {};
 }
 
 }  // namespace libobsensor

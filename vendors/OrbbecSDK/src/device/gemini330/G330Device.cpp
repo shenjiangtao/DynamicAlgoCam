@@ -3,11 +3,12 @@
 
 #include "G330Device.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 #include "SourcePortInfo.hpp"
 
 #include "utils/Utils.hpp"
+#include "utils/DeviceTypeHelper.hpp"
 #include "environment/EnvConfig.hpp"
 #include "usb/uvc/UvcDevicePort.hpp"
 #include "stream/StreamProfileFactory.hpp"
@@ -37,6 +38,10 @@
 #include "firmwareupdater/FirmwareUpdater.hpp"
 #include "firmwareupdater/firmwareupdateguard/FirmwareUpdateGuards.hpp"
 #include "frameprocessor/FrameProcessor.hpp"
+#include "comprehensivefilter/DepthPostFilterParamsManager.hpp"
+#include "colorpreset/ColorPresetManager.hpp"
+#include "colorpreset/ColorPresetMaps.hpp"
+#include "license/G330DeviceLicenseInfoManager.hpp"
 
 #include "G330MetadataParser.hpp"
 #include "G330MetadataTypes.hpp"
@@ -45,6 +50,7 @@
 #include "G330DepthWorkModeManager.hpp"
 #include "G330SensorStreamStrategy.hpp"
 #include "G330PropertyAccessors.hpp"
+#include "property/HardwareD2CPropertyAccessor.hpp"
 #include "G330FrameMetadataParserContainer.hpp"
 #include "utils/BufferParser.hpp"
 #include "G330FrameInterleaveManager.hpp"
@@ -126,8 +132,10 @@ void G330Device::init() {
             });
     }
 
-    auto presetManager = std::make_shared<G330PresetManager>(this);
-    registerComponent(OB_DEV_COMPONENT_PRESET_MANAGER, presetManager);
+    registerComponent(OB_DEV_COMPONENT_PRESET_MANAGER, [this]() {
+        auto presetManager = std::make_shared<G330PresetManager>(this);
+        return presetManager;
+    });
 
     auto fwVersion = getFirmwareVersionInt();
     if(fwVersion > 10370) {
@@ -178,12 +186,34 @@ void G330Device::init() {
         auto propertyServer         = getPropertyServer();
         auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
         propertyServer->registerProperty(OB_PROP_COLOR_PRESET_PRIORITY_INT, "rw", "rw", vendorPropertyAccessor.get());
+
+        registerComponent(OB_DEV_COMPONENT_COLOR_PRESET_MANAGER, [this]() { return std::make_shared<ColorPresetManager>(this, getG330ColorPresetMap()); });
     }
 
     if(fwVersion >= 10712) {
         auto propertyServer         = getPropertyServer();
         auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
         propertyServer->registerProperty(OB_PROP_COLOR_ANTI_FLICKER_BOOL, "rw", "rw", vendorPropertyAccessor.get());
+    }
+
+    if(fwVersion >= 10746) {
+        auto propertyServer         = getPropertyServer();
+        auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+        propertyServer->registerProperty(OB_PROP_CURRENT_DISP_SEARCH_RANGE_MODE_INT, "r", "r", vendorPropertyAccessor.get());
+        propertyServer->registerProperty(OB_PROP_CURRENT_DISP_SEARCH_OFFSET_INT, "r", "r", vendorPropertyAccessor.get());
+    }
+
+    if(fwVersion >= 10802) {
+        auto propertyServer         = getPropertyServer();
+        auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+        propertyServer->registerProperty(OB_PROP_FPS_BOOST_BOOL, "rw", "rw", vendorPropertyAccessor.get());
+    }
+
+    if(fwVersion >= 10811) {
+        auto propertyServer         = getPropertyServer();
+        auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+        propertyServer->registerProperty(OB_PROP_MJPEG_QUALITY_INT, "rw", "rw", vendorPropertyAccessor.get());
+        propertyServer->registerProperty(OB_PROP_HOST_PLATFORM_INT, "", "w", vendorPropertyAccessor.get());
     }
 
     auto sensorStreamStrategy = std::make_shared<G330SensorStreamStrategy>(this);
@@ -252,6 +282,26 @@ void G330Device::init() {
         container = std::make_shared<G330DepthFrameMetadataParserContainer>(this);
         return container;
     });
+
+    TRY_EXECUTE({
+        if(getFirmwareVersionInt() >= 10621) {
+            auto propertyServer         = getPropertyServer();
+            auto vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+            propertyServer->registerProperty(OB_RAW_DATA_DEPTH_POST_FILTER_PARAMS, "", "r", vendorPropertyAccessor.get());
+
+            auto depthPostFilterParamsManager = std::make_shared<DepthPostFilterParamsManager>(this);
+            registerComponent(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, depthPostFilterParamsManager);
+        }
+    })
+
+    registerComponent(
+        OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER,
+        [this]() {
+            std::shared_ptr<G330DeviceLicenseInfoManager> licenseInfoManager;
+            TRY_EXECUTE({ licenseInfoManager = std::make_shared<G330DeviceLicenseInfoManager>(this); })
+            return licenseInfoManager;
+        },
+        false);
 
     fetchDeviceErrorState();
 }
@@ -448,6 +498,20 @@ void G330Device::initSensorList() {
         registerComponent(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, [this]() {
             auto factory        = getComponentT<FrameProcessorFactory>(OB_DEV_COMPONENT_FRAME_PROCESSOR_FACTORY);
             auto frameProcessor = factory->createFrameProcessor(OB_SENSOR_DEPTH);
+
+            auto depthPostFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+            if(depthPostFilterParamsManager && frameProcessor) {
+                auto noiseRmFilterParams = depthPostFilterParamsManager->getNoiseRemovalFilterUpdateParams();
+                int  paramSize           = static_cast<int>(noiseRmFilterParams.size());
+                for(int i = 0; i < paramSize; i++) {
+                    std::string filterConfigName = "NoiseRemovalFilter#";
+                    std::string configSchemaName = filterConfigName.append(std::to_string(i));
+                    frameProcessor->setConfigValue(configSchemaName, noiseRmFilterParams[i]);
+                }
+                OBPropertyValue value;
+                value.intValue = depthPostFilterParamsManager->isNoiseRemovalFilterEnable() ? 1 : 0;
+                frameProcessor->setPropertyValue(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, value);
+            }
             return frameProcessor;
         });
 
@@ -778,6 +842,20 @@ void                 G330Device::initSensorListGMSL() {
         registerComponent(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, [this]() {
             auto factory        = getComponentT<FrameProcessorFactory>(OB_DEV_COMPONENT_FRAME_PROCESSOR_FACTORY);
             auto frameProcessor = factory->createFrameProcessor(OB_SENSOR_DEPTH);
+
+            auto depthPostFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+            if(depthPostFilterParamsManager && frameProcessor) {
+                auto noiseRmFilterParams = depthPostFilterParamsManager->getNoiseRemovalFilterUpdateParams();
+                int  paramSize           = static_cast<int>(noiseRmFilterParams.size());
+                for(int i = 0; i < paramSize; i++) {
+                    std::string filterConfigName = "NoiseRemovalFilter#";
+                    std::string configSchemaName = filterConfigName.append(std::to_string(i));
+                    frameProcessor->setConfigValue(configSchemaName, noiseRmFilterParams[i]);
+                }
+                OBPropertyValue value;
+                value.intValue = depthPostFilterParamsManager->isNoiseRemovalFilterEnable() ? 1 : 0;
+                frameProcessor->setPropertyValue(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, value);
+            }
             return frameProcessor;
         });
 
@@ -880,10 +958,10 @@ void                 G330Device::initSensorListGMSL() {
                 auto port   = getSourcePort(rightIrPortInfo);
                 auto sensor = std::make_shared<VideoSensor>(this, OB_SENSOR_IR_RIGHT, port);
 
-                std::vector<FormatFilterConfig> formatFilterConfigs = { { FormatFilterPolicy::REMOVE, OB_FORMAT_Z16, OB_FORMAT_ANY, nullptr },  //
+                std::vector<FormatFilterConfig> formatFilterConfigs = { { FormatFilterPolicy::REMOVE, OB_FORMAT_Z16, OB_FORMAT_ANY, nullptr },   //
                                                                         { FormatFilterPolicy::REMOVE, OB_FORMAT_MJPG, OB_FORMAT_ANY, nullptr },  //
-                                                                        { FormatFilterPolicy::REMOVE, OB_FORMAT_Y10, OB_FORMAT_ANY, nullptr },  //
-                                                                        { FormatFilterPolicy::REMOVE, OB_FORMAT_Y14, OB_FORMAT_ANY, nullptr },  //
+                                                                        { FormatFilterPolicy::REMOVE, OB_FORMAT_Y10, OB_FORMAT_ANY, nullptr },   //
+                                                                        { FormatFilterPolicy::REMOVE, OB_FORMAT_Y14, OB_FORMAT_ANY, nullptr },   //
                                                                         { FormatFilterPolicy::REMOVE, OB_FORMAT_BA81, OB_FORMAT_ANY, nullptr },
                                                                         { FormatFilterPolicy::REMOVE, OB_FORMAT_NV12, OB_FORMAT_ANY, nullptr },
                                                                         { FormatFilterPolicy::REMOVE, OB_FORMAT_UYVY, OB_FORMAT_ANY, nullptr },
@@ -1135,7 +1213,8 @@ void G330Device::initProperties() {
             propertyServer->registerProperty(OB_PROP_LASER_ON_OFF_PATTERN_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_TEMPERATURE_COMPENSATION_BOOL, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_LDP_STATUS_BOOL, "r", "r", vendorPropertyAccessor);
-            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", vendorPropertyAccessor);
+            auto hwD2CGuardAccessor = std::make_shared<HardwareD2CPropertyAccessor>(this, vendorPropertyAccessor);
+            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", hwD2CGuardAccessor);
             propertyServer->registerProperty(OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_LDP_MEASURE_DISTANCE_INT, "r", "r", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_TIMER_RESET_SIGNAL_BOOL, "w", "w", vendorPropertyAccessor);
@@ -1224,123 +1303,22 @@ void G330Device::initProperties() {
     auto baseLinePropertyAccessor = std::make_shared<BaselinePropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_BASELINE_CALIBRATION_PARAM, "r", "r", baseLinePropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
-std::vector<std::shared_ptr<IFilter>> G330Device::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
+void G330Device::postInitialize() {
+    DeviceBase::postInitialize();
 
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
+    TRY_EXECUTE({
+        auto propertyServer = getPropertyServer();
+        if(propertyServer->isPropertySupported(OB_PROP_HOST_PLATFORM_INT, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+            uint32_t hostPlatform = getHostPlatformType();
+            propertyServer->setPropertyValueT<uint32_t>(OB_PROP_HOST_PLATFORM_INT, hostPlatform, PROP_ACCESS_INTERNAL);
+        }
+    })
 
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HDRMerge")) {
-            auto hdrMergeFilter = filterFactory->createFilter("HDRMerge");
-            depthFilterList.push_back(hdrMergeFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            depthFilterList.push_back(sequenceIdFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialFastFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialFastFilter");
-            // radius
-            std::vector<std::string> params = { "3" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialModerateFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialModerateFilter");
-            // magnitude, disp_diff, radius
-            std::vector<std::string> params = { "1", "160", "5" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "160", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("DisparityTransform")) {
-            auto dtFilter = filterFactory->createFilter("DisparityTransform");
-            depthFilterList.push_back(dtFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            if(filter->getName() != "DisparityTransform") {
-                filter->enable(false);
-            }
-        }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-    else if(type == OB_SENSOR_IR_LEFT) {
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_LEFT_IR_FRAME_PROCESSOR, false);
-        std::vector<std::shared_ptr<IFilter>> leftIRFilterList;
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            sequenceIdFilter->enable(false);
-            leftIRFilterList.push_back(sequenceIdFilter);
-            return leftIRFilterList;
-        }
-    }
-    else if(type == OB_SENSOR_IR_RIGHT) {
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_RIGHT_IR_FRAME_PROCESSOR, false);
-        std::vector<std::shared_ptr<IFilter>> rightIRFilterList;
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            sequenceIdFilter->enable(false);
-            rightIRFilterList.push_back(sequenceIdFilter);
-            return rightIRFilterList;
-        }
-    }
-
-    return {};
+    // Eagerly initialize the PresetManager to avoid lazy creation during streaming
+    (void)getComponentT<IPresetManager>(OB_DEV_COMPONENT_PRESET_MANAGER, false);
 }
 
 void G330Device::loadDefaultPostProcessingConfig() {
@@ -1378,6 +1356,72 @@ void G330Device::loadDefaultDepthPostProcessingConfig() {
         LOG_WARN(errorMsg);
     }
 }
+
+void G330Device::updateDepthPostProcessingFilterList() {
+    auto depthPostFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+    if(depthPostFilterParamsManager) {
+        // Update recommended filters
+        auto filterIter = recommendedPostFilters_.find(OB_SENSOR_DEPTH);
+        if(filterIter != recommendedPostFilters_.end()) {
+            std::vector<std::shared_ptr<IFilter>> newDepthFilterList;
+            std::vector<std::shared_ptr<IFilter>> depthFilterList = filterIter->second;
+            for(const auto &filter: depthFilterList) {
+                if(filter->getName() == "SpatialFastFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialFastFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialFastFilterEnable());
+                }
+                if(filter->getName() == "SpatialModerateFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialModerateFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialModerateFilterEnable());
+                }
+                if(filter->getName() == "SpatialAdvancedFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialAdvancedFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialAdvancedFilterEnable());
+                }
+                if(filter->getName() == "TemporalFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getTemporalFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isTemporalFilterEnable());
+                }
+                if(filter->getName() == "HoleFillingFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getHoleFillingFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isHoleFillingFilterEnable());
+                }
+                if(filter->getName() == "FalsePositiveFilter") {
+                    auto filterData = depthPostFilterParamsManager->getFPFilterParams();
+                    filter->setConfigData(filterData, sizeof(FalsePositiveFilterParams));
+                    filter->updateConfig(depthPostFilterParamsManager->getFPFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isFPFilterEnable());
+                }
+                newDepthFilterList.push_back(filter);
+            }
+            recommendedPostFilters_[OB_SENSOR_DEPTH] = newDepthFilterList;
+        }
+
+        // Update NoiseRemovalFilter
+        auto frameProcessor = getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
+        if(frameProcessor) {
+            auto noiseRmFilterParams = depthPostFilterParamsManager->getNoiseRemovalFilterUpdateParams();
+            int  paramSize           = static_cast<int>(noiseRmFilterParams.size());
+            for(int i = 0; i < paramSize; i++) {
+                std::string filterConfigName = "NoiseRemovalFilter#";
+                std::string configSchemaName = filterConfigName.append(std::to_string(i));
+                frameProcessor->setConfigValue(configSchemaName, noiseRmFilterParams[i]);
+            }
+            OBPropertyValue value;
+            value.intValue = depthPostFilterParamsManager->isNoiseRemovalFilterEnable() ? 1 : 0;
+            frameProcessor->setPropertyValue(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, value);
+        }
+    }
+}
+
+uint16_t G330Device::getDepthMaxValidValue(OBFormat format) {
+    (void)format;
+    return 65535;
+}
+
+#if defined(BUILD_NET_PAL)
+//====================================================================================================================================
+//=========================================================G330NetDevice==============================================================
 
 // Helper: calculate the maximum valid depth pixel value for Gemini 335Le.
 static uint16_t calcG335LeMaxDepthValue(OBFormat format, float depthUnit, bool hwD2D) {
@@ -1420,15 +1464,6 @@ static uint16_t calcG335LeMaxDepthValue(OBFormat format, float depthUnit, bool h
     maxValue = static_cast<uint32_t>(std::floor(maxValue / depthUnit));
     return maxValue > 65535 ? 65535 : static_cast<uint16_t>(maxValue);
 }
-
-uint16_t G330Device::getDepthMaxValidValue(OBFormat format) {
-    (void)format;
-    return 65535;
-}
-
-#if defined(BUILD_NET_PAL)
-//====================================================================================================================================
-//=========================================================G330NetDevice==============================================================
 
 G330NetDevice::G330NetDevice(const std::shared_ptr<const IDeviceEnumInfo> &info, OBDeviceAccessMode accessMode) : DeviceBase(info, accessMode) {
     init();
@@ -1489,8 +1524,10 @@ void G330NetDevice::init() {
             });
     }
 
-    auto presetManager = std::make_shared<G330PresetManager>(this);
-    registerComponent(OB_DEV_COMPONENT_PRESET_MANAGER, presetManager);
+    registerComponent(OB_DEV_COMPONENT_PRESET_MANAGER, [this]() {
+        auto presetManager = std::make_shared<G330PresetManager>(this);
+        return presetManager;
+    });
 
     auto sensorStreamStrategy = std::make_shared<G330SensorStreamStrategy>(this);
     registerComponent(OB_DEV_COMPONENT_SENSOR_STREAM_STRATEGY, sensorStreamStrategy);
@@ -1544,6 +1581,15 @@ void G330NetDevice::init() {
         },
         false);
 
+    registerComponent(
+        OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER,
+        [this]() {
+            std::shared_ptr<G330DeviceLicenseInfoManager> licenseInfoManager;
+            TRY_EXECUTE({ licenseInfoManager = std::make_shared<G330DeviceLicenseInfoManager>(this); })
+            return licenseInfoManager;
+        },
+        false);
+
     auto propertyServer = getPropertyServer();
     auto fwVersion      = getFirmwareVersionInt();
     if(fwVersion >= 373) {
@@ -1589,6 +1635,8 @@ void G330NetDevice::init() {
 
     if(fwVersion >= 10632) {
         propertyServer->registerProperty(OB_PROP_COLOR_PRESET_PRIORITY_INT, "rw", "rw", vendorPropertyAccessor.get());
+
+        registerComponent(OB_DEV_COMPONENT_COLOR_PRESET_MANAGER, [this]() { return std::make_shared<ColorPresetManager>(this, getG330ColorPresetMap()); });
     }
     if(fwVersion >= 10705 && fwVersion < 10716) {
         propertyServer->registerProperty(OB_PROP_DEVICE_NETWORK_LLA_BOOL, "rw", "rw", vendorPropertyAccessor.get());
@@ -1612,34 +1660,54 @@ void G330NetDevice::init() {
         propertyServer->registerProperty(OB_PROP_DHCP_ASSIGN_IP_TIMEOUT_INT, "rw", "rw", vendorPropertyAccessor.get());
     }
 
+    if(fwVersion >= 10746) {
+        propertyServer->registerProperty(OB_PROP_CURRENT_DISP_SEARCH_RANGE_MODE_INT, "r", "r", vendorPropertyAccessor.get());
+        propertyServer->registerProperty(OB_PROP_CURRENT_DISP_SEARCH_OFFSET_INT, "r", "r", vendorPropertyAccessor.get());
+    }
+
+    if(fwVersion >= 10811) {
+        propertyServer->registerProperty(OB_PROP_MJPEG_QUALITY_INT, "rw", "rw", vendorPropertyAccessor.get());
+    }
+
     // Cache depth unit and hwD2D to avoid per-frame device queries in getDepthMaxValidValue.
     // OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT can change dynamically;
     // OB_PROP_DISPARITY_TO_DEPTH_BOOL does not change during streaming but may change between streams.
-    propertyServer->registerAccessCallback(
-        { OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT, OB_PROP_DISPARITY_TO_DEPTH_BOOL },
-        [this](uint32_t propId, const uint8_t *data, size_t dataSize, PropertyOperationType opType) {
-            if(opType != PROP_OP_WRITE || data == nullptr) {
-                return;
-            }
-            if(propId == OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT && dataSize >= sizeof(float)) {
-                cachedDepthUnit_ = *reinterpret_cast<const float *>(data);
-            }
-            else if(propId == OB_PROP_DISPARITY_TO_DEPTH_BOOL && dataSize >= sizeof(uint32_t)) {
-                cachedHwD2D_ = (*reinterpret_cast<const uint32_t *>(data) != 0);
-            }
-        });
+    propertyServer->registerAccessCallback({ OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT, OB_PROP_DISPARITY_TO_DEPTH_BOOL },
+                                           [this](uint32_t propId, const uint8_t *data, size_t dataSize, PropertyOperationType opType) {
+                                               if(opType != PROP_OP_WRITE || data == nullptr) {
+                                                   return;
+                                               }
+                                               if(propId == OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT && dataSize >= sizeof(float)) {
+                                                   cachedDepthUnit_ = *reinterpret_cast<const float *>(data);
+                                               }
+                                               else if(propId == OB_PROP_DISPARITY_TO_DEPTH_BOOL && dataSize >= sizeof(uint32_t)) {
+                                                   cachedHwD2D_ = (*reinterpret_cast<const uint32_t *>(data) != 0);
+                                               }
+                                           });
+
+    TRY_EXECUTE({
+        if(getFirmwareVersionInt() >= 10621) {
+            vendorPropertyAccessor = getComponentT<VendorPropertyAccessor>(OB_DEV_COMPONENT_MAIN_PROPERTY_ACCESSOR);
+            propertyServer->registerProperty(OB_RAW_DATA_DEPTH_POST_FILTER_PARAMS, "", "r", vendorPropertyAccessor.get());
+
+            auto depthPostFilterParamsManager = std::make_shared<DepthPostFilterParamsManager>(this);
+            registerComponent(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, depthPostFilterParamsManager);
+        }
+    })
 
     fetchDeviceErrorState();
 }
 
 void G330NetDevice::postInitialize() {
     DeviceBase::postInitialize();
+    // Eagerly initialize the PresetManager to avoid lazy creation during streaming
+    (void)getComponentT<IPresetManager>(OB_DEV_COMPONENT_PRESET_MANAGER, false);
     // initialize `cachedDepthUnit_` to prevent deadlocks in component resources caused by the stream closing too quickly.
     (void)getDepthMaxValidValue(OB_FORMAT_Y16);
 }
 
 void G330NetDevice::checkAndAcquireCCP() {
-    ccpController_ = std::make_shared<GvcpCcpController>(enumInfo_, "1.6.07");
+    ccpController_ = std::make_shared<GvcpCcpController>(enumInfo_);
     if(!ccpController_->isSupported()) {
         return;
     }
@@ -1817,6 +1885,20 @@ void G330NetDevice::initSensorList() {
         registerComponent(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, [this]() {
             auto factory        = getComponentT<FrameProcessorFactory>(OB_DEV_COMPONENT_FRAME_PROCESSOR_FACTORY);
             auto frameProcessor = factory->createFrameProcessor(OB_SENSOR_DEPTH);
+
+            auto depthPostFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+            if(depthPostFilterParamsManager && frameProcessor) {
+                auto noiseRmFilterParams = depthPostFilterParamsManager->getNoiseRemovalFilterUpdateParams();
+                int  paramSize           = static_cast<int>(noiseRmFilterParams.size());
+                for(int i = 0; i < paramSize; i++) {
+                    std::string filterConfigName = "NoiseRemovalFilter#";
+                    std::string configSchemaName = filterConfigName.append(std::to_string(i));
+                    frameProcessor->setConfigValue(configSchemaName, noiseRmFilterParams[i]);
+                }
+                OBPropertyValue value;
+                value.intValue = depthPostFilterParamsManager->isNoiseRemovalFilterEnable() ? 1 : 0;
+                frameProcessor->setPropertyValue(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, value);
+            }
             return frameProcessor;
         });
     }
@@ -2143,7 +2225,8 @@ void G330NetDevice::initProperties() {
             propertyServer->registerProperty(OB_PROP_LASER_ON_OFF_PATTERN_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_TEMPERATURE_COMPENSATION_BOOL, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_LDP_STATUS_BOOL, "r", "r", vendorPropertyAccessor);
-            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", vendorPropertyAccessor);
+            auto hwD2CGuardAccessor = std::make_shared<HardwareD2CPropertyAccessor>(this, vendorPropertyAccessor);
+            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", hwD2CGuardAccessor);
             propertyServer->registerProperty(OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_LDP_MEASURE_DISTANCE_INT, "r", "r", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_TIMER_RESET_SIGNAL_BOOL, "w", "w", vendorPropertyAccessor);
@@ -2226,123 +2309,64 @@ void G330NetDevice::initProperties() {
     auto baseLinePropertyAccessor = std::make_shared<BaselinePropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_BASELINE_CALIBRATION_PARAM, "r", "r", baseLinePropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
-std::vector<std::shared_ptr<IFilter>> G330NetDevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HDRMerge")) {
-            auto hdrMergeFilter = filterFactory->createFilter("HDRMerge");
-            depthFilterList.push_back(hdrMergeFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            depthFilterList.push_back(sequenceIdFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialFastFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialFastFilter");
-            // radius
-            std::vector<std::string> params = { "3" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialModerateFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialModerateFilter");
-            // magnitude, disp_diff, radius
-            std::vector<std::string> params = { "1", "160", "5" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "160", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("DisparityTransform")) {
-            auto dtFilter = filterFactory->createFilter("DisparityTransform");
-            depthFilterList.push_back(dtFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            if(filter->getName() != "DisparityTransform") {
-                filter->enable(false);
+void G330NetDevice::updateDepthPostProcessingFilterList() {
+    auto depthPostFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+    if(depthPostFilterParamsManager) {
+        // Update recommended filters
+        auto filterIter = recommendedPostFilters_.find(OB_SENSOR_DEPTH);
+        if(filterIter != recommendedPostFilters_.end()) {
+            std::vector<std::shared_ptr<IFilter>> newDepthFilterList;
+            std::vector<std::shared_ptr<IFilter>> depthFilterList = filterIter->second;
+            for(const auto &filter: depthFilterList) {
+                if(filter->getName() == "SpatialFastFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialFastFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialFastFilterEnable());
+                }
+                if(filter->getName() == "SpatialModerateFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialModerateFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialModerateFilterEnable());
+                }
+                if(filter->getName() == "SpatialAdvancedFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getSpatialAdvancedFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isSpatialAdvancedFilterEnable());
+                }
+                if(filter->getName() == "TemporalFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getTemporalFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isTemporalFilterEnable());
+                }
+                if(filter->getName() == "HoleFillingFilter") {
+                    filter->updateConfig(depthPostFilterParamsManager->getHoleFillingFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isHoleFillingFilterEnable());
+                }
+                if(filter->getName() == "FalsePositiveFilter") {
+                    auto filterData = depthPostFilterParamsManager->getFPFilterParams();
+                    filter->setConfigData(filterData, sizeof(FalsePositiveFilterParams));
+                    filter->updateConfig(depthPostFilterParamsManager->getFPFilterUpdateParams());
+                    filter->enable(depthPostFilterParamsManager->isFPFilterEnable());
+                }
+                newDepthFilterList.push_back(filter);
             }
+            recommendedPostFilters_[OB_SENSOR_DEPTH] = newDepthFilterList;
         }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
 
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-    else if(type == OB_SENSOR_IR_LEFT) {
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_LEFT_IR_FRAME_PROCESSOR, false);
-        std::vector<std::shared_ptr<IFilter>> leftIRFilterList;
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            sequenceIdFilter->enable(false);
-            leftIRFilterList.push_back(sequenceIdFilter);
-            return leftIRFilterList;
+        // Update NoiseRemovalFilter
+        auto frameProcessor = getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
+        if(frameProcessor) {
+            auto noiseRmFilterParams = depthPostFilterParamsManager->getNoiseRemovalFilterUpdateParams();
+            int  paramSize           = static_cast<int>(noiseRmFilterParams.size());
+            for(int i = 0; i < paramSize; i++) {
+                std::string filterConfigName = "NoiseRemovalFilter#";
+                std::string configSchemaName = filterConfigName.append(std::to_string(i));
+                frameProcessor->setConfigValue(configSchemaName, noiseRmFilterParams[i]);
+            }
+            OBPropertyValue value;
+            value.intValue = depthPostFilterParamsManager->isNoiseRemovalFilterEnable() ? 1 : 0;
+            frameProcessor->setPropertyValue(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, value);
         }
     }
-    else if(type == OB_SENSOR_IR_RIGHT) {
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_RIGHT_IR_FRAME_PROCESSOR, false);
-        std::vector<std::shared_ptr<IFilter>> rightIRFilterList;
-        if(filterFactory->isFilterCreatorExists("SequenceIdFilter")) {
-            auto sequenceIdFilter = filterFactory->createFilter("SequenceIdFilter");
-            sequenceIdFilter->enable(false);
-            rightIRFilterList.push_back(sequenceIdFilter);
-            return rightIRFilterList;
-        }
-    }
-
-    return {};
 }
 
 void libobsensor::G330NetDevice::initSensorStreamProfileList(std::shared_ptr<ISensor> sensor) {

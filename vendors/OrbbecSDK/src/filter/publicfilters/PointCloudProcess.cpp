@@ -83,7 +83,10 @@ void PointCloudFilter::updateConfig(std::vector<std::string> &params) {
             pointFormat_ = type;
         }
 
-        float scale = std::stof(params[1]);
+        float scale = 0.0f;
+        if(!utils::string::cvt2Float(params[1], scale)) {
+            LOG_WARN("Invalid scale value: {}", params[1]);
+        }
         if(scale >= 0.00000001 && scale <= 100) {
             positionDataScale_ = scale;
         }
@@ -118,7 +121,7 @@ void PointCloudFilter::setConfigData(void *data, uint32_t size) {
 }
 
 const std::string &PointCloudFilter::getConfigSchema() const {
-    // csv format: name，type， min，max，step，default，description
+    // csv format: name, type,  min, max, step, default, description
     static const std::string schema = "pointFormat, integer, 19, 20, 1, 19, create point type: 19 is OB_FORMAT_POINT; 20 is OB_FORMAT_RGB_POINT\n"
                                       "coordinateDataScale, float, 0.00000001, 100, 0.00001, 1.0, coordinate data scale\n"
                                       "colorDataNormalization, integer, 0, 1, 1, 0, color data normal state\n"

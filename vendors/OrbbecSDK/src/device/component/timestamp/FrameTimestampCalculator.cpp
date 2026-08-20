@@ -7,19 +7,41 @@
 #include "utils/Utils.hpp"
 #include "logger/LoggerInterval.hpp"
 #include "InternalTypes.hpp"
+#include <cmath>
 
 namespace libobsensor {
 
 #define BASE_DEV_TIME_MASK 0xffffffff00000000
-#define TSP_OVERFLOW_32BIT 0x100000000
+static constexpr uint64_t TSP_OVERFLOW_32BIT = 0x100000000ULL;
 
 GlobalTimestampCalculator::GlobalTimestampCalculator(IDevice *owner, uint64_t deviceTimeFreq, uint64_t frameTimeFreq)
     : DeviceComponentBase(owner), deviceTimeFreq_(deviceTimeFreq), frameTimeFreq_(frameTimeFreq) {
     (void)frameTimeFreq_;
     globalTimestampFitter_ = owner->getComponentT<IGlobalTimestampFitter>(OB_DEV_COMPONENT_GLOBAL_TIMESTAMP_FILTER).get();
+
+    // Reset EMA/refit state on device-clock reset events to avoid a 25s wrong-output tail.
+    auto                  propServer = owner->getPropertyServer();
+    std::vector<uint32_t> resetProps;
+    if(propServer->isPropertySupported(OB_PROP_TIMER_RESET_SIGNAL_BOOL, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+        resetProps.push_back(OB_PROP_TIMER_RESET_SIGNAL_BOOL);
+    }
+    if(propServer->isPropertySupported(OB_STRUCT_DEVICE_TIME, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+        resetProps.push_back(OB_STRUCT_DEVICE_TIME);
+    }
+    if(!resetProps.empty()) {
+        propServer->registerAccessCallback(resetProps, [this](uint32_t, const uint8_t *, size_t, PropertyOperationType operationType) {
+            if(operationType == PROP_OP_WRITE) {
+                clear();
+            }
+        });
+    }
 }
 
 void GlobalTimestampCalculator::calculate(std::shared_ptr<Frame> frame) {
+    if(pendingReset_.exchange(false, std::memory_order_acquire)) {
+        resetStateImpl();
+    }
+
     const auto rawTsUs = frame->getTimeStampUsec();
     if(rawTsUs == 0) {
         // If the device timestamp is invalid (0), keep global timestamp as 0.
@@ -27,39 +49,107 @@ void GlobalTimestampCalculator::calculate(std::shared_ptr<Frame> frame) {
         return;
     }
 
-    auto srcTimestamp    = static_cast<uint32_t>(rawTsUs);  // get timestamp from frame and keep low 32 bits
     auto linearFuncParam = globalTimestampFitter_->getLinearFuncParam();
-
-    // Convert to a timestamp with the same frequency as the device clock frequency
-    double   transformedTsp              = static_cast<double>(srcTimestamp) * deviceTimeFreq_ / 1000000.0;
-    uint64_t transformedTspOverflowValue = static_cast<uint64_t>(static_cast<double>(TSP_OVERFLOW_32BIT) * deviceTimeFreq_ / 1000000.0);
-
-    // Calculate the approximate number of overflows based on the check data. The number of overflows of the current data frame should be within the range of
-    // this number plus or minus 1.
-    uint32_t numOfOverflows = static_cast<uint32_t>(linearFuncParam.checkDataX / transformedTspOverflowValue);
-    if(numOfOverflows > 0) {
-        numOfOverflows--;
+    if(linearFuncParam.coefficientA <= 0) {
+        // No valid fit yet.
+        frame->setGlobalTimeStampUsec(0);
+        return;
     }
-    while(true) {
-        double value1 = (double)numOfOverflows * transformedTspOverflowValue + transformedTsp;
-        double value2 = (double)(numOfOverflows + 1.0) * transformedTspOverflowValue + transformedTsp;
-        if(value1 >= linearFuncParam.checkDataX) {
-            break;
+
+    // Convert frame device timestamp (us) to the same unit as fit anchors (ms),
+    // assuming the full uint64_t timestamp - no 32-bit rollover handling needed.
+    double frameDevMs = static_cast<double>(rawTsUs) * deviceTimeFreq_ / 1000000.0;
+
+    // Always anchor at the fit center: it is a weighted mean of N samples (sqrt(N) lower
+    // noise than any single raw point); drift is handled by the fitter, not by switching anchor.
+    double anchorDevMs = static_cast<double>(linearFuncParam.refDevTime);
+    double anchorSysUs = static_cast<double>(linearFuncParam.refSysTime);
+
+    double   diff           = frameDevMs - anchorDevMs;
+    double   incrementalUs  = linearFuncParam.coefficientA * diff;
+    double   predSteadyUs   = anchorSysUs + incrementalUs;
+    uint64_t frameSteadyTs  = frame->getSteadyTimeStampUsec();
+    int64_t  realtimeOffset = static_cast<int64_t>(frame->getSystemTimeStampUsec()) - static_cast<int64_t>(frameSteadyTs);
+    int64_t  globalTsp      = static_cast<int64_t>(predSteadyUs + 0.5) + realtimeOffset;
+
+    auto ptpActive       = globalTimestampFitter_->isPtpActive();
+    auto ptpStateChanged = (ptpActive != prevPtpActive_);
+    if(!ptpActive) {
+        // Refit detection: if fit params changed, predSteadyUs jumps by Δ for this same frame.
+        // Shift ema_ by -Δ so output stays continuous and EMA continues tracking new residuals.
+        if(fitCached_ && (linearFuncParam.coefficientA != prevCoeffA_ || anchorDevMs != prevAnchorDevMs_ || anchorSysUs != prevAnchorSysUs_)) {
+            double prevPredUs = prevAnchorSysUs_ + prevCoeffA_ * (frameDevMs - prevAnchorDevMs_);
+            double delta      = predSteadyUs - prevPredUs;
+            ema_ -= delta;
         }
-        if(value1 <= linearFuncParam.checkDataX && value2 >= linearFuncParam.checkDataX) {
-            if(linearFuncParam.checkDataX - value1 > value2 - linearFuncParam.checkDataX) {
-                numOfOverflows++;
+        prevCoeffA_      = linearFuncParam.coefficientA;
+        prevAnchorDevMs_ = anchorDevMs;
+        prevAnchorSysUs_ = anchorSysUs;
+        fitCached_       = true;
+
+        // EMA correction: tracks slow bias drift continuously. See header for math.
+        double  residualUs   = static_cast<double>(frameSteadyTs) - predSteadyUs;
+        int64_t correctionUs = 0;
+        if(!emaInited_) {
+            ema_               = residualUs;
+            madEma_            = 0.0;
+            startSteadyUs_     = frameSteadyTs;
+            lastFrameSteadyUs_ = frameSteadyTs;
+            emaInited_         = true;
+        }
+        else {
+            double dtUs = static_cast<double>(frameSteadyTs - lastFrameSteadyUs_);
+            if(dtUs <= 0.0) {
+                dtUs = 1.0;
             }
-            break;
+            double alpha = 1.0 - std::exp(-dtUs / EMA_TAU_US);
+            double devUs = residualUs - ema_;
+            // Outlier gate: only active after baseline lock (MAD has settled by then).
+            double madThr    = std::max(MAD_FLOOR_US, OUTLIER_K * madEma_);
+            bool   isOutlier = baselineReady_ && (std::fabs(devUs) > madThr);
+            if(!isOutlier) {
+                ema_    = ema_ + alpha * devUs;
+                madEma_ = madEma_ + alpha * (std::fabs(devUs) - madEma_);
+            }
+            lastFrameSteadyUs_ = frameSteadyTs;
         }
-        numOfOverflows++;
+        if(!baselineReady_ && (frameSteadyTs - startSteadyUs_) >= BASELINE_LOCK_US) {
+            emaBaseline_   = ema_;
+            baselineReady_ = true;
+        }
+        if(baselineReady_) {
+            correctionUs = static_cast<int64_t>(ema_ - emaBaseline_);
+        }
+        globalTsp += correctionUs;
     }
-    transformedTsp = (static_cast<double>(TSP_OVERFLOW_32BIT) * numOfOverflows + srcTimestamp) * deviceTimeFreq_ / 1000000;
-    auto globalTsp = static_cast<uint64_t>(linearFuncParam.coefficientA * transformedTsp + linearFuncParam.constantB);
-    frame->setGlobalTimeStampUsec(globalTsp);
+    else if(ptpStateChanged) {
+        // PTP just became active: clear accumulated EMA state once so it does not pollute
+        // the output if PTP is later lost and EMA resumes.
+        resetStateImpl();
+        prevPtpActive_ = ptpActive;
+    }
+
+    frame->setGlobalTimeStampUsec(static_cast<uint64_t>(globalTsp));
 }
 
-void GlobalTimestampCalculator::clear() {}
+void GlobalTimestampCalculator::clear() {
+    // Thread-safe: actual reset runs at the top of the next calculate() on the frame thread.
+    pendingReset_.store(true, std::memory_order_release);
+}
+
+void GlobalTimestampCalculator::resetStateImpl() {
+    ema_               = 0.0;
+    emaBaseline_       = 0.0;
+    madEma_            = 0.0;
+    startSteadyUs_     = 0;
+    lastFrameSteadyUs_ = 0;
+    emaInited_         = false;
+    baselineReady_     = false;
+    prevCoeffA_        = 0.0;
+    prevAnchorDevMs_   = 0.0;
+    prevAnchorSysUs_   = 0.0;
+    fitCached_         = false;
+}
 
 FrameTimestampCalculatorDirectly::FrameTimestampCalculatorDirectly(IDevice *device, uint64_t clockFreq) : DeviceComponentBase(device), clockFreq_(clockFreq) {}
 
@@ -95,7 +185,7 @@ void FrameTimestampCalculatorBaseDeviceTime::calculate(std::shared_ptr<Frame> fr
 }
 
 uint64_t FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimestamp) {
-    // Conditions that need to update baseDevTime_:
+    std::lock_guard<std::mutex> lock(mutex_);
     // 1. The first frame after opening the stream
     // 2. The timestamp becomes smaller (the size of the timestamps of the previous and later data frames is reversed), indicating that a timestamp overflow has
     // occurred or the device clock has been cleared (a small probability may also be caused by abnormal data transmission)
@@ -109,7 +199,7 @@ uint64_t FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimestamp
     bool tspDecrease = (srcTimestamp < prevSrcTsp_);
 
     // Determine whether the data frame timestamp difference is similar to the system timestamp difference
-    uint64_t curHostTsp      = utils::getNowTimesMs();
+    uint64_t curHostTsp      = utils::getSteadyTimeMs();
     int64_t  srcTspDiffMs    = static_cast<int64_t>((static_cast<double>(srcTimestamp) - prevSrcTsp_) / frameTimeFreq_ * 1000);  // Convert unit to milliseconds
     int64_t  hostTspDiffMs   = curHostTsp - prevHostTsp_;
     uint64_t prevSrcTspMs    = static_cast<uint64_t>(static_cast<double>(prevSrcTsp_) / frameTimeFreq_ * 1000);
@@ -141,6 +231,7 @@ uint64_t FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimestamp
 }
 
 void FrameTimestampCalculatorBaseDeviceTime::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
     prevSrcTsp_  = 0;
     prevHostTsp_ = 0;
     baseDevTime_ = 0;
@@ -173,14 +264,16 @@ void FrameTimestampCalculatorOverUvcSCR::calculate(std::shared_ptr<Frame> frame)
 
 void FrameTimestampCalculatorOverUvcSCR::clear() {}
 
-G435LeFrameTimestampCalculatorDeviceTime::G435LeFrameTimestampCalculatorDeviceTime(IDevice *device, uint64_t deviceTimeFreq, uint64_t frameTimeFreq, uint64_t clockFreq)
+G435LeFrameTimestampCalculatorDeviceTime::G435LeFrameTimestampCalculatorDeviceTime(IDevice *device, uint64_t deviceTimeFreq, uint64_t frameTimeFreq,
+                                                                                   uint64_t clockFreq)
     : DeviceComponentBase(device) {
-    baseCalculator_ = std::make_shared<FrameTimestampCalculatorBaseDeviceTime>(device, deviceTimeFreq, frameTimeFreq);
+    baseCalculator_   = std::make_shared<FrameTimestampCalculatorBaseDeviceTime>(device, deviceTimeFreq, frameTimeFreq);
     directCalculator_ = std::make_shared<FrameTimestampCalculatorDirectly>(device, clockFreq);
 }
 
-void G435LeFrameTimestampCalculatorDeviceTime::calculate(std::shared_ptr<Frame> frame)  {
-    if(frame->getFormat() == OB_FORMAT_YUYV || frame->getFormat() == OB_FORMAT_I420 ||frame->getFormat() == OB_FORMAT_Y8 || frame->getFormat() == OB_FORMAT_Y10) {
+void G435LeFrameTimestampCalculatorDeviceTime::calculate(std::shared_ptr<Frame> frame) {
+    if(frame->getFormat() == OB_FORMAT_YUYV || frame->getFormat() == OB_FORMAT_I420 || frame->getFormat() == OB_FORMAT_Y8
+       || frame->getFormat() == OB_FORMAT_Y10) {
         directCalculator_->calculate(frame);
     }
     else {
@@ -199,4 +292,3 @@ void G435LeFrameTimestampCalculatorDeviceTime::clear() {
 }
 
 }  // namespace libobsensor
-

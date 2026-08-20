@@ -14,6 +14,7 @@
 #include "IDeviceMonitor.hpp"
 #include "utils/DeviceTypeHelper.hpp"
 #include "component/comprehensivefilter/DepthPostFilterParamsManager.hpp"
+#include "component/recommended_post_filters/RecommendedPostFilterStrategy.hpp"
 
 #ifdef __linux__
 #include "usb/uvc/UvcDevicePort.hpp"
@@ -166,18 +167,27 @@ void DeviceBase::fetchExtensionInfo() {
     extensionInfo_["AllSensorsUsingSameClock"] = "true";
 }
 
-void DeviceBase::fetchDeviceErrorState() {
+void DeviceBase::fetchDeviceErrorState(uint64_t maxCacheAgeMs) {
     auto propServer = getPropertyServer();
     if(propServer->isPropertySupported(OB_STRUCT_DEVICE_ERROR_STATE, PROP_OP_READ, PROP_ACCESS_INTERNAL)) {
+        std::lock_guard<std::mutex> lock(errorStateFetchMutex_);
+        if(maxCacheAgeMs > 0) {
+            auto now = utils::getSteadyTimeMs();
+            if(now - lastErrorStateFetchTime_ < maxCacheAgeMs) {
+                return;  // cache is still fresh enough, reuse cached value
+            }
+        }
         try {
-            deviceErrorState_ = 0;
-            auto state        = propServer->getStructureDataProtoV1_1_T<OBDeviceErrorState, 1>(OB_STRUCT_DEVICE_ERROR_STATE, PROP_ACCESS_INTERNAL);
-            deviceErrorState_ = state.errorCode;
+            deviceErrorState_        = 0;
+            auto state               = propServer->getStructureDataProtoV1_1_T<OBDeviceErrorState, 1>(OB_STRUCT_DEVICE_ERROR_STATE, PROP_ACCESS_INTERNAL);
+            deviceErrorState_        = state.errorCode;
+            lastErrorStateFetchTime_ = utils::getSteadyTimeMs();
         }
         CATCH_EXCEPTION
     }
     else {
         // Unsupported
+        std::lock_guard<std::mutex> lock(errorStateFetchMutex_);
         deviceErrorState_ = 0;
     }
 }
@@ -195,6 +205,7 @@ const std::string &DeviceBase::getExtensionInfo(const std::string &infoKey) cons
 }
 
 uint64_t DeviceBase::getDeviceErrorState() const {
+    std::lock_guard<std::mutex> lock(errorStateFetchMutex_);
     return deviceErrorState_;
 }
 
@@ -203,15 +214,21 @@ DeviceBase::~DeviceBase() noexcept {
 }
 
 void DeviceBase::deactivate() {
+    std::lock_guard<std::mutex> guard(deactivateMutex_);
+    if(isDeactivated_) {
+        return;
+    }
+
     if(hasAnySensorStreamActivated()) {
         LOG_WARN("Device is deactivated or disconnected while there are still sensors streaming!");
     }
 
-    // CRITICAL: Heartbeat must be stopped before deactivating the device
+    // CRITICAL: Stop heartbeat and firmwareLog thread before deactivating the device
     TRY_EXECUTE({
         auto monitor = getComponentT<IDeviceMonitor>(OB_DEV_COMPONENT_DEVICE_MONITOR, false);
         if(monitor) {
             monitor->disableHeartbeat();
+            monitor->disableFirmwareLog();
         }
     });
 
@@ -444,17 +461,47 @@ bool DeviceBase::hasAnySensorStreamActivated() {
     return false;
 }
 
+bool DeviceBase::hasAnyVideoSensorStreamActivated() {
+    for(auto &item: sensorPortInfos_) {
+        auto sensorType = item.first;
+        if(!ob_is_video_sensor_type(sensorType)) {
+            continue;
+        }
+        if(isSensorCreated(sensorType)) {
+            TRY_EXECUTE({
+                auto sensor = getSensor(sensorType);
+                if(sensor && sensor->isStreamActivated()) {
+                    return true;
+                }
+            });
+        }
+    }
+    return false;
+}
+
 std::vector<std::shared_ptr<IFilter>> DeviceBase::createRecommendedPostProcessingFilters(OBSensorType type) {
-    if(type == OB_SENSOR_DEPTH) {
-        auto                                  filterFactory = FilterFactory::getInstance();
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
+    auto it = recommendedPostFilters_.find(type);
+    if(it != recommendedPostFilters_.end()) {
+        return it->second;
+    }
+
+    // The recommended list per device family is the single source of truth, resolved by vid/pid.
+    // Live devices and the playback device share it through this same factory.
+    std::vector<std::shared_ptr<IFilter>> filters;
+    auto                                  strategy = RecommendedPostFilterStrategyFactory::create(deviceInfo_->vid_, deviceInfo_->pid_);
+    if(strategy) {
+        filters = strategy->createFilters(this, type);
+    }
+    else if(type == OB_SENSOR_DEPTH) {
+        // Fallback for devices without a dedicated recommended list: a bare threshold filter.
+        auto filterFactory = FilterFactory::getInstance();
         if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
             auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
+            filters.push_back(ThresholdFilter);
         }
-        return depthFilterList;
     }
-    return {};
+    recommendedPostFilters_[type] = filters;
+    return filters;
 }
 
 std::shared_ptr<IFilter> DeviceBase::getSensorFrameFilter(const std::string &name, OBSensorType type, bool throwIfNotFound) {
@@ -630,23 +677,53 @@ void DeviceBase::updateOptionalDepthPresets(const char filePathList[][OB_PATH_MA
     });
 
     if(success) {
-        // refresh extension info, device error state and preset list
-        fetchExtensionInfo();
-        // device error state
-        fetchDeviceErrorState();
-        // update preset list
-        auto presetMgr = getComponentT<libobsensor::IPresetManager>(libobsensor::OB_DEV_COMPONENT_PRESET_MANAGER, false);
-        if(presetMgr) {
-            presetMgr->fetchPreset();
+        refreshAfterOptionalDepthPresetsUpdate();
+    }
+}
+
+void DeviceBase::updateOptionalDepthPresets(const OBDataView *dataList, uint8_t count, DeviceFwUpdateCallback updateCallback) {
+    if(!hasWriteAccess()) {
+        std::ostringstream oss;
+        oss << "The current access mode is " << accessMode_ << " and does not allow write operations";
+        THROW_ACCESS_DENIED_EXCEPTION(oss.str());
+    }
+
+    if(hasAnySensorStreamActivated()) {
+        THROW_WRONG_API_CALL_SEQUENCE_EXCEPTION("Device is streaming, please stop all sensors before updating preset!");
+    }
+
+    auto updater = getComponentT<FirmwareUpdater>(OB_DEV_COMPONENT_FIRMWARE_UPDATER, true);
+    bool success = false;
+    updater->updateOptionalDepthPresetsFromDataExt(dataList, count, [updateCallback, &success](OBFwUpdateState state, const char *message, uint8_t percent) {
+        updateCallback(state, message, percent);
+        if(state == STAT_DONE_WITH_DUPLICATES || state == STAT_DONE) {
+            // success
+            success = true;
         }
-        // update depth post filter params
-        auto depthPostrFilterParamsManager = getComponentT<libobsensor::DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
-        if(depthPostrFilterParamsManager) {
-            TRY_EXECUTE({
-                depthPostrFilterParamsManager->fetchParamFromDevice();
-                updateDepthPostProcessingFilterList();
-            });
-        }
+    });
+
+    if(success) {
+        refreshAfterOptionalDepthPresetsUpdate();
+    }
+}
+
+void DeviceBase::refreshAfterOptionalDepthPresetsUpdate() {
+    // refresh extension info, device error state and preset list
+    fetchExtensionInfo();
+    // device error state
+    fetchDeviceErrorState();
+    // update preset list
+    auto presetMgr = getComponentT<libobsensor::IPresetManager>(libobsensor::OB_DEV_COMPONENT_PRESET_MANAGER, false);
+    if(presetMgr) {
+        presetMgr->fetchPreset();
+    }
+    // update depth post filter params
+    auto depthPostrFilterParamsManager = getComponentT<libobsensor::DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
+    if(depthPostrFilterParamsManager) {
+        TRY_EXECUTE({
+            depthPostrFilterParamsManager->fetchParamFromDevice();
+            updateDepthPostProcessingFilterList();
+        });
     }
 }
 

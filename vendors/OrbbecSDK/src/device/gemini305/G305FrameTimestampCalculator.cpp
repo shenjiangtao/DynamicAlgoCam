@@ -33,7 +33,7 @@ void G305FrameTimestampCalculatorBaseDeviceTime::calculate(std::shared_ptr<Frame
 }
 
 uint64_t G305FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimestamp) {
-    // Conditions that need to update baseDevTime_:
+    std::lock_guard<std::mutex> lock(mutex_);
     // 1. The first frame after opening the stream
     // 2. The timestamp becomes smaller (the size of the timestamps of the previous and later data frames is reversed), indicating that a timestamp overflow has
     // occurred or the device clock has been cleared (a small probability may also be caused by abnormal data transmission)
@@ -47,7 +47,7 @@ uint64_t G305FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimes
     bool tspDecrease = (srcTimestamp < prevSrcTsp_) && (prevSrcTsp_ - srcTimestamp > 0.5 * frameTimeFreq_);  // 0.5 second
 
     // Determine whether the data frame timestamp difference is similar to the system timestamp difference
-    uint64_t curHostTsp      = utils::getNowTimesMs();
+    uint64_t curHostTsp      = utils::getSteadyTimeMs();
     int64_t  srcTspDiffMs    = static_cast<int64_t>((static_cast<double>(srcTimestamp) - prevSrcTsp_) / frameTimeFreq_ * 1000);  // Convert unit to milliseconds
     int64_t  hostTspDiffMs   = curHostTsp - prevHostTsp_;
     uint64_t prevSrcTspMs    = static_cast<uint64_t>(static_cast<double>(prevSrcTsp_) / frameTimeFreq_ * 1000);
@@ -87,6 +87,7 @@ uint64_t G305FrameTimestampCalculatorBaseDeviceTime::calculate(uint64_t srcTimes
 }
 
 void G305FrameTimestampCalculatorBaseDeviceTime::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
     prevSrcTsp_  = 0;
     prevHostTsp_ = 0;
     baseDevTime_ = 0;

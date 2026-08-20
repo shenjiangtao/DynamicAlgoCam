@@ -14,12 +14,16 @@ public:
     virtual void clear()                                 = 0;
 };
 
-// First degree function coefficient y=ax+b
+/**
+ * @brief Point-slope parameters for global timestamp linear regression
+ * Formula: system_ts(us) = coefficientA * (device_ts - refDevTime) + refSysTime
+ */
 typedef struct {
-    double   coefficientA;
-    double   constantB;
-    uint64_t checkDataX;
-    uint64_t checkDataY;
+    double   coefficientA;  // Slope (system_us / device_clock_unit), typically ~1000.0
+    uint64_t refDevTime;    // Predicted device timestamp (ms)
+    uint64_t refSysTime;    // Predicted system timestamp (us)
+    uint64_t devTime;       // Latest raw measured device timestamp (ms)
+    uint64_t sysTime;       // Latest raw measured system timestamp (us)
 } LinearFuncParam;
 
 class IGlobalTimestampFitter {
@@ -38,8 +42,9 @@ public:
     virtual void pause()               = 0;
     virtual void resume()              = 0;
 
-    virtual void enable(bool en)   = 0;
-    virtual bool isEnabled() const = 0;
+    virtual void enable(bool en)     = 0;
+    virtual bool isEnabled() const   = 0;
+    virtual bool isPtpActive() const = 0;
 };
 
 }  // namespace libobsensor

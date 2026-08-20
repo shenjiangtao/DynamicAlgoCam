@@ -2,53 +2,66 @@
 // Licensed under the MIT License.
 
 #include "FrameProcessor.hpp"
+#include "context/DynamicLibraryManager.hpp"
+#include "environment/EnvConfig.hpp"
 #include "frame/FrameFactory.hpp"
 #include "utils/Utils.hpp"
-#include "environment/EnvConfig.hpp"
 #include "property/InternalProperty.hpp"
 
 namespace libobsensor {
 FrameProcessorFactory::FrameProcessorFactory(IDevice *owner) : DeviceComponentBase(owner) {
-    std::string moduleLoadPath = EnvConfig::getExtensionsDirectory() + "/frameprocessor/";
-    dylib_                     = std::make_shared<dylib>(moduleLoadPath.c_str(), "ob_frame_processor");
-
-    auto dylib = dylib_;
-    context_   = std::shared_ptr<FrameProcessorContext>(new FrameProcessorContext(), [dylib](FrameProcessorContext *context) {
-        if(context->destroy_context) {
-            ob_error *error = nullptr;
-            context->destroy_context(context->context, &error);
-            delete error;
+    try {
+        dylib_ = DynamicLibraryManager::getInstance()->getLibrary("ob_frame_processor");
+        if(!dylib_) {
+            dylib_ = DynamicLibraryManager::getInstance()->loadLibrary(EnvConfig::getExtensionsDirectory() + "/frameprocessor/", "ob_frame_processor");
         }
-        delete context;
-    });
 
-    if(dylib_) {
-        context_->create_context = dylib_->get_function<ob_frame_processor_context *(ob_device *, ob_error **)>("ob_create_frame_processor_context");
-        context_->create_processor =
-            dylib_->get_function<ob_frame_processor *(ob_frame_processor_context *, ob_sensor_type type, ob_error **)>("ob_create_frame_processor");
-        context_->get_config_schema = dylib_->get_function<const char *(ob_frame_processor *, ob_error **)>("ob_frame_processor_get_config_schema");
-        context_->update_config     = dylib_->get_function<void(ob_frame_processor *, size_t, const char **, ob_error **)>("ob_frame_processor_update_config");
-        context_->process_frame     = dylib_->get_function<ob_frame *(ob_frame_processor *, ob_frame *, ob_error **)>("ob_frame_processor_process_frame");
-        context_->destroy_processor = dylib_->get_function<void(ob_frame_processor *, ob_error **)>("ob_destroy_frame_processor");
-        context_->destroy_context   = dylib_->get_function<void(ob_frame_processor_context *, ob_error **)>("ob_destroy_frame_processor_context");
-        context_->set_hardware_d2c_params = dylib->get_function<void(ob_frame_processor *, ob_camera_intrinsic, uint8_t, float, int16_t, int16_t, int16_t,
-                                                                     int16_t, bool, bool, ob_error **error)>("ob_frame_processor_set_hardware_d2c_params");
+        auto dylib = dylib_;
+        context_   = std::shared_ptr<FrameProcessorContext>(new FrameProcessorContext(), [dylib](FrameProcessorContext *context) {
+            if(context->destroy_context) {
+                ob_error *error = nullptr;
+                context->destroy_context(context->context, &error);
+                delete error;
+            }
+            delete context;
+        });
+
+        if(dylib_) {
+            context_->create_context = dylib_->get_function<ob_frame_processor_context *(ob_device *, ob_error **)>("ob_create_frame_processor_context");
+            context_->create_processor =
+                dylib_->get_function<ob_frame_processor *(ob_frame_processor_context *, ob_sensor_type type, ob_error **)>("ob_create_frame_processor");
+            context_->get_config_schema = dylib_->get_function<const char *(ob_frame_processor *, ob_error **)>("ob_frame_processor_get_config_schema");
+            context_->update_config = dylib_->get_function<void(ob_frame_processor *, size_t, const char **, ob_error **)>("ob_frame_processor_update_config");
+            context_->process_frame = dylib_->get_function<ob_frame *(ob_frame_processor *, ob_frame *, ob_error **)>("ob_frame_processor_process_frame");
+            context_->destroy_processor       = dylib_->get_function<void(ob_frame_processor *, ob_error **)>("ob_destroy_frame_processor");
+            context_->destroy_context         = dylib_->get_function<void(ob_frame_processor_context *, ob_error **)>("ob_destroy_frame_processor_context");
+            context_->set_hardware_d2c_params = dylib->get_function<void(ob_frame_processor *, ob_camera_intrinsic, uint8_t, float, int16_t, int16_t, int16_t,
+                                                                         int16_t, bool, bool, ob_error **error)>("ob_frame_processor_set_hardware_d2c_params");
+            TRY_EXECUTE(context_->set_pre_process_param =
+                            dylib->get_function<void(ob_frame_processor *, ob_d2c_pre_process_param, ob_error **)>("ob_frame_processor_set_pre_process_param"));
+            if(!context_->set_pre_process_param) {
+                LOG_WARN("ob_frame_processor_set_pre_process_param not found in dylib, pre-process param setting is not supported by this plugin version");
+            }
+        }
+        if(context_->create_context && !context_->context) {
+            auto cDevice      = new ob_device;
+            cDevice->device   = owner->shared_from_this();
+            ob_error *error   = nullptr;
+            context_->context = context_->create_context(cDevice, &error);
+            if(error) {
+                delete cDevice;
+                THROW_STANDARD_EXCEPTION("create frame processor context failed");
+            }
+
+            if(cDevice) {
+                delete cDevice;
+                cDevice = nullptr;
+            }
+        }
     }
-    if(context_->create_context && !context_->context) {
-        auto cDevice      = new ob_device;
-        cDevice->device   = owner->shared_from_this();
-        ob_error *error   = nullptr;
-        context_->context = context_->create_context(cDevice, &error);
-        if(error) {
-            // TODO
-            delete cDevice;
-            THROW_STANDARD_EXCEPTION("create frame processor context failed");
-        }
-
-        if(cDevice) {
-            delete cDevice;
-            cDevice = nullptr;
-        }
+    catch(const std::exception &e) {
+        LOG_WARN("Failed to load frame processor library: {}", e.what());
+        THROW_STANDARD_EXCEPTION(e.what());
     }
 }
 
@@ -134,27 +147,33 @@ FrameProcessor::~FrameProcessor() noexcept {
 }
 
 std::shared_ptr<Frame> FrameProcessor::process(std::shared_ptr<const Frame> frame) {
-    if(!context_->process_frame || !privateProcessor_) {
-        return FrameFactory::createFrameFromOtherFrame(frame, true);
-    }
-
-    checkAndUpdateConfig();
-
-    ob_frame              *c_frame = new ob_frame();
-    ob_error              *error   = nullptr;
     std::shared_ptr<Frame> resultFrame;
-    c_frame->frame = std::const_pointer_cast<Frame>(frame);
 
-    auto rst_frame = context_->process_frame(privateProcessor_, c_frame, &error);
-    if(rst_frame) {
-        resultFrame = rst_frame->frame;
-        delete rst_frame;
+    if(!context_->process_frame || !privateProcessor_) {
+        resultFrame = FrameFactory::createFrameFromOtherFrame(frame, true);
     }
-    delete c_frame;
+    else {
+        checkAndUpdateConfig();
 
-    if(error) {
-        delete error;
-        return FrameFactory::createFrameFromOtherFrame(frame, true);
+        ob_frame *c_frame = new ob_frame();
+        ob_error *error   = nullptr;
+        c_frame->frame    = std::const_pointer_cast<Frame>(frame);
+
+        auto rst_frame = context_->process_frame(privateProcessor_, c_frame, &error);
+        if(rst_frame) {
+            resultFrame = rst_frame->frame;
+            delete rst_frame;
+        }
+        delete c_frame;
+
+        if(error) {
+            delete error;
+            resultFrame = FrameFactory::createFrameFromOtherFrame(frame, true);
+        }
+    }
+
+    if(!resultFrame) {
+        return nullptr;
     }
 
     return resultFrame;
@@ -271,6 +290,33 @@ void DepthFrameProcessor::enableHardwareD2CProcess(bool enable) {
     }
 }
 
+bool DepthFrameProcessor::isHardwareD2CProcessEnabled() const {
+    auto owner          = getOwner();
+    auto propertyServer = owner->getPropertyServer();
+    bool isSupported    = propertyServer->isPropertySupported(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, PROP_OP_READ, PROP_ACCESS_INTERNAL);
+    if(isSupported) {
+        return propertyServer->getPropertyValueT<bool>(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL);
+    }
+    return false;
+}
+
+void DepthFrameProcessor::setPreProcessParam(const OBD2CPreProcessParam &param) {
+    if(!context_->set_pre_process_param) {
+        LOG_WARN("setPreProcessParam skipped: set_pre_process_param not supported by current plugin");
+        return;
+    }
+    if(!privateProcessor_) {
+        LOG_WARN("setPreProcessParam skipped: privateProcessor_ is null");
+        return;
+    }
+    ob_error *error = nullptr;
+    context_->set_pre_process_param(privateProcessor_, param, &error);
+    if(error) {
+        LOG_ERROR("set pre process param failed");
+        delete error;
+    }
+}
+
 void DepthFrameProcessor::setPropertyValue(uint32_t propertyId, const OBPropertyValue &value) {
     std::string configSchemaName = "";
     double      configValue      = 0.0;
@@ -299,6 +345,14 @@ void DepthFrameProcessor::setPropertyValue(uint32_t propertyId, const OBProperty
     } break;
     case OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_MAX_DIFF_INT: {
         configSchemaName = "NoiseRemovalFilter#1";
+        configValue      = static_cast<double>(value.intValue);
+    } break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_BOOL: {
+        configSchemaName = "DispOutliersFilter#255";
+        configValue      = static_cast<double>(value.intValue);
+    } break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_SEARCH_MODE_INT: {
+        configSchemaName = "DispOutliersFilter#0";
         configValue      = static_cast<double>(value.intValue);
     } break;
     case OB_PROP_DISPARITY_TO_DEPTH_BOOL: {
@@ -360,6 +414,14 @@ void DepthFrameProcessor::getPropertyValue(uint32_t propertyId, OBPropertyValue 
         auto getValue   = getConfigValue("NoiseRemovalFilter#1");
         value->intValue = static_cast<int32_t>(getValue);
     } break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_BOOL: {
+        auto getValue   = getConfigValue("DispOutliersFilter#255");
+        value->intValue = static_cast<int32_t>(getValue);
+    } break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_SEARCH_MODE_INT: {
+        auto getValue   = getConfigValue("DispOutliersFilter#0");
+        value->intValue = static_cast<int32_t>(getValue);
+    } break;
     case OB_PROP_DEPTH_MIRROR_BOOL: {
         auto getValue   = getConfigValue("FrameMirror#255");
         value->intValue = static_cast<int32_t>(getValue);
@@ -399,6 +461,12 @@ void DepthFrameProcessor::getPropertyRange(uint32_t propertyId, OBPropertyRange 
         break;
     case OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_MAX_DIFF_INT:
         configName = "NoiseRemovalFilter#1";
+        break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_BOOL:
+        configName = "DispOutliersFilter#255";
+        break;
+    case OB_PROP_DEPTH_OUTLIERS_FILTER_SEARCH_MODE_INT:
+        configName = "DispOutliersFilter#0";
         break;
     case OB_PROP_DEPTH_ROTATE_INT:
         configName = "FrameRotate#0";

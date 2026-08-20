@@ -27,13 +27,15 @@ template <typename T> uint32_t fourCc2Int(const T a, const T b, const T c, const
 OBFormat uvcFourccToOBFormat(uint32_t fourcc);
 uint32_t obFormatToUvcFourcc(OBFormat format);
 
-float mapIMUSampleRateToValue(OBIMUSampleRate rate);
-float mapLiDARScanRateToValue(OBLiDARScanRate rate);
+float           mapIMUSampleRateToValue(OBIMUSampleRate rate);
+OBIMUSampleRate mapValueToIMUSampleRate(float value);
+float           mapLiDARScanRateToValue(OBLiDARScanRate rate);
 
 const std::string &obFormatToStr(OBFormat type);
 const std::string &obFrameToStr(OBFrameType type);
 const std::string &obStreamToStr(OBStreamType type);
 const std::string &obSensorToStr(OBSensorType type);
+const std::string &obAlignModeToStr(OBAlignMode type);
 const std::string &obImuRateToStr(OBIMUSampleRate type);
 const std::string &GyroFullScaleRangeToStr(OBGyroFullScaleRange range);
 const std::string &AccelFullScaleRangeToStr(OBAccelFullScaleRange params);
@@ -44,6 +46,7 @@ OBFormat              strToOBFormat(const std::string str);
 OBFrameType           strToOBFrame(const std::string str);
 OBStreamType          strToOBStream(const std::string str);
 OBSensorType          strToOBSensor(const std::string str);
+OBAlignMode           strToOBAlignMode(const std::string str);
 OBIMUSampleRate       strToObImuRate(const std::string str);
 OBGyroFullScaleRange  strToGyroFullScaleRange(const std::string str);
 OBAccelFullScaleRange strToAccelFullScaleRange(const std::string str);
@@ -76,3 +79,4 @@ std::ostream &operator<<(std::ostream &os, const OBPlaybackStatus &status);
 std::ostream &operator<<(std::ostream &os, const OBMultiDeviceSyncConfig &config);
 std::ostream &operator<<(std::ostream &os, const OBDeviceSyncConfig &config);
 std::ostream &operator<<(std::ostream &os, const OBDeviceAccessMode &mode);
+std::ostream &operator<<(std::ostream &os, const OBClockType &type);

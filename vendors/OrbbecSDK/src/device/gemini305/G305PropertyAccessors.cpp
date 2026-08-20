@@ -47,8 +47,9 @@ void G305Disp2DepthPropertyAccessor::setPropertyValue(uint32_t propertyId, const
 
     } break;
     case OB_PROP_DISP_SEARCH_OFFSET_INT: {
-        auto sensor = owner_->getComponentT<ISensor>(OB_DEV_COMPONENT_DEPTH_SENSOR).get();
-        if(!sensor->isStreamActivated()) {
+        auto sensor    = owner_->getComponentT<ISensor>(OB_DEV_COMPONENT_DEPTH_SENSOR).get();
+        auto fwVersion = owner_->getFirmwareVersionInt();
+        if(!sensor->isStreamActivated() && fwVersion < 10076) {
             THROW_WRONG_API_CALL_SEQUENCE_EXCEPTION("disp search offset can only be set when depth sensor is activated");
         }
 
@@ -197,14 +198,7 @@ void G305HWNoiseRemovePropertyAccessor::getPropertyRange(uint32_t propertyId, OB
         commandPort->getPropertyRange(propertyId, range);
         auto cur              = exp(range->cur.floatValue) / (1 + exp(range->cur.floatValue));
         range->cur.floatValue = cur;
-
-        auto depthWorkModeManager = owner_->getComponentT<G305DepthWorkModeManager>(OB_DEV_COMPONENT_DEPTH_WORK_MODE_MANAGER);
-        if(depthWorkModeManager) {
-            const auto &currentDepthWorkMode = depthWorkModeManager->getCurrentDepthWorkMode();
-            if(std::strcmp(currentDepthWorkMode.name, "Default") == 0 || std::strcmp(currentDepthWorkMode.name, "Close Range Default") == 0) {
-                range->def.floatValue = 0.1f;
-            }
-        }
+        range->def.floatValue = 0.1f;
     } break;
 
     default: {
@@ -280,4 +274,5 @@ void G305ColorAePropertyAccessor::getPropertyRange(uint32_t propertyId, OBProper
     } break;
     }
 }
+
 }  // namespace libobsensor

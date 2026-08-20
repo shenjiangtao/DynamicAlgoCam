@@ -8,8 +8,8 @@
 #include <thread>
 #include <sys/mman.h>
 #include <mutex>
-#include <condition_variable>
 
+#include "utils/SteadyCondVar.hpp"
 #include "UvcDevicePort.hpp"
 #include "usb/enumerator/IUsbEnumerator.hpp"
 #include "frame/Frame.hpp"
@@ -110,12 +110,13 @@ struct V4lDeviceHandleGmsl {
     MutableFrameCallback                      frameCallback;
     std::shared_ptr<const VideoStreamProfile> profile = nullptr;
 
-    int                          stopPipeFd[2]   = { -1, -1 };  // pipe to signal the capture thread to stop
-    std::shared_ptr<std::thread> captureThread   = nullptr;
-    std::atomic<bool>            isCapturing     = { false };
-    std::atomic<bool>            canStartCapture = { false };
+    int                          stopPipeFd[2]         = { -1, -1 };  // pipe to signal the capture thread to stop
+    std::shared_ptr<std::thread> captureThread         = nullptr;
+    std::atomic<bool>            isCapturing           = { false };
+    std::atomic<bool>            canStartCapture       = { false };
+    bool                         needDropInitialFrames = false;
     std::mutex                   streamMutex;  // mutex for start capture
-    std::condition_variable      streamCv;     // cv for start capture
+    utils::SteadyCondVar         streamCv;     // cv for start capture
     std::atomic<std::uint64_t>   loopFrameIndex = { 0 };
 };
 
@@ -130,7 +131,7 @@ public:
     void stopStream(std::shared_ptr<const StreamProfile> profile) override;
     void stopAllStream() override;
 
-    uint32_t sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen) override;
+    uint32_t sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen, utils::TransferTiming *timing) override;
 
     bool            getPu(uint32_t propertyId, int32_t &value) override;
     bool            setPu(uint32_t propertyId, int32_t value) override;
@@ -167,6 +168,7 @@ private:
     std::shared_ptr<const USBSourcePortInfo>          portInfo_ = nullptr;
     std::vector<std::shared_ptr<V4lDeviceHandleGmsl>> deviceHandles_;
     std::recursive_mutex                              streamMutex_;
+    bool                                              isDaBaiADevice_ = false;
 };
 
 }  // namespace libobsensor

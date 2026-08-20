@@ -11,11 +11,7 @@ extern "C" {
 #endif
 
 #if defined(__linux__) || defined(__APPLE__)
-#ifdef __linux__
-#include <termio.h>
-#else
 #include <termios.h>
-#endif
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -201,7 +197,7 @@ bool ob_smpl_is_lidar_device(ob_device *device) {
 }
 
 bool ob_smpl_is_gemini305_device(int vid, int pid) {
-    return (vid == OB_DEVICE_VID && (pid == 0x0840 || pid == 0x0841 || pid == 0x0842 || pid == 0x0843));
+    return (vid == OB_DEVICE_VID && (pid == 0x0840 || pid == 0x0841 || pid == 0x0842 || pid == 0x0843|| pid == 0x0845));
 }
 
 bool ob_smpl_is_gemini305g_device(int vid, int pid, const char *connectionType) {
@@ -210,6 +206,10 @@ bool ob_smpl_is_gemini305g_device(int vid, int pid, const char *connectionType) 
 
 bool ob_smpl_is_astra_mini_device(int vid, int pid) {
     return (vid == OB_DEVICE_VID && (pid == 0x069d || pid == 0x065b || pid == 0x065e));
+}
+
+bool ob_smpl_is_dabai_a_series_device(int vid, int pid) {
+    return (vid == OB_DEVICE_VID && (pid == 0x0A12 || pid == 0x0A13 || pid == 0x0812 || pid == 0x0813));
 }
 
 #ifdef __cplusplus

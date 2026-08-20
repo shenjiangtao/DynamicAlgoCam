@@ -15,10 +15,9 @@ public:
     FemtoBoltDevice(const std::shared_ptr<const IDeviceEnumInfo> &info);
     virtual ~FemtoBoltDevice() noexcept override;
 
-    std::vector<std::shared_ptr<IFilter>> createRecommendedPostProcessingFilters(OBSensorType type) override;
-
 private:
     void init() override;
+    void postInitialize() override;
     void initSensorList();
     void initProperties();
     void initSensorStreamProfile(std::shared_ptr<ISensor> sensor);

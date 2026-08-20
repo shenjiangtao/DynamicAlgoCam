@@ -25,6 +25,7 @@
 #include "logger/LoggerInterval.hpp"
 #include "exception/ObException.hpp"
 #include "frame/FrameFactory.hpp"
+#include "common/DevicePids.hpp"
 
 #include <iostream>
 #include <chrono>
@@ -530,6 +531,8 @@ ObV4lGmslDevicePort::ObV4lGmslDevicePort(std::shared_ptr<const USBSourcePortInfo
         THROW_DEVICE_UNAVAILABLE_EXCEPTION("No v4l device found for port: " + portInfo_->infUrl);
     }
 
+    isDaBaiADevice_ = isDeviceInContainer(DaBaiADevPids, portInfo_->vid, portInfo_->pid);
+
     LOG_DEBUG("V4L device port created for {} with {} v4l2 device", portInfo_->infUrl, deviceHandles_.size());
 }
 
@@ -629,7 +632,7 @@ void writeBufferToFile(const char *buf, std::size_t size, const std::string &fil
 
 void ObV4lGmslDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandleGmsl> devHandle) {
     int metadataBufferIndex = -1;
-    int colorFrameNum       = 0;  // color drop 1~3 frame -> fix color green screen issue.
+    int colorFrameNum       = 0;  // DaBaiA series only: drop first 3 color frames to fix green screen issue
 
     devHandle->loopFrameIndex.store(1);  // frame number start from 1
     try {
@@ -653,8 +656,7 @@ void ObV4lGmslDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandleGmsl> devHa
 
         std::unique_lock<std::mutex> lock(devHandle->streamMutex);
         // wait stream on
-        devHandle->streamCv.wait_for(lock, std::chrono::milliseconds(100),
-                                     [&]() { return devHandle->canStartCapture.load() || !devHandle->isCapturing.load(); });
+        devHandle->streamCv.wait(lock, [&]() { return devHandle->canStartCapture.load() || !devHandle->isCapturing.load(); });
         LOG_INFO("Start to capture: {}", devHandle->info->name);
 
         // capture video frames
@@ -763,8 +765,8 @@ void ObV4lGmslDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandleGmsl> devHa
                             }
                         }
 
-                        auto realtime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                        videoFrame->setSystemTimeStampUsec(realtime);
+                        videoFrame->setSystemTimeStampUsec(utils::getNowTimesUs());
+                        videoFrame->setSteadyTimeStampUsec(utils::getSteadyTimeUs());
                         // videoFrame->setNumber(buf.sequence);
                         // for debug use. it is not necessary
                         // auto metaFrameCount=*(uint32_t *)(uvc_payload_header);
@@ -774,7 +776,7 @@ void ObV4lGmslDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandleGmsl> devHa
                         videoFrame->setNumber(devHandle->loopFrameIndex);
                         // LOG_DEBUG("set loopFrameIndex:{}", devHandle->loopFrameIndex);
 
-                        if(devHandle->profile->getType() == OB_STREAM_COLOR) {
+                        if(devHandle->needDropInitialFrames) {
                             if(colorFrameNum >= 3) {
                                 devHandle->frameCallback(videoFrame);
                             }
@@ -1122,11 +1124,12 @@ void ObV4lGmslDevicePort::startStream(std::shared_ptr<const StreamProfile> profi
     // NOTE: Ensure the thread is started before calling Stream On.
     // Starting the stream before the thread may cause the first few frames to be lost
     // due to the thread not being ready in time.
-    devHandle->isCapturing     = true;
-    devHandle->canStartCapture = false;
-    devHandle->profile         = videoProfile;
-    devHandle->frameCallback   = callback;
-    devHandle->captureThread   = std::make_shared<std::thread>([this, devHandle]() { captureLoop(devHandle); });
+    devHandle->isCapturing           = true;
+    devHandle->canStartCapture       = false;
+    devHandle->profile               = videoProfile;
+    devHandle->frameCallback         = callback;
+    devHandle->needDropInitialFrames = isDaBaiADevice_ && videoProfile->getType() == OB_STREAM_COLOR;
+    devHandle->captureThread         = std::make_shared<std::thread>([this, devHandle]() { captureLoop(devHandle); });
 
     // stream on
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1134,6 +1137,10 @@ void ObV4lGmslDevicePort::startStream(std::shared_ptr<const StreamProfile> profi
     std::unique_lock<std::mutex> lk(mMultiThreadI2CMutex);
     if(xioctlGmsl(devHandle->fd, VIDIOC_STREAMON, &bufType) < 0) {
         lk.unlock();
+        {
+            std::lock_guard<std::mutex> streamLk(devHandle->streamMutex);
+            devHandle->isCapturing = false;
+        }
         auto err = errno;
         stopStream(devHandle);
         THROW_IO_EXCEPTION("Failed to stream on!" + devHandle->info->name + ", " + strerror(err));
@@ -1141,7 +1148,10 @@ void ObV4lGmslDevicePort::startStream(std::shared_ptr<const StreamProfile> profi
     lk.unlock();
     LOG_DEBUG("-VIDIOC_STREAMON success-");
     // start capture
-    devHandle->canStartCapture = true;
+    {
+        std::lock_guard<std::mutex> streamLk(devHandle->streamMutex);
+        devHandle->canStartCapture = true;
+    }
     devHandle->streamCv.notify_all();
 
     LOG_DEBUG("-Leave startStream-");
@@ -1326,7 +1336,7 @@ uint64_t ObV4lGmslDevicePort::getDriverStatus() const {
 }
 
 #define BASE_WAIT_RESPONSE_TIME_MS 1
-uint32_t ObV4lGmslDevicePort::sendAndReceive(const uint8_t *send, uint32_t sendLen, uint8_t *recv, uint32_t exceptedRecvLen) {
+uint32_t ObV4lGmslDevicePort::sendAndReceive(const uint8_t *send, uint32_t sendLen, uint8_t *recv, uint32_t exceptedRecvLen, utils::TransferTiming *timing) {
     std::unique_lock<std::mutex> lk(mMultiThreadI2CMutex);
     constexpr auto               opcode_finish_read_raw_data = 19;
     auto                         header                      = reinterpret_cast<const ProtocolHeader *>(send);
@@ -1335,29 +1345,38 @@ uint32_t ObV4lGmslDevicePort::sendAndReceive(const uint8_t *send, uint32_t sendL
         // Patch: for OPCODE_FINISH_READ_RAW_DATA (19), set max retry count to 3
         // First two attempts use 'false' to avoid throwing exceptions
         for(uint16_t i = 0; i < 2; i++) {
+            utils::TimingScope sendScope(timing, &utils::TransferTiming::send);
             if(!sendData(send, sendLen, false)) {
                 LOG_DEBUG("sendAndReceive: send error: retry count: {}", i + 1);
                 continue;
             }
+            sendScope.end();
 
             utils::sleepMs(BASE_WAIT_RESPONSE_TIME_MS);
+            utils::TimingScope recvScope(timing, &utils::TransferTiming::recv);
             if(!recvData(recv, &exceptedRecvLen, false)) {
                 LOG_DEBUG("sendAndReceive: recv error: retry count: {}", i + 1);
                 continue;
             }
+            recvScope.end();
             return exceptedRecvLen;
         }
         // If all previous attempts failed, perform the final attempt
     }
 
     // Final attempt for all commands, exceptions may be thrown
+    utils::TimingScope sendScope(timing, &utils::TransferTiming::send);
     if(!sendData(send, sendLen, true)) {
         return -1;
     }
+    sendScope.end();
+
     utils::sleepMs(BASE_WAIT_RESPONSE_TIME_MS);
+    utils::TimingScope recvScope(timing, &utils::TransferTiming::recv);
     if(!recvData(recv, &exceptedRecvLen, true)) {
         return -1;
     }
+    recvScope.end();
     return exceptedRecvLen;
 }
 

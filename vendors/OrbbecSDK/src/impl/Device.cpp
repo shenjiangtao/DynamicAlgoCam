@@ -10,9 +10,14 @@
 
 #include "IDeviceManager.hpp"
 #include "devicemanager/DeviceManager.hpp"
+#include "license/IDeviceLicenseInfoManager.hpp"
 #include "IProperty.hpp"
 #include "IDevice.hpp"
 #include "IDeviceMonitor.hpp"
+
+#if defined(BUILD_NET_PAL)
+#include "accesscontroller/GvcpCcpController.hpp"
+#endif
 #include "IAlgParamManager.hpp"
 #include "IFrameTimestamp.hpp"
 
@@ -227,6 +232,41 @@ const char *ob_device_list_get_device_user_name(const ob_device_list *list, uint
 }
 HANDLE_EXCEPTIONS_AND_RETURN(nullptr, list, index)
 
+ob_device_access_state ob_device_list_query_device_access_state(const ob_device_list *list, uint32_t index, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(list);
+    VALIDATE_UNSIGNED_INDEX(index, list->list.size());
+    auto &info = list->list[index];
+#if defined(BUILD_NET_PAL)
+    if(std::string(info->getConnectionType()) != "Ethernet") {
+        return OB_DEVICE_ACCESS_STATE_UNSUPPORTED;
+    }
+    return libobsensor::GvcpCcpController::queryAccessState(info);
+#else
+    libobsensor::utils::unusedVar(info);
+    return OB_DEVICE_ACCESS_STATE_UNSUPPORTED;
+#endif
+}
+HANDLE_EXCEPTIONS_AND_RETURN(OB_DEVICE_ACCESS_STATE_UNKNOWN, list, index)
+
+ob_device_access_state ob_device_list_query_device_access_state_by_serial_number(const ob_device_list *list, const char *serial_number,
+                                                                                 ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(list);
+    VALIDATE_NOT_NULL(serial_number);
+    for(auto &info: list->list) {
+        if(info->getDeviceSn() == serial_number) {
+#if defined(BUILD_NET_PAL)
+            if(std::string(info->getConnectionType()) != "Ethernet") {
+                return OB_DEVICE_ACCESS_STATE_UNSUPPORTED;
+            }
+            return libobsensor::GvcpCcpController::queryAccessState(info);
+#else
+            return OB_DEVICE_ACCESS_STATE_UNSUPPORTED;
+#endif
+        }
+    }
+    THROW_INVALID_PARAM_EXCEPTION("Device not found by serial number: " + std::string(serial_number));
+}
+HANDLE_EXCEPTIONS_AND_RETURN(OB_DEVICE_ACCESS_STATE_UNKNOWN, list, serial_number)
 ob_device *ob_device_list_get_device(const ob_device_list *list, uint32_t index, ob_error **error) {
     return ob_device_list_get_device_ex(list, index, OB_DEVICE_DEFAULT_ACCESS, error);
 }
@@ -441,13 +481,60 @@ HANDLE_EXCEPTIONS_NO_RETURN(device, property_id, data, data_size)
 
 void ob_device_get_structured_data(ob_device *device, ob_property_id property_id, uint8_t *data, uint32_t *data_size, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(device);
-    auto  propServer   = device->device->getPropertyServer();
-    auto &firmwareData = propServer->getStructureData(property_id, libobsensor::PROP_ACCESS_USER);
+    auto propServer   = device->device->getPropertyServer();
+    auto firmwareData = propServer->getStructureData(property_id, libobsensor::PROP_ACCESS_USER);
 
     memcpy(data, firmwareData.data(), firmwareData.size());
     *data_size = static_cast<uint32_t>(firmwareData.size());
 }
 HANDLE_EXCEPTIONS_NO_RETURN(device, property_id, data, data_size)
+
+bool ob_device_is_license_authorization_supported(const ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto devInner = device->device;
+    auto manager  = devInner->getComponentT<libobsensor::IDeviceLicenseInfoManager>(libobsensor::OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER, false);
+    // Always return true if the manager is registered with the device
+    return manager ? true : false;
+}
+HANDLE_EXCEPTIONS_AND_RETURN(false, device)
+
+void ob_device_write_license_info(ob_device *device, const char *license_info_json, uint32_t license_info_json_size, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    VALIDATE_NOT_NULL(license_info_json);
+    if(license_info_json_size == 0) {
+        THROW_INVALID_PARAM_EXCEPTION("license_info_json_size is 0");
+    }
+
+    auto        devInner = device->device;
+    auto        manager  = devInner->getComponentT<libobsensor::IDeviceLicenseInfoManager>(libobsensor::OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER, true);
+    std::string jsonStr(license_info_json, license_info_json_size);
+    manager->writeLicenseInfo(jsonStr);
+}
+HANDLE_EXCEPTIONS_NO_RETURN(device, license_info_json, license_info_json_size)
+
+void ob_device_read_license_info(const ob_device *device, char *license_info_json, uint32_t license_info_json_size, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    VALIDATE_NOT_NULL(license_info_json);
+
+    auto devInner     = device->device;
+    auto manager      = devInner->getComponentT<libobsensor::IDeviceLicenseInfoManager>(libobsensor::OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER, true);
+    auto licenseInfo  = manager->getLicenseInfo();
+    auto requiredSize = static_cast<uint32_t>(licenseInfo.size() + 1);
+    if(license_info_json_size < requiredSize) {
+        THROW_INVALID_PARAM_EXCEPTION("license_info_json buffer is too small, required: " + std::to_string(requiredSize));
+    }
+
+    std::memcpy(license_info_json, licenseInfo.c_str(), requiredSize);
+}
+HANDLE_EXCEPTIONS_NO_RETURN(device, license_info_json, license_info_json_size)
+
+void ob_device_clear_license_info(ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto devInner = device->device;
+    auto manager  = devInner->getComponentT<libobsensor::IDeviceLicenseInfoManager>(libobsensor::OB_DEV_COMPONENT_DEVICE_LICENSE_INFO_MANAGER, true);
+    manager->clearLicenseInfo();
+}
+HANDLE_EXCEPTIONS_NO_RETURN(device)
 
 void ob_device_get_raw_data(ob_device *device, ob_property_id property_id, ob_get_data_callback cb, void *user_data, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(device);
@@ -567,6 +654,19 @@ void ob_device_update_optional_depth_presets(ob_device *device, const char file_
 }
 HANDLE_EXCEPTIONS_NO_RETURN(device, file_path_list, path_count, callback, user_data)
 
+void ob_device_update_optional_depth_presets_from_data(ob_device *device, const ob_data_view *data_list, uint8_t count,
+                                                       ob_device_fw_update_callback callback, void *user_data, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    VALIDATE_NOT_NULL(data_list);
+    VALIDATE_GE(count, 0);
+    VALIDATE_NOT_NULL(callback);
+
+    device->device->updateOptionalDepthPresets(data_list, count, [callback, user_data](ob_fw_update_state status, const char *message, uint8_t percent) {
+        callback(status, message, percent, user_data);
+    });
+}
+HANDLE_EXCEPTIONS_NO_RETURN(device, data_list, count, callback, user_data)
+
 void ob_device_reboot(ob_device *device, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(device);
     device->device->reboot();
@@ -616,6 +716,13 @@ void ob_device_enable_firmware_log(ob_device *device, bool enable, ob_error **er
     }
 }
 HANDLE_EXCEPTIONS_NO_RETURN(device, enable)
+
+bool ob_device_is_firmware_log_enabled(ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto devMonitor = device->device->getComponentT<libobsensor::IDeviceMonitor>(libobsensor::OB_DEV_COMPONENT_DEVICE_MONITOR);
+    return devMonitor->isFirmwareLogEnabled();
+}
+HANDLE_EXCEPTIONS_AND_RETURN(false, device)
 
 void ob_device_send_and_receive_data(ob_device *device, const uint8_t *send_data, uint32_t send_data_size, uint8_t *receive_data, uint32_t *receive_data_size,
                                      ob_error **error) BEGIN_API_CALL {

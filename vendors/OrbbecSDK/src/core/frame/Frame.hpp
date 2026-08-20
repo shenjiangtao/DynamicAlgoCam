@@ -18,6 +18,7 @@ namespace libobsensor {
 class logger;
 class FrameMemoryPool;
 class FrameMemoryAllocator;
+struct DeviceInfo;
 class FrameBackendLifeSpan {
 public:
     FrameBackendLifeSpan();
@@ -60,8 +61,12 @@ public:
     void           setTimeStampUsec(uint64_t ts);
     uint64_t       getSystemTimeStampUsec() const;
     void           setSystemTimeStampUsec(uint64_t ts);
+    uint64_t       getSteadyTimeStampUsec() const;
+    void           setSteadyTimeStampUsec(uint64_t ts);
     uint64_t       getGlobalTimeStampUsec() const;
     void           setGlobalTimeStampUsec(uint64_t ts);
+    bool           isDeviceTimestampFromHost() const;
+    void           setDeviceTimestampFromHost(bool enable);
 
     size_t         getMetadataSize() const;
     void           updateMetadata(const uint8_t *metadata, size_t metadataSize);
@@ -74,6 +79,11 @@ public:
     void    registerMetadataParsers(std::shared_ptr<IFrameMetadataParserContainer> parsers);
     bool    hasMetadata(OBFrameMetadataType type) const;
     int64_t getMetadataValue(OBFrameMetadataType type) const;
+
+    void                              setAuthToken(uint64_t token);
+    uint64_t                          getAuthToken() const;
+    void                              setDeviceInfo(std::shared_ptr<const DeviceInfo> info);
+    std::shared_ptr<const DeviceInfo> getDeviceInfo() const;
 
     std::shared_ptr<const StreamProfile> getStreamProfile() const;
     void                                 setStreamProfile(std::shared_ptr<const StreamProfile> streamProfile);
@@ -112,11 +122,15 @@ protected:
     uint64_t                                       number_;
     uint64_t                                       timeStampUsec_;
     uint64_t                                       systemTimeStampUsec_;
+    uint64_t                                       steadyTimeStampUsec_;
     uint64_t                                       globalTimeStampUsec_;
+    bool                                           deviceTimestampFromHost_{ false };
     size_t                                         metadataSize_;
     uint8_t                                        metadata_[12 + 255];  // standard uvc payload size is 12bytes, add some extra space for metadata
     std::shared_ptr<IFrameMetadataParserContainer> metadataPhasers_;
     std::shared_ptr<const StreamProfile>           streamProfile_;
+    uint64_t                                       frameToken_ = 0;
+    std::shared_ptr<const DeviceInfo>              deviceInfo_;
 
     const OBFrameType type_;  // Determined during construction, it is an inherent property of the object and cannot be changed.
 
@@ -146,7 +160,7 @@ public:
     virtual void copyInfoFromOther(std::shared_ptr<const Frame> sourceFrame) override;
 
 protected:
-    OBPixelType pixelType_;              // 0: depth, 1: disparity for structure light camara， 2： raw phase for tof camara
+    OBPixelType pixelType_;              // 0: depth, 1: disparity for structure light camara, 2: raw phase for tof camara
     uint8_t     availablePixelBitSize_;  // available bit size of each pixel
     uint32_t    stride_ = 0;
 };
@@ -179,8 +193,8 @@ public:
     virtual void copyInfoFromOther(std::shared_ptr<const Frame> sourceFrame) override;
 
 private:
-    float valueScale_;
-    uint16_t maxValidDepthValue_ = 65535; 
+    float    valueScale_;
+    uint16_t maxValidDepthValue_ = 65535;
 };
 
 class ConfidenceFrame : public VideoFrame {
@@ -242,7 +256,7 @@ class GyroFrame : public Frame {
 public:
 #pragma pack(push, 1)
     typedef struct {
-        OBGyroValue value;  // Acceleration values ​​in three directions (xyz), unit: dps (degrees per second)
+        OBGyroValue value;  // Acceleration values in three directions (xyz), unit: dps (degrees per second)
         float       temp;   // Temperature in Celsius
     } Data;
 #pragma pack(pop)

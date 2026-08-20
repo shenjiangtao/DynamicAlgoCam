@@ -75,13 +75,15 @@ StreamExtrinsicsManager::StreamExtrinsicsManager() {}
 StreamExtrinsicsManager::~StreamExtrinsicsManager() noexcept = default;
 
 void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const StreamProfile> &from, const std::shared_ptr<const StreamProfile> &to,
-                                                 const OBExtrinsic &extrinsics) {
+                                                 const OBExtrinsic &extrinsics, bool cleanExpired) {
     if(!from || !to) {
         THROW_INVALID_PARAM_EXCEPTION("Invalid stream profile, from or to is null");
     }
 
     std::unique_lock<std::recursive_mutex> lock(mutex_);
-    cleanExpiredStreamProfiles();  // clean expired stream profiles first
+    if(cleanExpired) {
+        cleanExpiredStreamProfiles();  // clean expired stream profiles first
+    }
 
     // judge if already registered and if the extrinsics is the same
     bool alreadyRegistered   = false;
@@ -116,6 +118,7 @@ void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const Str
         if(isIdentityExtrinsics) {
             // if the extrinsics is identity, we can just push the `from` stream profile to the list of `toId`
             streamProfileMap_[toId].push_back(std::weak_ptr<const StreamProfile>(from));
+            profileToIdMap_[from->getInstanceId()] = toId;
         }
         else {
             auto fromId = getOrRegisterStreamProfileId(from);                             // get or create the id of `from`
@@ -131,16 +134,21 @@ void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const Str
             if(fromId == 0) {
                 // if is identity extrinsics, and the `from` stream profile is not registered, we can just push the `from` stream profile to the list of `toId`
                 streamProfileMap_[toId].push_back(std::weak_ptr<const StreamProfile>(from));
+                profileToIdMap_[from->getInstanceId()] = toId;
             }
             else {
                 // if is identity extrinsics, and the `from` stream profile is registered, we need to move oll the stream profiles from `fromId` to `toId`
-                auto spList = streamProfileMap_[fromId];
-                for(auto it = spList.begin(); it != spList.end(); ++it) {
-                    streamProfileMap_[toId].push_back(*it);
+                const auto &spList = streamProfileMap_[fromId];
+                for(auto &weakSp: spList) {
+                    auto sp = weakSp.lock();
+                    if(sp) {
+                        profileToIdMap_[sp->getInstanceId()] = toId;
+                    }
+                    streamProfileMap_[toId].push_back(weakSp);
                 }
                 streamProfileMap_.erase(fromId);
 
-                // after moving the stream profiles, we need to update the extrinsics graph with the new id： `toId`
+                // after moving the stream profiles, we need to update the extrinsics graph with the new id: `toId`
                 auto &extrPairVec = extrinsicsGraph_[fromId];
                 for(auto &extrPair: extrPairVec) {
                     auto &toExtrPairVec = extrinsicsGraph_[extrPair.first];
@@ -166,6 +174,7 @@ void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const Str
 }
 
 void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const StreamProfile> &from, const OBStreamType &type, const OBExtrinsic &extrinsics) {
+    std::unique_lock<std::recursive_mutex> lock(mutex_);
     if(!from) {
         THROW_INVALID_PARAM_EXCEPTION("Invalid stream profile, from or to is null");
     }
@@ -225,7 +234,7 @@ void StreamExtrinsicsManager::registerExtrinsics(const std::shared_ptr<const Str
         THROW_INVALID_PARAM_EXCEPTION("To Stream profile not registered!");
     }
 
-    registerExtrinsics(from, to, extrinsics);
+    registerExtrinsics(from, to, extrinsics, false);
 }
 
 void StreamExtrinsicsManager::registerSameExtrinsics(const std::shared_ptr<const StreamProfile> &from, const std::shared_ptr<const StreamProfile> &to) {
@@ -361,6 +370,8 @@ void StreamExtrinsicsManager::eraseStreamProfile(std::shared_ptr<const StreamPro
         return;
     }
 
+    profileToIdMap_.erase(sp->getInstanceId());
+
     auto spListIter = streamProfileMap_.find(uid);
     if(spListIter == streamProfileMap_.end()) {
         return;
@@ -431,30 +442,34 @@ void StreamExtrinsicsManager::cleanExpiredStreamProfiles() {
 
         ++profileEntry;
     }
+
+    profileToIdMap_.clear();
+    for(const auto &entry: streamProfileMap_) {
+        auto uid = entry.first;
+        for(auto &weakSp: entry.second) {
+            auto sp = weakSp.lock();
+            if(sp) {
+                profileToIdMap_[sp->getInstanceId()] = uid;
+            }
+        }
+    }
 }
 
 uint64_t StreamExtrinsicsManager::getStreamProfileId(std::shared_ptr<const StreamProfile> profile) const {
-    for(auto spIter = streamProfileMap_.begin(); spIter != streamProfileMap_.end();) {
-        const auto &spList = spIter->second;
-        for(auto weakSp: spList) {
-            if(weakSp.lock() == profile) {
-                return spIter->first;
-            }
-        }
-        ++spIter;
+    auto it = profileToIdMap_.find(profile->getInstanceId());
+    if(it != profileToIdMap_.end()) {
+        return it->second;
     }
+
     return 0;  // return 0 if the stream profile is not registered
 }
 
 uint64_t StreamExtrinsicsManager::getOrRegisterStreamProfileId(std::shared_ptr<const StreamProfile> profile) {
-    for(auto spIter = streamProfileMap_.begin(); spIter != streamProfileMap_.end();) {
-        for(auto weakSp: spIter->second) {
-            if(weakSp.lock() == profile) {
-                return spIter->first;
-            }
-        }
-        ++spIter;
+    auto it = profileToIdMap_.find(profile->getInstanceId());
+    if(it != profileToIdMap_.end()) {
+        return it->second;
     }
+
     uint64_t uid = 1;
     for(uint64_t i = 1; i < 0xFFFFFFFFFFFFFFFF; ++i) {
         if(streamProfileMap_.find(i) == streamProfileMap_.end()) {
@@ -463,6 +478,7 @@ uint64_t StreamExtrinsicsManager::getOrRegisterStreamProfileId(std::shared_ptr<c
         }
     }
     streamProfileMap_[uid].push_back(std::weak_ptr<const StreamProfile>(profile));
+    profileToIdMap_[profile->getInstanceId()] = uid;
     return uid;
 }
 

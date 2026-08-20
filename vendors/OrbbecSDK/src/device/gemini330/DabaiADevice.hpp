@@ -16,8 +16,7 @@ public:
     DabaiADevice(const std::shared_ptr<const IDeviceEnumInfo> &info);
     virtual ~DabaiADevice() noexcept override;
 
-    std::vector<std::shared_ptr<IFilter>> createRecommendedPostProcessingFilters(OBSensorType type) override;
-    void                                  loadDefaultPostProcessingConfig() override;
+    void loadDefaultPostProcessingConfig() override;
 
     void updateDepthPostProcessingFilterList() override;
 
@@ -36,8 +35,6 @@ private:
     const uint64_t                                              frameTimeFreq_  = 1000000;  // in us
     std::function<std::shared_ptr<IFrameTimestampCalculator>()> videoFrameTimestampCalculatorCreator_;
     bool                                                        isGmslDevice_;
-
-    std::map<OBSensorType, std::vector<std::shared_ptr<IFilter>>> sensorFilterListMap_;
 };
 
 }  // namespace libobsensor

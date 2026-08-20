@@ -4,7 +4,7 @@
 #include "G330DeviceInfo.hpp"
 #include "G330Device.hpp"
 #include "DabaiADevice.hpp"
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "utils/Utils.hpp"
 #include "exception/ObException.hpp"
 #include "ethernet/RTPStreamPort.hpp"
@@ -80,6 +80,7 @@ std::shared_ptr<IDevice> G330DeviceInfo::createDevice(OBDeviceAccessMode accessM
 #if defined(BUILD_NET_PAL)
         return std::make_shared<G330NetDevice>(shared_from_this(), accessMode);
 #else
+        utils::unusedVar(accessMode);
         LOG_ERROR("Ethernet pal not supported, please rebuild with BUILD_NET_PAL=ON");
         return nullptr;
 #endif

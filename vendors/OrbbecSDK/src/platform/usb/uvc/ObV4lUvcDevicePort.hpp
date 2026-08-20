@@ -8,8 +8,8 @@
 #include <mutex>
 #include <sys/mman.h>
 #include <mutex>
-#include <condition_variable>
 
+#include "utils/SteadyCondVar.hpp"
 #include "UvcDevicePort.hpp"
 #include "stream/StreamProfile.hpp"
 
@@ -83,7 +83,7 @@ struct V4lDeviceHandle {
     std::atomic<bool>            isCapturing     = { false };
     std::atomic<bool>            canStartCapture = { false };
     std::mutex                   streamMutex;  // mutex for start capture
-    std::condition_variable      streamCv;     // cv for start capture
+    utils::SteadyCondVar         streamCv;     // cv for start capture
 
     std::atomic<std::uint64_t> loopFrameIndex = { 0 };
 };
@@ -104,7 +104,7 @@ public:
     bool            getPu(uint32_t propertyId, int32_t &value) override;
     bool            setPu(uint32_t propertyId, int32_t value) override;
     UvcControlRange getPuRange(uint32_t propertyId) override;
-    uint32_t        sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen) override;
+    uint32_t sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen, utils::TransferTiming *timing) override;
 
     static std::vector<std::shared_ptr<V4lDeviceInfo>> queryRelatedDevices(std::shared_ptr<const USBSourcePortInfo> portInfo);
     static bool                                        isContainedMetadataDevice(std::shared_ptr<const USBSourcePortInfo> portInfo);

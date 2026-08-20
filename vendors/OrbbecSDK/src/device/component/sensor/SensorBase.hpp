@@ -14,9 +14,11 @@
 #include <map>
 #include <mutex>
 #include <thread>
-#include <condition_variable>
+#include "utils/SteadyCondVar.hpp"
 
 namespace libobsensor {
+
+class HostTimestampProvider;
 
 class SensorBase : public ISensor, public std::enable_shared_from_this<SensorBase> {
     static constexpr int DefaultNoStreamTimeoutMs        = 3000;
@@ -93,16 +95,16 @@ protected:
     std::recursive_mutex streamRecoverMutex_;
 
     std::mutex                 streamStateMutex_;
-    std::condition_variable    streamStateCv_;
+    utils::SteadyCondVar       streamStateCv_;
     std::atomic<OBStreamState> streamState_;
     std::thread                streamStateWatcherThread_;
 
-    bool     onRecovering_;
-    bool     recoveryEnabled_;
-    uint32_t maxRecoveryCount_;
-    uint32_t recoveryCount_;
-    uint32_t noStreamTimeoutMs_;
-    uint32_t streamInterruptTimeoutMs_;
+    std::atomic<bool> onRecovering_;
+    std::atomic<bool> recoveryEnabled_;
+    uint32_t          maxRecoveryCount_;
+    uint32_t          recoveryCount_;
+    uint32_t          noStreamTimeoutMs_;
+    uint32_t          streamInterruptTimeoutMs_;
 
     std::shared_ptr<IFrameMetadataParserContainer> frameMetadataParserContainer_;
     std::shared_ptr<IFrameTimestampCalculator>     frameTimestampCalculator_;
@@ -111,6 +113,7 @@ protected:
     std::shared_ptr<TimestampAnomalyDetector>      timestampAnomalyDetector_;
     std::shared_ptr<IDeviceActivityRecorder>       deviceActivityRecorder_;
     std::shared_ptr<IFrameTimestampCalculator>     intraCameraSyncTimestampAdjuster_;
+    std::shared_ptr<HostTimestampProvider>         hostTimestampProvider_;
 
     std::atomic<uint64_t> droppedFrameStatus_{ 0 };
 };

@@ -11,6 +11,7 @@
 #include "environment/EnvConfig.hpp"
 #include "IDevice.hpp"
 #include "IDepthWorkModeManager.hpp"
+#include "context/Context.hpp"
 
 #include "logger/LoggerSnWrapper.hpp"  // Must be included last to override log macros
 
@@ -32,6 +33,8 @@ SensorBase::SensorBase(IDevice *owner, OBSensorType sensorType, const std::share
     enableTimestampAnomalyDetection(true);
     startStreamRecovery();
 
+    hostTimestampProvider_ = Context::getInstance()->getHostTimestampProvider();
+
     auto activityRecorder = owner->getComponentT<IDeviceActivityRecorder>(OB_DEV_COMPONENT_DEVICE_ACTIVITY_RECORDER, false);
     if(activityRecorder) {
         deviceActivityRecorder_ = activityRecorder.get();
@@ -40,7 +43,10 @@ SensorBase::SensorBase(IDevice *owner, OBSensorType sensorType, const std::share
 
 SensorBase::~SensorBase() noexcept {
     if(streamStateWatcherThread_.joinable()) {
-        recoveryEnabled_ = false;
+        {
+            std::lock_guard<std::mutex> lock(streamStateMutex_);
+            recoveryEnabled_ = false;
+        }
         streamStateCv_.notify_all();
         streamStateWatcherThread_.join();
     }
@@ -171,6 +177,9 @@ void SensorBase::restartStream() {
 }
 
 void SensorBase::updateStreamState(OBStreamState state) {
+    decltype(streamStateChangedCallbacks_) callbacksCopy;
+    std::shared_ptr<const StreamProfile>   profileCopy;
+
     std::unique_lock<std::mutex> lock(streamStateMutex_);
     if(onRecovering_) {
         return;
@@ -181,9 +190,6 @@ void SensorBase::updateStreamState(OBStreamState state) {
             return;
         }
         streamState_.store(state);
-        for(auto &callback: streamStateChangedCallbacks_) {
-            callback.second(state, activatedStreamProfile_);  // call the callback function
-        }
         if(state == STREAM_STATE_STARTING) {
             if(frameTimestampCalculator_) {
                 frameTimestampCalculator_->clear();
@@ -208,7 +214,20 @@ void SensorBase::updateStreamState(OBStreamState state) {
             }
         }
         LOG_INFO("Stream state changed from {} to {}@{}", STREAM_STATE_STR(oldState), STREAM_STATE_STR(state), sensorType_);
+        profileCopy   = activatedStreamProfile_;
+        callbacksCopy = streamStateChangedCallbacks_;
     }
+    lock.unlock();
+
+    // Invoke callbacks outside the lock to avoid potential deadlock with resourceMutex_.
+    for(auto &cb: callbacksCopy) {
+        if(streamState_ != state) {
+            break;
+        }
+        cb.second(state, profileCopy);
+    }
+
+    // Notify waiters after all callbacks complete.
     streamStateCv_.notify_all();
 }
 
@@ -260,7 +279,10 @@ void SensorBase::startStreamRecovery() {
 }
 
 void SensorBase::disableStreamRecovery() {
-    recoveryEnabled_ = false;
+    {
+        std::lock_guard<std::mutex> lock(streamStateMutex_);
+        recoveryEnabled_ = false;
+    }
     streamStateCv_.notify_all();
     if(streamStateWatcherThread_.joinable()) {
         streamStateWatcherThread_.join();
@@ -284,12 +306,16 @@ void SensorBase::watchStreamState() {
                                   isTriggeringMode = true;
                                   LOG_DEBUG_INTVL_MS(5000, "{} Curent mode is not supported stream recovery", sensorType_);
                               })
-            CATCH_EXCEPTION_AND_EXECUTE(recoveryEnabled_ = false; streamStateCv_.notify_all();)
+            CATCH_EXCEPTION_AND_EXECUTE({
+                std::lock_guard<std::mutex> lk(streamStateMutex_);
+                recoveryEnabled_ = false;
+            } streamStateCv_.notify_all();)
         }
 
         if(streamState_ == STREAM_STATE_STOPPED || streamState_ == STREAM_STATE_STOPPING || streamState_ == STREAM_STATE_ERROR) {
+            auto                         oldState = streamState_.load();
             std::unique_lock<std::mutex> lock(streamStateMutex_);
-            streamStateCv_.wait(lock);
+            streamStateCv_.wait(lock, [&]() { return streamState_ != oldState || !recoveryEnabled_; });
             recoveryCount_ = 0;
         }
         else if(streamState_ == STREAM_STATE_STARTING && noStreamTimeoutMs_ > 0) {
@@ -408,15 +434,21 @@ void SensorBase::outputFrame(std::shared_ptr<Frame> frame) {
     if(activatedStreamProfile_) {
         frame->setStreamProfile(activatedStreamProfile_);
     }
+    frame->setDeviceInfo(owner_->getInfo());
     if(frameMetadataParserContainer_) {
         TRY_EXECUTE(frame->registerMetadataParsers(frameMetadataParserContainer_));
     }
+
     if(frameTimestampCalculator_) {
         TRY_EXECUTE(frameTimestampCalculator_->calculate(frame));
     }
 
     if(intraCameraSyncTimestampAdjuster_) {
         TRY_EXECUTE(intraCameraSyncTimestampAdjuster_->calculate(frame));
+    }
+
+    if(hostTimestampProvider_) {
+        hostTimestampProvider_->applyHostTimestamp(frame);
     }
 
     if(globalTimestampCalculator_) {

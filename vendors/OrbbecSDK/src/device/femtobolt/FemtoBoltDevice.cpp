@@ -23,6 +23,7 @@
 #include "property/CommonPropertyAccessors.hpp"
 #include "property/FilterPropertyAccessors.hpp"
 #include "property/PrivateFilterPropertyAccessors.hpp"
+#include "property/InternalProperty.hpp"
 #include "monitor/DeviceMonitor.hpp"
 #include "FemtoBoltAlgParamManager.hpp"
 #include "FemtoBoltPresetManager.hpp"
@@ -85,6 +86,24 @@ void FemtoBoltDevice::init() {
 
     auto deviceClockSynchronizer = std::make_shared<DeviceClockSynchronizer>(this, deviceTimeFreq_, deviceTimeFreq_);
     registerComponent(OB_DEV_COMPONENT_DEVICE_CLOCK_SYNCHRONIZER, deviceClockSynchronizer);
+}
+
+void FemtoBoltDevice::postInitialize() {
+    DeviceBase::postInitialize();
+
+    // Best-effort recovery from stale streaming state left by a previous abnormal process exit
+    TRY_EXECUTE({
+        auto propServer = getPropertyServer();
+        if(propServer->isPropertySupported(OB_PROP_STOP_COLOR_STREAM_BOOL, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+            propServer->setPropertyValueT<bool>(OB_PROP_STOP_COLOR_STREAM_BOOL, true);
+        }
+    });
+    TRY_EXECUTE({
+        auto propServer = getPropertyServer();
+        if(propServer->isPropertySupported(OB_PROP_STOP_DEPTH_STREAM_BOOL, PROP_OP_WRITE, PROP_ACCESS_INTERNAL)) {
+            propServer->setPropertyValueT<bool>(OB_PROP_STOP_DEPTH_STREAM_BOOL, true);
+        }
+    });
 }
 
 void FemtoBoltDevice::initSensorStreamProfile(std::shared_ptr<ISensor> sensor) {
@@ -430,69 +449,7 @@ void FemtoBoltDevice::initProperties() {
     auto heartbeatPropertyAccessor = std::make_shared<HeartbeatPropertyAccessor>(this);
     propertyServer->registerProperty(OB_PROP_HEARTBEAT_BOOL, "rw", "rw", heartbeatPropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
-std::vector<std::shared_ptr<IFilter>> FemtoBoltDevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "5", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            filter->enable(false);
-        }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-
-    return {};
-}
 }  // namespace libobsensor

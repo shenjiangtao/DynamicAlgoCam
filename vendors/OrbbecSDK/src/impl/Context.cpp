@@ -10,6 +10,7 @@
 #include "shared/utils/Utils.hpp"
 #include "common/DeviceSeriesInfo.hpp"
 #include "platform/SourcePortInfo.hpp"
+#include "timestamp/HostTimestampProvider.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -174,6 +175,16 @@ void ob_enable_device_clock_sync(ob_context *context, uint64_t repeat_interval_m
 }
 HANDLE_EXCEPTIONS_NO_RETURN(context, repeat_interval_msec)
 
+void ob_sync_device_hardware_pps_time(ob_context *context, uint64_t hardware_pps_time, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(context);
+    auto       deviceMgr = context->context->getDeviceManager();
+    const bool ok        = deviceMgr->syncDeviceHardwarePPSTime(hardware_pps_time);
+    if(!ok) {
+        LOG_WARN("ob_sync_device_hardware_pps_time failed or no eligible device, hardware_pps_time={}ms", hardware_pps_time);
+    }
+}
+HANDLE_EXCEPTIONS_NO_RETURN(context, hardware_pps_time)
+
 void ob_free_idle_memory(ob_context *context, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(context);
     auto frameMemPool = context->context->getFrameMemoryPool();
@@ -242,6 +253,22 @@ void ob_set_extensions_directory(const char *directory, ob_error **error) BEGIN_
     libobsensor::EnvConfig::setExtensionsDirectory(directory);
 }
 HANDLE_EXCEPTIONS_NO_RETURN(directory)
+
+void ob_context_set_timestamp_clock_type(ob_context *context, ob_clock_type clock_type, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(context);
+    auto mapper = context->context->getHostTimestampProvider();
+    VALIDATE_NOT_NULL(mapper);
+    mapper->setClockType(clock_type);
+}
+HANDLE_EXCEPTIONS_NO_RETURN(context, clock_type)
+
+ob_clock_type ob_context_get_timestamp_clock_type(const ob_context *context, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(context);
+    auto mapper = context->context->getHostTimestampProvider();
+    VALIDATE_NOT_NULL(mapper);
+    return mapper->getClockType();
+}
+HANDLE_EXCEPTIONS_AND_RETURN(OB_CLOCK_TYPE_REALTIME, context)
 
 #ifdef __cplusplus
 }

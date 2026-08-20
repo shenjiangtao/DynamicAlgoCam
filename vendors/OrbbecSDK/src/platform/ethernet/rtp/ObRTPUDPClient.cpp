@@ -86,7 +86,9 @@ void ObRTPUDPClient::start(std::shared_ptr<const StreamProfile> profile, Mutable
     }
 
     startReceive_.store(true);
+    // Clear any stale data from previous runs
     rtpQueue_.reset();
+    rtpProcessor_.reset();
     rtpProcessor_.resetNumber();
     currentProfile_ = profile;
     frameCallback_  = callback;
@@ -200,6 +202,7 @@ void ObRTPUDPClient::frameProcess() {
                     }
 
                     frame->setSystemTimeStampUsec(utils::getNowTimesUs());
+                    frame->setSteadyTimeStampUsec(utils::getSteadyTimeUs());
                     frame->setTimeStampUsec(rtpProcessor_.getTimestamp());
                     frame->setNumber(rtpProcessor_.getNumber());
                     frame->updateMetadata(rtpProcessor_.getMetaData(), metaDataSize);
@@ -221,6 +224,7 @@ void ObRTPUDPClient::frameProcess() {
                 frame->updateData(data.data() + 12, data.size() - 12);
                 frame->setTimeStampUsec(header->timestamp);
                 frame->setSystemTimeStampUsec(utils::getNowTimesUs());
+                frame->setSteadyTimeStampUsec(utils::getSteadyTimeUs());
                 frameCallback_(frame);
             }
         }
@@ -236,7 +240,11 @@ void ObRTPUDPClient::stop() {
         receiverThread_.join();
         flush();
     }
+
+    // Ensure any buffered RTP packets are discarded when stopping
     rtpQueue_.destroy();
+    rtpProcessor_.reset();
+
     if(callbackThread_.joinable()) {
         callbackThread_.join();
     }

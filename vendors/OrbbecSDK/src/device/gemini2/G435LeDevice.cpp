@@ -3,7 +3,7 @@
 
 #include "G435LeDevice.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 
 #include "utils/Utils.hpp"
@@ -53,7 +53,7 @@ static const uint8_t INTERFACE_COLOR    = 0;
 static const uint8_t INTERFACE_LEFT_IR  = 4;
 static const uint8_t INTERFACE_DEPTH    = 2;
 static const uint8_t INTERFACE_RIGHT_IR = 6;
-static const uint8_t COMPAT_VERSION     = 1;  // 1:Supports embedding metadata into color data streams in MJPEG format.​
+static const uint8_t COMPAT_VERSION     = 1;  // 1:Supports embedding metadata into color data streams in MJPEG format.
 
 G435LeDeviceBase::G435LeDeviceBase(const std::shared_ptr<const IDeviceEnumInfo> &info, OBDeviceAccessMode accessMode) : DeviceBase(info, accessMode) {}
 G435LeDeviceBase::~G435LeDeviceBase() noexcept {}
@@ -101,11 +101,10 @@ void G435LeDeviceBase::init() {
         propertyServer->registerProperty(OB_PROP_DEVICE_OFFLINE_AFTER_IP_CONFIG_APPLY, "r", "r", vendorPropertyAccessor.get());
     }
 
-    if (fwVersion >= 10403)
-    {
+    if(fwVersion >= 10403) {
         propertyServer->registerProperty(OB_PROP_DHCP_ASSIGN_IP_TIMEOUT_INT, "rw", "rw", vendorPropertyAccessor.get());
     }
-    
+
     registerComponent(OB_DEV_COMPONENT_COLOR_FRAME_METADATA_CONTAINER, [this]() {
         std::shared_ptr<FrameMetadataParserContainer> container;
         container = std::make_shared<G435LeColorFrameMetadataParserContainer>(this);
@@ -117,75 +116,6 @@ void G435LeDeviceBase::init() {
         container = std::make_shared<G435LeDepthFrameMetadataParserContainer>(this);
         return container;
     });
-}
-
-std::vector<std::shared_ptr<IFilter>> G435LeDeviceBase::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        // activate depth frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_DEPTH_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            std::vector<std::string> params = { "1", "0.5", "64", "1" };
-            spatFilter->updateConfig(params);
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            // diff_scale, weight
-            std::vector<std::string> params = { "0.1", "0.4" };
-            tempFilter->updateConfig(params);
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto                     hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            std::vector<std::string> params   = { "2" };
-            hfFilter->updateConfig(params);
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("DisparityTransform")) {
-            auto dtFilter = filterFactory->createFilter("DisparityTransform");
-            depthFilterList.push_back(dtFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            depthFilterList.push_back(ThresholdFilter);
-        }
-
-        for(size_t i = 0; i < depthFilterList.size(); i++) {
-            auto filter = depthFilterList[i];
-            if(filter->getName() != "DisparityTransform") {
-                filter->enable(false);
-            }
-        }
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        // activate color frame processor library
-        getComponentT<FrameProcessor>(OB_DEV_COMPONENT_COLOR_FRAME_PROCESSOR, false);
-
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        return colorFilterList;
-    }
-    return {};
 }
 
 void G435LeDeviceBase::initSensorStreamProfile(std::shared_ptr<ISensor> sensor) {
@@ -288,17 +218,23 @@ G435LeDevice::G435LeDevice(const std::shared_ptr<const IDeviceEnumInfo> &info, O
     checkAndStartHeartbeat();
 }
 G435LeDevice::~G435LeDevice() noexcept {
+#if defined(BUILD_NET_PAL)
     ccpController_.reset();
+#endif
 }
 
 void G435LeDevice::deactivate() {
+#if defined(BUILD_NET_PAL)
     // clear ccp controller here
     ccpController_.reset();
+#endif
     G435LeDeviceBase::deactivate();
 }
 
 void G435LeDevice::init() {
+#if defined(BUILD_NET_PAL)
     checkAndAcquireCCP();
+#endif
     initSensorList();
     initProperties();
     G435LeDeviceBase::init();
@@ -358,19 +294,22 @@ void G435LeDevice::initSensorList() {
                 }
 
                 auto propServer = getPropertyServer();
-                BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT<bool>(OB_PROP_DISPARITY_TO_DEPTH_BOOL, true); })
-                CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set disparity to depth failed!"); })
+                if(hasWriteAccess()) {
+                    BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT<bool>(OB_PROP_DISPARITY_TO_DEPTH_BOOL, true); })
+                    CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set disparity to depth failed!"); })
 
-                BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT<bool>(OB_PROP_SDK_DISPARITY_TO_DEPTH_BOOL, false); })
-                CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set SDK disparity to depth failed!"); })
-
+                    BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT<bool>(OB_PROP_SDK_DISPARITY_TO_DEPTH_BOOL, false); })
+                    CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set SDK disparity to depth failed!"); })
+                }
                 sensor->markOutputDisparityFrame(false);
 
                 auto depthPrecisionRange = propServer->getPropertyRangeT<int32_t>(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
                 LOG_DEBUG("Depth precision level range: min={}, max={}, def={}, cur={}", depthPrecisionRange.min, depthPrecisionRange.max,
                           depthPrecisionRange.def, depthPrecisionRange.cur);
-                BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT(OB_PROP_DEPTH_PRECISION_LEVEL_INT, depthPrecisionRange.def); })
-                CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set depth precision level failed!"); })
+                if(hasWriteAccess()) {
+                    BEGIN_TRY_EXECUTE({ propServer->setPropertyValueT(OB_PROP_DEPTH_PRECISION_LEVEL_INT, depthPrecisionRange.def); })
+                    CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set depth precision level failed!"); })
+                }
                 sensor->setDepthUnit(utils::depthPrecisionLevelToUnit((OBDepthPrecisionLevel)depthPrecisionRange.def));
 
                 initSensorStreamProfile(sensor);
@@ -767,7 +706,7 @@ void G435LeDevice::initProperties() {
     propertyServer->registerProperty(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_BOOL, "rw", "rw", privatePropertyAccessor);
     propertyServer->registerProperty(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_MAX_DIFF_INT, "rw", "rw", privatePropertyAccessor);
     propertyServer->registerProperty(OB_PROP_DEPTH_NOISE_REMOVAL_FILTER_MAX_SPECKLE_SIZE_INT, "rw", "rw", privatePropertyAccessor);
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     auto frameTransformPropertyAccessor = std::make_shared<StereoFrameTransformPropertyAccessor>(this);
     propertyServer->registerProperty(OB_PROP_DEPTH_MIRROR_BOOL, "rw", "rw", frameTransformPropertyAccessor);  // depth
@@ -786,10 +725,12 @@ void G435LeDevice::initProperties() {
     propertyServer->registerProperty(OB_PROP_CONFIDENCE_FLIP_BOOL, "rw", "rw", frameTransformPropertyAccessor);
     propertyServer->registerProperty(OB_PROP_CONFIDENCE_ROTATE_INT, "rw", "rw", frameTransformPropertyAccessor);
 
-    BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_DEVICE_COMMUNICATION_TYPE_INT, OB_COMM_NET); })
-    CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device communication type to ethernet mode failed!"); })
-    BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_COMPAT_VERSION_INT, COMPAT_VERSION); })
-    CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device compat version failed!"); })
+    if(hasWriteAccess()) {
+        BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_DEVICE_COMMUNICATION_TYPE_INT, OB_COMM_NET); })
+        CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device communication type to ethernet mode failed!"); })
+        BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_COMPAT_VERSION_INT, COMPAT_VERSION); })
+        CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device compat version failed!"); })
+    }
 }
 void G435LeDevice::initSensorStreamProfile(std::shared_ptr<ISensor> sensor) {
     auto              sensorType = sensor->getSensorType();
@@ -1003,8 +944,9 @@ void G435LeDevice::fetchDeviceInfo() {
     extensionInfo_["MCUVersion"]               = version.subSystemVersion;
 }
 
+#if defined(BUILD_NET_PAL)
 void G435LeDevice::checkAndAcquireCCP() {
-    ccpController_ = std::make_shared<GvcpCcpController>(enumInfo_, "1.3.12");
+    ccpController_ = std::make_shared<GvcpCcpController>(enumInfo_);
     if(!ccpController_->isSupported()) {
         return;
     }
@@ -1012,4 +954,5 @@ void G435LeDevice::checkAndAcquireCCP() {
     hasAccessControl_ = true;
     accessMode_       = ccpController_->getState();
 }
+#endif
 }  // namespace libobsensor

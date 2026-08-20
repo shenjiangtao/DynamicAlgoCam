@@ -66,7 +66,7 @@ public:
     const std::string                &getExtensionInfo(const std::string &infoKey) const override;
     bool                              isExtensionInfoExists(const std::string &infoKey) const override;
     uint64_t                          getDeviceErrorState() const override;
-    void                              fetchDeviceErrorState() override;
+    void                              fetchDeviceErrorState(uint64_t maxCacheAgeMs = 0) override;
 
     const std::string &getSn() const override {
         // Hold a local reference to keep the device info valid during access.
@@ -89,6 +89,7 @@ public:
     DeviceComponentPtr<ISensor>                  getSensor(OBSensorType type) override;
     std::vector<OBSensorType>                    getSensorTypeList() const override;
     bool                                         hasAnySensorStreamActivated() override;
+    bool                                         hasAnyVideoSensorStreamActivated() override;
 
     std::vector<std::shared_ptr<IFilter>> createRecommendedPostProcessingFilters(OBSensorType type) override;
     std::shared_ptr<IFilter>              getSensorFrameFilter(const std::string &name, OBSensorType type, bool throwIfNotFound = true) override;
@@ -99,6 +100,7 @@ public:
     void setFirmwareUpdateState(bool isUpdating) override;
     bool isFirmwareUpdating() const override;
     void updateOptionalDepthPresets(const char filePathList[][OB_PATH_MAX], uint8_t pathCount, DeviceFwUpdateCallback updateCallback) override;
+    void updateOptionalDepthPresets(const OBDataView *dataList, uint8_t count, DeviceFwUpdateCallback updateCallback) override;
     static std::map<std::string, std::string> parseExtensionInfo(std::string extensionInfo);
 
     void activateDeviceAccessor() override;
@@ -116,6 +118,9 @@ protected:
     virtual void        fetchExtensionInfo();
     DeviceComponentLock tryLockResource();
 
+    // refresh cached info / preset list after a successful preset update
+    void refreshAfterOptionalDepthPresetsUpdate();
+
     std::shared_ptr<ISourcePort> getSourcePort(std::shared_ptr<const SourcePortInfo> sourcePortInfo) const;
 
     /**
@@ -131,9 +136,18 @@ protected:
     std::shared_ptr<DeviceInfo>                  deviceInfo_;
     std::map<std::string, std::string>           extensionInfo_;
     uint64_t                                     deviceErrorState_ = 0;
-    std::atomic<bool>                            isPlaybackDevice_{ false };
-    std::atomic<bool>                            hasAccessControl_{ false };
-    std::atomic<OBDeviceAccessMode>              accessMode_{ OB_DEVICE_DEFAULT_ACCESS };
+
+    // Error state fetch throttling: prevents redundant USB queries when
+    // multiple pipelines share the same device and poll the error state.
+    uint64_t           lastErrorStateFetchTime_ = 0;
+    mutable std::mutex errorStateFetchMutex_;
+
+    std::atomic<bool>               isPlaybackDevice_{ false };
+    std::atomic<bool>               hasAccessControl_{ false };
+    std::atomic<OBDeviceAccessMode> accessMode_{ OB_DEVICE_DEFAULT_ACCESS };
+
+    // Post processing filter list
+    std::map<OBSensorType, std::vector<std::shared_ptr<IFilter>>> recommendedPostFilters_;
 
 private:
     std::shared_ptr<Context> ctx_;  // handle the lifespan of the context
@@ -143,6 +157,7 @@ private:
     std::vector<ComponentItem>   components_;  // using vector to control destroy order of components
 
     std::atomic<bool> isDeactivated_;
+    std::mutex        deactivateMutex_;
 
     std::map<OBSensorType, std::shared_ptr<const SourcePortInfo>> sensorPortInfos_;
     std::map<OBSensorType, std::shared_ptr<IFilter>>              sensorFrameFilters_;

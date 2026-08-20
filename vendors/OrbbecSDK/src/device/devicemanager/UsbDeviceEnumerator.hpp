@@ -6,6 +6,8 @@
 #include "IDeviceWatcher.hpp"
 #include "Platform.hpp"
 
+#include "utils/SteadyCondVar.hpp"
+#include <atomic>
 #include <memory>
 #include <unordered_set>
 
@@ -31,20 +33,21 @@ private:
 
 private:
     std::shared_ptr<Platform> platform_;
-    bool                      destroy_ = false;
+    std::atomic<bool>         destroy_{ false };
 
     std::shared_ptr<IDeviceWatcher> deviceWatcher_;
 
     DeviceChangedCallback devChangedCallback_ = nullptr;
     std::thread           devChangedCallbackThread_;
 
-    SourcePortInfoList      currentUsbPortInfoList_;
-    bool                    newUsbPortArrival_ = false;
-    std::condition_variable newUsbPortArrivalCV_;
-    std::thread             deviceArrivalHandleThread_;
+    SourcePortInfoList   currentUsbPortInfoList_;
+    bool                 newUsbPortArrival_ = false;
+    std::mutex           newUsbPortArrivalMutex_;
+    utils::SteadyCondVar newUsbPortArrivalCV_;
+    std::thread          deviceArrivalHandleThread_;
 
     // removal thread
-    std::condition_variable         deviceRemovalCV_;
+    utils::SteadyCondVar            deviceRemovalCV_;
     std::mutex                      deviceRemovalMutex_;
     std::unordered_set<std::string> deviceRemovalUidSet_;
     std::thread                     deviceRemovalHandleThread_;

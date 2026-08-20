@@ -4,6 +4,7 @@
 #include "PrivFilterLoader.hpp"
 #include "PrivFilterCppWrapper.hpp"
 #include "FilterDecorator.hpp"
+#include "context/DynamicLibraryManager.hpp"
 #include "exception/ObException.hpp"
 #include "logger/Logger.hpp"
 #include "utils/Utils.hpp"
@@ -63,7 +64,7 @@ std::shared_ptr<IFilter> PrivFilterCreator::create() {
         }
     });
 
-    auto baseFilter = std::make_shared<PrivFilterCppWrapper>(filterName, privFilterCtxShared);
+    auto baseFilter = std::make_shared<PrivFilterCppWrapper>(filterName, privFilterCtxShared, pkgCtx_->activate_ex);
     return std::make_shared<FilterDecorator>(filterName, baseFilter);
 }
 
@@ -112,7 +113,7 @@ std::shared_ptr<IFilter> PrivFilterCreator::create(const std::string &activation
             ctx = nullptr;
         }
     });
-    auto baseFilter          = std::make_shared<PrivFilterCppWrapper>(filterName, privFilterCtxShared);
+    auto baseFilter          = std::make_shared<PrivFilterCppWrapper>(filterName, privFilterCtxShared, pkgCtx_->activate_ex);
     return std::make_shared<FilterDecorator>(filterName, baseFilter);
 }
 
@@ -135,13 +136,33 @@ std::map<std::string, std::shared_ptr<IFilterCreator>> getCreators() {
         auto fileName         = utils::removeExtensionOfFileName(packageName);
         fileName              = utils::string::replaceFirst(fileName, "lib", "");
         try {
-            pkgCtx_->dynamic_library          = std::make_shared<dylib>(dir, fileName);
+            pkgCtx_->dynamic_library = DynamicLibraryManager::getInstance()->getLibrary(fileName);
+            if(!pkgCtx_->dynamic_library) {
+                pkgCtx_->dynamic_library = DynamicLibraryManager::getInstance()->loadLibrary(dir, fileName);
+            }
             pkgCtx_->get_filter_count         = pkgCtx_->dynamic_library->get_function<size_t(ob_error **)>("ob_get_filter_count");
             pkgCtx_->get_filter_name          = pkgCtx_->dynamic_library->get_function<const char *(size_t, ob_error **)>("ob_get_filter_name");
             pkgCtx_->create_filter            = pkgCtx_->dynamic_library->get_function<ob_priv_filter_context *(size_t, ob_error **)>("ob_create_filter");
             pkgCtx_->get_vendor_specific_code = pkgCtx_->dynamic_library->get_function<const char *(ob_error **)>("ob_priv_filter_get_vendor_specific_code");
             pkgCtx_->is_activated             = pkgCtx_->dynamic_library->get_function<bool(ob_error **)>("ob_priv_filter_is_activated");
             pkgCtx_->activate                 = pkgCtx_->dynamic_library->get_function<bool(const char *, ob_error **)>("ob_priv_filter_activate");
+
+            try {
+                pkgCtx_->get_activated_device =
+                    pkgCtx_->dynamic_library->get_function<const ob_device *(ob_priv_filter *, ob_error **)>("ob_priv_filter_get_activated_device");
+            }
+            catch(const std::exception &) {
+                pkgCtx_->get_activated_device = nullptr;
+            }
+
+            try {
+                pkgCtx_->activate_ex =
+                    pkgCtx_->dynamic_library->get_function<void(ob_priv_filter *, const ob_device *, const ob_priv_filter_activate_options *, ob_error **)>(
+                        "ob_priv_filter_activate_ex");
+            }
+            catch(const std::exception &) {
+                pkgCtx_->activate_ex = nullptr;
+            }
         }
         catch(const std::exception &e) {
             LOG_DEBUG("Failed to load private filter library {}: {}", dir + packageName, e.what());

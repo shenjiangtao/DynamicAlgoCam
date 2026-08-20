@@ -3,7 +3,7 @@
 
 #include "Pipeline.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "context/Context.hpp"
 #include "stream/StreamProfileFactory.hpp"
 #include "logger/LoggerInterval.hpp"
@@ -365,28 +365,29 @@ void Pipeline::stopStream() {
 
 void Pipeline::stop() {
     LOG_INFO("Try to stop pipeline!");
+
+    // stop and reset status collector
+    statusCollector_->reset();
+    statusCollector_->clearActivePorts();
+    activeSensors_.clear();
+
     if(streamState_ != STREAM_STATE_STOPPED) {
         stopStream();
     }
 
     if(config_ && (config_->isStreamEnabled(OB_STREAM_DEPTH) || config_->isStreamEnabled(OB_STREAM_COLOR))) {
         resetAlignMode();
+        enableHardwareD2C(false);
     }
     if(frameAggregator_) {
         frameAggregator_->clearAllFrameQueue();
     }
-    enableHardwareD2C(false);
 
     // flush output frame queue
     outputFrameQueue_->flush();
 
     // clear callback
     pipelineCallback_ = nullptr;
-
-    // reset status collector
-    statusCollector_->reset();
-    statusCollector_->clearActivePorts();
-    activeSensors_.clear();
 
     streamState_ = STREAM_STATE_STOPPED;
     LOG_INFO("Stop pipeline done!");
@@ -625,6 +626,11 @@ void Pipeline::checkHardwareD2CConfig() {
         return;
     }
 
+    // Skip HW D2C management if config has no depth/color streams (e.g. IMU-only config)
+    if(!config_->isStreamEnabled(OB_STREAM_DEPTH) && !config_->isStreamEnabled(OB_STREAM_COLOR)) {
+        return;
+    }
+
     if(config_->getAlignMode() != ALIGN_D2C_HW_MODE) {
         enableHardwareD2C(false);
         return;
@@ -640,6 +646,13 @@ void Pipeline::checkHardwareD2CConfig() {
         auto d2cProfileList          = algParamManager->getD2CProfileList();
         depthFrameProcessor->setHardwareD2CProcessParams(colorVideoStreamProfile, depthVideoStreamProfile, calibrationCameraParams, d2cProfileList,
                                                          config_->getDepthScaleAfterAlignRequire());
+
+        OBD2CPreProcessParam preProcessParam = {};
+        if(algParamManager->getPreProcessParam(static_cast<uint16_t>(colorVideoStreamProfile->getWidth()),
+                                               static_cast<uint16_t>(colorVideoStreamProfile->getHeight()), preProcessParam)) {
+            depthFrameProcessor->setPreProcessParam(preProcessParam);
+        }
+
         enableHardwareD2C(true);
     }
 }
@@ -649,6 +662,13 @@ void Pipeline::enableHardwareD2C(bool enable) {
     auto depthFrameProcessor = std::dynamic_pointer_cast<DepthFrameProcessor>(frameProcessor.get());
     if(!depthFrameProcessor) {
         return;
+    }
+    if(!enable) {
+        // Disabling hardware D2C is a best-effort fallback: query the state first and return
+        // early if it is already disabled, to avoid the "not allowed while streaming" exception.
+        if(!depthFrameProcessor->isHardwareD2CProcessEnabled()) {
+            return;
+        }
     }
     depthFrameProcessor->enableHardwareD2CProcess(enable);
 }

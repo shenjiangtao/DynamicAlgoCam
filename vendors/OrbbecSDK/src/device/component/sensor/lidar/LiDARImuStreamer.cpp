@@ -80,10 +80,10 @@ LiDARImuStreamer::LiDARImuStreamer(IDevice *owner, const std::shared_ptr<IDataSt
 
 LiDARImuStreamer::~LiDARImuStreamer() noexcept {
     if(accelStreamProfile_) {
-        stopStream(nullptr);
+        stopStream(accelStreamProfile_);
     }
     if(gyroStreamProfile_) {
-        stopStream(nullptr);
+        stopStream(gyroStreamProfile_);
     }
 }
 
@@ -187,8 +187,8 @@ void LiDARImuStreamer::stopStream(std::shared_ptr<const StreamProfile> sp) {
             // clear current profile
             accelStreamProfile_ = nullptr;
             accelCallback_      = nullptr;
-            if(gyroStreamProfile_ == nullptr) {
-                // all imu streams are off
+            if(gyroStreamProfile_ != nullptr) {
+                // gyro stream is still running
                 return;
             }
         }
@@ -200,8 +200,8 @@ void LiDARImuStreamer::stopStream(std::shared_ptr<const StreamProfile> sp) {
             // clear current profile
             gyroStreamProfile_ = nullptr;
             gyroCallback_      = nullptr;
-            if(accelStreamProfile_ == nullptr) {
-                // all imu streams are off
+            if(accelStreamProfile_ != nullptr) {
+                // accel stream is still running
                 return;
             }
         }
@@ -304,6 +304,7 @@ void LiDARImuStreamer::parseIMUData(std::shared_ptr<Frame> frame) {
     std::shared_ptr<Frame> gyroFrame;
     auto                   frameIndex = ++frameIndex_;
     auto                   timestamp  = utils::getNowTimesUs();  // TODO 20250708: timestamp in header is invalid now, use system time
+    auto                   steadyUs   = utils::getSteadyTimeUs();
     if(accelStreamProfile) {
         accelFrame     = FrameFactory::createFrameFromStreamProfile(accelStreamProfile);
         auto frameData = (AccelFrame::Data *)accelFrame->getData();
@@ -317,6 +318,8 @@ void LiDARImuStreamer::parseIMUData(std::shared_ptr<Frame> frame) {
         accelFrame->setNumber(frameIndex);
         accelFrame->setTimeStampUsec(timestamp);
         accelFrame->setSystemTimeStampUsec(timestamp);
+        accelFrame->setSteadyTimeStampUsec(steadyUs);
+        accelFrame->setDeviceTimestampFromHost(true);
     }
 
     if(gyroStreamProfile) {
@@ -332,6 +335,8 @@ void LiDARImuStreamer::parseIMUData(std::shared_ptr<Frame> frame) {
         gyroFrame->setNumber(frameIndex);
         gyroFrame->setTimeStampUsec(timestamp);
         gyroFrame->setSystemTimeStampUsec(timestamp);
+        gyroFrame->setSteadyTimeStampUsec(steadyUs);
+        gyroFrame->setDeviceTimestampFromHost(true);
     }
     outputFrame(accelFrame, gyroFrame);
 }

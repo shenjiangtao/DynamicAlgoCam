@@ -19,7 +19,7 @@ extern "C" {
 ob_depth_work_mode ob_device_get_current_depth_work_mode(const ob_device *device, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(device);
     auto               workModeMgr = device->device->getComponentT<libobsensor::IDepthWorkModeManager>(libobsensor::OB_DEV_COMPONENT_DEPTH_WORK_MODE_MANAGER);
-    const auto &       checksum    = workModeMgr->getCurrentDepthWorkMode();
+    const auto        &checksum    = workModeMgr->getCurrentDepthWorkMode();
     ob_depth_work_mode work_mode;
     memcpy(work_mode.checksum, checksum.checksum, sizeof(checksum.checksum));
     memcpy(work_mode.name, checksum.name, sizeof(work_mode.name));
@@ -75,7 +75,7 @@ HANDLE_EXCEPTIONS_AND_RETURN(0, work_mode_list)
 ob_depth_work_mode ob_depth_work_mode_list_get_item(const ob_depth_work_mode_list *work_mode_list, uint32_t index, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(work_mode_list);
     VALIDATE_UNSIGNED_INDEX(index, work_mode_list->workModeList.size());
-    const auto &       workMode = work_mode_list->workModeList.at(index);
+    const auto        &workMode = work_mode_list->workModeList.at(index);
     ob_depth_work_mode impl;
     memcpy(impl.checksum, workMode.checksum, sizeof(workMode.checksum));
     memcpy(impl.name, workMode.name, sizeof(workMode.name));
@@ -212,6 +212,13 @@ void ob_device_load_frame_interleave(ob_device *device, const char *frame_interl
 }
 HANDLE_EXCEPTIONS_NO_RETURN(device, frame_interleave_name)
 
+const char *ob_device_get_current_frame_interleave_name(const ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto frameInterleaveMgr = device->device->getComponentT<libobsensor::IFrameInterleaveManager>(libobsensor::OB_DEV_COMPONENT_FRAME_INTERLEAVE_MANAGER);
+    return frameInterleaveMgr->getCurrentFrameInterleaveName().c_str();
+}
+HANDLE_EXCEPTIONS_AND_RETURN(nullptr, device)
+
 ob_device_frame_interleave_list *ob_device_get_available_frame_interleave_list(ob_device *device, ob_error **error) BEGIN_API_CALL {
     VALIDATE_NOT_NULL(device);
     auto impl = new ob_device_frame_interleave_list();
@@ -299,6 +306,55 @@ void ob_delete_preset_resolution_config_list(ob_preset_resolution_config_list *o
     delete ob_preset_resolution_config_list;
 }
 HANDLE_EXCEPTIONS_NO_RETURN(ob_preset_resolution_config_list)
+
+bool ob_device_is_color_preset_supported(const ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    return device->device->isComponentExists(libobsensor::OB_DEV_COMPONENT_COLOR_PRESET_MANAGER);
+}
+HANDLE_EXCEPTIONS_AND_RETURN(false, device)
+
+const char *ob_device_get_current_color_preset_name(const ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto mgr = device->device->getComponentT<libobsensor::IColorPresetManager>(libobsensor::OB_DEV_COMPONENT_COLOR_PRESET_MANAGER);
+    return mgr->getCurrentName().c_str();
+}
+HANDLE_EXCEPTIONS_AND_RETURN(nullptr, device)
+
+void ob_device_switch_color_preset(ob_device *device, const char *preset_name, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    VALIDATE_NOT_NULL(preset_name);
+    auto mgr = device->device->getComponentT<libobsensor::IColorPresetManager>(libobsensor::OB_DEV_COMPONENT_COLOR_PRESET_MANAGER);
+    mgr->switchPreset(preset_name);
+}
+HANDLE_EXCEPTIONS_NO_RETURN(device, preset_name)
+
+ob_color_preset_list *ob_device_get_color_preset_list(const ob_device *device, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(device);
+    auto mgr   = device->device->getComponentT<libobsensor::IColorPresetManager>(libobsensor::OB_DEV_COMPONENT_COLOR_PRESET_MANAGER);
+    auto impl  = new ob_color_preset_list();
+    impl->list = mgr->getPresetList();
+    return impl;
+}
+HANDLE_EXCEPTIONS_AND_RETURN(nullptr, device)
+
+void ob_delete_color_preset_list(ob_color_preset_list *list, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(list);
+    delete list;
+}
+HANDLE_EXCEPTIONS_NO_RETURN(list)
+
+uint32_t ob_color_preset_list_get_count(const ob_color_preset_list *list, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(list);
+    return static_cast<uint32_t>(list->list.size());
+}
+HANDLE_EXCEPTIONS_AND_RETURN(0, list)
+
+const char *ob_color_preset_list_get_name(const ob_color_preset_list *list, uint32_t index, ob_error **error) BEGIN_API_CALL {
+    VALIDATE_NOT_NULL(list);
+    VALIDATE_UNSIGNED_INDEX(index, list->list.size());
+    return list->list.at(index).c_str();
+}
+HANDLE_EXCEPTIONS_AND_RETURN(nullptr, list, index)
 
 #ifdef __cplusplus
 }

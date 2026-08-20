@@ -11,7 +11,6 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <mutex>
-#include <condition_variable>
 #include "ObV4lUvcDevicePort.hpp"
 
 #include "logger/Logger.hpp"
@@ -450,6 +449,9 @@ void ObV4lUvcDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandle> devHandle)
                 }
                 continue;
             }
+            else if(val == 0) {
+                continue;
+            }
 
             if(FD_ISSET(devHandle->stopPipeFd[0], &fds) || FD_ISSET(devHandle->stopPipeFd[1], &fds)) {
                 if(!devHandle->isCapturing) {
@@ -492,9 +494,6 @@ void ObV4lUvcDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandle> devHandle)
 
                 if(buf.bytesused) {
                     TRY_EXECUTE({
-                        auto timestamp = (double)buf.timestamp.tv_sec * 1000.f + (double)buf.timestamp.tv_usec / 1000.f;
-                        (void)timestamp;
-
                         auto rawframe   = FrameFactory::createFrameFromStreamProfile(devHandle->profile);
                         auto videoFrame = rawframe->as<VideoFrame>();
                         videoFrame->updateData(static_cast<const uint8_t *>(devHandle->buffers[buf.index].ptr), buf.bytesused);
@@ -508,8 +507,8 @@ void ObV4lUvcDevicePort::captureLoop(std::shared_ptr<V4lDeviceHandle> devHandle)
                             }
                         }
 
-                        auto realtime = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                        videoFrame->setSystemTimeStampUsec(realtime);
+                        videoFrame->setSystemTimeStampUsec(utils::getNowTimesUs());
+                        videoFrame->setSteadyTimeStampUsec(utils::getSteadyTimeUs());
                         // NOte: // V4L2 frame number start from 0; we use a custom frame number starting from 1
                         // videoFrame->setNumber(buf.sequence);
                         videoFrame->setNumber(devHandle->loopFrameIndex);
@@ -706,12 +705,19 @@ void ObV4lUvcDevicePort::startStream(std::shared_ptr<const StreamProfile> profil
     // stream on
     v4l2_buf_type bufType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if(xioctl(devHandle->fd, VIDIOC_STREAMON, &bufType) < 0) {
+        {
+            std::lock_guard<std::mutex> lk(devHandle->streamMutex);
+            devHandle->isCapturing = false;
+        }
         auto err = errno;
         stopStream(devHandle);
         THROW_IO_EXCEPTION("Failed to stream on!" + devHandle->info->name + ", " + strerror(err));
     }
     // start capture
-    devHandle->canStartCapture = true;
+    {
+        std::lock_guard<std::mutex> lk(devHandle->streamMutex);
+        devHandle->canStartCapture = true;
+    }
     devHandle->streamCv.notify_all();
 }
 
@@ -837,7 +843,8 @@ void ObV4lUvcDevicePort::stopAllStream() {
         }
     }
 }
-uint32_t ObV4lUvcDevicePort::sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen) {
+uint32_t ObV4lUvcDevicePort::sendAndReceive(const uint8_t *sendData, uint32_t sendLen, uint8_t *recvData, uint32_t exceptedRecvLen,
+                                            utils::TransferTiming *timing) {
     std::lock_guard<std::recursive_mutex> lock(ctrlMutex_);
     uint8_t                               ctrl = OB_VENDOR_XU_CTRL_ID_64;
 
@@ -855,13 +862,16 @@ uint32_t ObV4lUvcDevicePort::sendAndReceive(const uint8_t *sendData, uint32_t se
         alignDataLen = 512;
     }
 
+    utils::TimingScope sendScope(timing, &utils::TransferTiming::send);
     if(!setXu(ctrl, sendData, alignDataLen)) {
         return 0;
     }
+    sendScope.end();
 
     ctrl = OB_VENDOR_XU_CTRL_ID_512;
     if(exceptedRecvLen <= 64) {
-        ctrl = OB_VENDOR_XU_CTRL_ID_64;
+        ctrl            = OB_VENDOR_XU_CTRL_ID_64;
+        exceptedRecvLen = 64;
     }
     else if(exceptedRecvLen > 512) {
         ctrl = OB_VENDOR_XU_CTRL_ID_1024;
@@ -870,9 +880,11 @@ uint32_t ObV4lUvcDevicePort::sendAndReceive(const uint8_t *sendData, uint32_t se
         ctrl = OB_VENDOR_XU_CTRL_ID_512;
     }
 
+    utils::TimingScope recvScope(timing, &utils::TransferTiming::recv);
     if(!getXu(ctrl, recvData, &exceptedRecvLen)) {
         return 0;
     }
+    recvScope.end();
     return exceptedRecvLen;
 }
 

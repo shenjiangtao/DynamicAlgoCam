@@ -82,8 +82,12 @@ public:
 
     /**
      * @brief Fetch device error state from device and update cache
+     * @param[in] maxCacheAgeMs Maximum age (in milliseconds) of the cached error state that
+     *        is acceptable to reuse without querying the device. 0 (default) always queries
+     *        the device for the latest state. The cache is shared across all components
+     *        (e.g. multiple pipelines) bound to the same device.
      */
-    virtual void fetchDeviceErrorState() = 0;
+    virtual void fetchDeviceErrorState(uint64_t maxCacheAgeMs = 0) = 0;
 
     // device components management
     virtual bool                                 isComponentExists(DeviceComponentId compId) const                     = 0;
@@ -97,6 +101,7 @@ public:
     virtual DeviceComponentPtr<ISensor> getSensor(OBSensorType type)             = 0;
     virtual std::vector<OBSensorType>   getSensorTypeList() const                = 0;
     virtual bool                        hasAnySensorStreamActivated()            = 0;
+    virtual bool                        hasAnyVideoSensorStreamActivated()       = 0;  // only checks video sensors (depth/color/IR variants)
 
     // todo: Add a filter manager as a component and move this function to it
     virtual std::vector<std::shared_ptr<IFilter>> createRecommendedPostProcessingFilters(OBSensorType type)                                     = 0;
@@ -111,6 +116,9 @@ public:
 
     // update device depth presets
     virtual void updateOptionalDepthPresets(const char filePathList[][OB_PATH_MAX], uint8_t pathCount, DeviceFwUpdateCallback updateCallback) = 0;
+
+    // update device depth presets from data loaded in memory
+    virtual void updateOptionalDepthPresets(const OBDataView *dataList, uint8_t count, DeviceFwUpdateCallback updateCallback) = 0;
 
     // activate device accessor
     virtual void activateDeviceAccessor() = 0;

@@ -78,7 +78,10 @@ void PixelValueScaler::updateConfig(std::vector<std::string> &params) {
     }
     try {
         std::lock_guard<std::mutex> scaleLock(mtx_);
-        scale_ = std::stof(params[0]);
+        scale_ = 0.0f;
+        if(!utils::string::cvt2Float(params[0], scale_)) {
+            LOG_WARN("Invalid scale value: {}", params[0]);
+        }
     }
     catch(const std::exception &e) {
         THROW_INVALID_PARAM_EXCEPTION("PixelValueScaler config error: " + std::string(e.what()));
@@ -91,7 +94,7 @@ void PixelValueScaler::setConfigData(void *data, uint32_t size) {
 }
 
 const std::string &PixelValueScaler::getConfigSchema() const {
-    // csv format: name，type， min，max，step，default，description
+    // csv format: name, type,  min, max, step, default, description
     static const std::string schema = "scale, float, 0.01, 100.0, 0.01, 1.0, value scale factor";
     return schema;
 }
@@ -151,7 +154,7 @@ void ThresholdFilter::setConfigData(void *data, uint32_t size) {
 }
 
 const std::string &ThresholdFilter::getConfigSchema() const {
-    // csv format: name，type， min，max，step，default，description
+    // csv format: name, type, min, max, step, default, description
     static const std::string schema = "min, int, 0, 16000, 1, 0, min depth range\n"
                                       "max, int, 0, 16000, 1, 16000, max depth range";
     return schema;
@@ -231,7 +234,7 @@ void PixelValueOffset::setConfigData(void *data, uint32_t size) {
 }
 
 const std::string &PixelValueOffset::getConfigSchema() const {
-    // csv format: name，type， min，max，step，default，description
+    // csv format: name, type, min, max, step, default, description
     static const std::string schema = "offset, int, -16, 16, 1, 0, value offset factor";
     return schema;
 }

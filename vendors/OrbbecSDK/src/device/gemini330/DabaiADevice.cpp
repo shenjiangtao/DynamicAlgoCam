@@ -3,7 +3,7 @@
 
 #include "DabaiADevice.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 
 #include "utils/Utils.hpp"
@@ -43,6 +43,7 @@
 #include "G330DepthWorkModeManager.hpp"
 #include "G330SensorStreamStrategy.hpp"
 #include "G330PropertyAccessors.hpp"
+#include "property/HardwareD2CPropertyAccessor.hpp"
 #include "G330FrameMetadataParserContainer.hpp"
 #include "DabaiAMetadataModifier.hpp"
 
@@ -924,9 +925,9 @@ void                 DabaiADevice::initSensorListGMSL() {
 
             auto port               = getSourcePort(imuPortInfo);
             auto imuCorrectorFilter = getSensorFrameFilter("IMUCorrector", OB_SENSOR_ACCEL, true);
-            auto imuCalculator  = std::make_shared<ImuCalculatorBMI088>();
-            auto dataStreamPort = std::dynamic_pointer_cast<IDataStreamPort>(port);
-            auto imuStreamer    = std::make_shared<ImuStreamer>(this, dataStreamPort, imuCorrectorFilter,imuCalculator);
+            auto imuCalculator      = std::make_shared<ImuCalculatorBMI088>();
+            auto dataStreamPort     = std::dynamic_pointer_cast<IDataStreamPort>(port);
+            auto imuStreamer        = std::make_shared<ImuStreamer>(this, dataStreamPort, imuCorrectorFilter, imuCalculator);
             return imuStreamer;
         });
 
@@ -1038,7 +1039,8 @@ void DabaiADevice::initProperties() {
             propertyServer->registerProperty(OB_PROP_LASER_ON_OFF_PATTERN_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_TEMPERATURE_COMPENSATION_BOOL, "rw", "rw", vendorPropertyAccessor);
 
-            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", vendorPropertyAccessor);
+            auto hwD2CGuardAccessor = std::make_shared<HardwareD2CPropertyAccessor>(this, vendorPropertyAccessor);
+            propertyServer->registerProperty(OB_PROP_DEPTH_ALIGN_HARDWARE_BOOL, "rw", "rw", hwD2CGuardAccessor);
             propertyServer->registerProperty(OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, "rw", "rw", vendorPropertyAccessor);
             propertyServer->registerProperty(OB_PROP_LDP_MEASURE_DISTANCE_INT, "r", "r", vendorPropertyAccessor);
             // propertyServer->registerProperty(OB_PROP_TIMER_RESET_SIGNAL_BOOL, "w", "w", vendorPropertyAccessor);
@@ -1131,108 +1133,7 @@ void DabaiADevice::initProperties() {
     auto baseLinePropertyAccessor = std::make_shared<BaselinePropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_BASELINE_CALIBRATION_PARAM, "r", "r", baseLinePropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
-}
-
-std::vector<std::shared_ptr<IFilter>> DabaiADevice::createRecommendedPostProcessingFilters(OBSensorType type) {
-    auto filterIter = sensorFilterListMap_.find(type);
-    if(filterIter != sensorFilterListMap_.end()) {
-        return filterIter->second;
-    }
-
-    auto filterFactory = FilterFactory::getInstance();
-    if(type == OB_SENSOR_DEPTH) {
-        std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-        auto depthPostrFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
-
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            depthFilterList.push_back(decimationFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-            auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-            // magnitude, alpha, disp_diff, radius
-            if(depthPostrFilterParamsManager) {
-                spatFilter->updateConfig(depthPostrFilterParamsManager->getSpatialAdvancedFilterUpdateParams());
-                spatFilter->enable(depthPostrFilterParamsManager->isSpatialAdvancedFilterEnable());
-            }
-            else {
-                std::vector<std::string> params = { "1", "0.5", "160", "1" };
-                spatFilter->updateConfig(params);
-                spatFilter->enable(false);
-            }
-            depthFilterList.push_back(spatFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-            auto tempFilter = filterFactory->createFilter("TemporalFilter");
-            if(depthPostrFilterParamsManager) {
-                tempFilter->updateConfig(depthPostrFilterParamsManager->getTemporalFilterUpdateParams());
-                tempFilter->enable(depthPostrFilterParamsManager->isTemporalFilterEnable());
-            }
-            else {
-                // diff_scale, weight
-                std::vector<std::string> params = { "0.1", "0.4" };
-                tempFilter->updateConfig(params);
-                tempFilter->enable(false);
-            }
-            depthFilterList.push_back(tempFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-            auto hfFilter = filterFactory->createFilter("HoleFillingFilter");
-            if(depthPostrFilterParamsManager) {
-                hfFilter->updateConfig(depthPostrFilterParamsManager->getHoleFillingFilterUpdateParams());
-                hfFilter->enable(depthPostrFilterParamsManager->isHoleFillingFilterEnable());
-            }
-            else {
-                std::vector<std::string> params = { "2" };
-                hfFilter->updateConfig(params);
-                hfFilter->enable(false);
-            }
-            depthFilterList.push_back(hfFilter);
-        }
-
-        if(depthPostrFilterParamsManager) {
-            if(filterFactory->isFilterCreatorExists("FalsePositiveFilter")) {
-                auto falsePositiveFilter = filterFactory->createFilter("FalsePositiveFilter");
-                auto filterData          = depthPostrFilterParamsManager->getFPFilterParams();
-                falsePositiveFilter->setConfigData(filterData, sizeof(FalsePositiveFilterParams));
-                falsePositiveFilter->updateConfig(depthPostrFilterParamsManager->getFPFilterUpdateParams());
-                falsePositiveFilter->enable(depthPostrFilterParamsManager->isFPFilterEnable());
-                depthFilterList.push_back(falsePositiveFilter);
-            }
-        }
-
-        if(filterFactory->isFilterCreatorExists("DisparityTransform")) {
-            auto dtFilter = filterFactory->createFilter("DisparityTransform");
-            depthFilterList.push_back(dtFilter);
-        }
-
-        if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-            auto thresholdFilter = filterFactory->createFilter("ThresholdFilter");
-            thresholdFilter->enable(false);
-            depthFilterList.push_back(thresholdFilter);
-        }
-
-        sensorFilterListMap_[OB_SENSOR_DEPTH] = depthFilterList;
-        return depthFilterList;
-    }
-    else if(type == OB_SENSOR_COLOR) {
-        std::vector<std::shared_ptr<IFilter>> colorFilterList;
-        if(filterFactory->isFilterCreatorExists("DecimationFilter")) {
-            auto decimationFilter = filterFactory->createFilter("DecimationFilter");
-            decimationFilter->enable(false);
-            colorFilterList.push_back(decimationFilter);
-        }
-        sensorFilterListMap_[OB_SENSOR_COLOR] = colorFilterList;
-        return colorFilterList;
-    }
-
-    return {};
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 }
 
 void DabaiADevice::loadDefaultPostProcessingConfig() {
@@ -1243,8 +1144,8 @@ void DabaiADevice::updateDepthPostProcessingFilterList() {
     auto depthPostrFilterParamsManager = getComponentT<DepthPostFilterParamsManager>(OB_DEV_COMPONENT_DEPTH_POST_FILTER_PARAMS_MANAGER, false);
     if(depthPostrFilterParamsManager) {
         // Update recommended filters
-        auto filterIter = sensorFilterListMap_.find(OB_SENSOR_DEPTH);
-        if(filterIter != sensorFilterListMap_.end()) {
+        auto filterIter = recommendedPostFilters_.find(OB_SENSOR_DEPTH);
+        if(filterIter != recommendedPostFilters_.end()) {
             std::vector<std::shared_ptr<IFilter>> newDepthFilterList;
             std::vector<std::shared_ptr<IFilter>> depthFilterList = filterIter->second;
             for(const auto &filter: depthFilterList) {
@@ -1268,7 +1169,7 @@ void DabaiADevice::updateDepthPostProcessingFilterList() {
                 }
                 newDepthFilterList.push_back(filter);
             }
-            sensorFilterListMap_[OB_SENSOR_DEPTH] = newDepthFilterList;
+            recommendedPostFilters_[OB_SENSOR_DEPTH] = newDepthFilterList;
         }
 
         // Update NoiseRemovalFilter

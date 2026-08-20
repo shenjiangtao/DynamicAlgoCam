@@ -3,7 +3,7 @@
 
 #include "G2XLDevice.hpp"
 
-#include "DevicePids.hpp"
+#include "common/DevicePids.hpp"
 #include "InternalTypes.hpp"
 
 #include "utils/Utils.hpp"
@@ -96,58 +96,6 @@ void G2XLDeviceBase::init() {
     registerComponent(OB_DEV_COMPONENT_DEVICE_CLOCK_SYNCHRONIZER, [this] {  //
         return std::make_shared<DeviceClockSynchronizer>(this, deviceTimeFreq_, deviceTimeFreq_);
     });
-}
-
-std::vector<std::shared_ptr<IFilter>> G2XLDeviceBase::createRecommendedPostProcessingFilters(OBSensorType type) {
-    if(type != OB_SENSOR_DEPTH) {
-        return {};
-    }
-    auto                                  filterFactory = FilterFactory::getInstance();
-    std::vector<std::shared_ptr<IFilter>> depthFilterList;
-
-    if(filterFactory->isFilterCreatorExists("EdgeNoiseRemovalFilter")) {
-        auto enrFilter = filterFactory->createFilter("EdgeNoiseRemovalFilter");
-        enrFilter->enable(false);
-        // todo: set default values
-        depthFilterList.push_back(enrFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("SpatialAdvancedFilter")) {
-        auto spatFilter = filterFactory->createFilter("SpatialAdvancedFilter");
-        spatFilter->enable(false);
-        // magnitude, alpha, disp_diff, radius
-        std::vector<std::string> params = { "1", "0.5", "64", "1" };
-        spatFilter->updateConfig(params);
-        depthFilterList.push_back(spatFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("TemporalFilter")) {
-        auto tempFilter = filterFactory->createFilter("TemporalFilter");
-        tempFilter->enable(false);
-        // diff_scale, weight
-        std::vector<std::string> params = { "0.1", "0.4" };
-        tempFilter->updateConfig(params);
-        depthFilterList.push_back(tempFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("HoleFillingFilter")) {
-        auto hfFilter = filterFactory->createFilter("HoleFillingFilter");
-        hfFilter->enable(false);
-        depthFilterList.push_back(hfFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("DisparityTransform")) {
-        auto dtFilter = filterFactory->createFilter("DisparityTransform");
-        dtFilter->enable(true);
-        depthFilterList.push_back(dtFilter);
-    }
-
-    if(filterFactory->isFilterCreatorExists("ThresholdFilter")) {
-        auto ThresholdFilter = filterFactory->createFilter("ThresholdFilter");
-        depthFilterList.push_back(ThresholdFilter);
-    }
-
-    return depthFilterList;
 }
 
 void G2XLDeviceBase::initSensorStreamProfile(std::shared_ptr<ISensor> sensor) {
@@ -589,7 +537,7 @@ void G2XLUSBDevice::initProperties() {
     auto baseLinePropertyAccessor = std::make_shared<BaselinePropertyAccessor>(this);
     propertyServer->registerProperty(OB_STRUCT_BASELINE_CALIBRATION_PARAM, "r", "r", baseLinePropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_DEVICE_COMMUNICATION_TYPE_INT, OB_COMM_USB); })
     CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device communication type to ethernet mode failed!"); })
@@ -984,7 +932,7 @@ void G2XLNetDevice::initProperties() {
     propertyServer->registerProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT, "rw", "rw", d2dPropertyAccessor);
     propertyServer->registerProperty(OB_STRUCT_DEPTH_PRECISION_SUPPORT_LIST, "r", "r", d2dPropertyAccessor);
 
-    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, true);
+    registerComponent(OB_DEV_COMPONENT_PROPERTY_SERVER, propertyServer, false);
 
     BEGIN_TRY_EXECUTE({ propertyServer->setPropertyValueT(OB_PROP_DEVICE_COMMUNICATION_TYPE_INT, OB_COMM_NET); })
     CATCH_EXCEPTION_AND_EXECUTE({ LOG_ERROR("Set device communication type to ethernet mode failed!"); })
