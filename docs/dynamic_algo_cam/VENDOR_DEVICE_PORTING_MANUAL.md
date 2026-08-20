@@ -160,16 +160,16 @@ COLOR_LEFT, COLOR_RIGHT, CONFIDENCE, POINT, COUNT
 
 | File | Contents | Lines |
 |------|----------|-------|
-| `dynalgo_ob_adapter.hpp` | `obFormatToNio()`, `nioFormatToOb()`, `obFrameTypeToNio()`, `nioFrameTypeToOb()`, `nioFrameTypeToObSensor()`, `obIntrinsicToNio()`, `nioIntrinsicToOb()`, `selectBestProfile()`, `isLiDARDevice()`, `OB_DEVICE_VID` (0x2bc5), `isGemini305Device()`, `isGemini305gDevice()`, `isAstraMiniDevice()` | ~210 |
+| `dynalgo_ob_adapter.hpp` | `obFormatToDynalgo()`, `dynalgoFormatToOb()`, `obFrameTypeToDynalgo()`, `obFrameTypeToDynalgo()`, `obFrameTypeToDynalgoSensor()`, `obIntrinsicToDynalgo()`, `dynalgoIntrinsicToOb()`, `selectBestProfile()`, `isLiDARDevice()`, `OB_DEVICE_VID` (0x2bc5), `isGemini305Device()`, `isGemini305gDevice()`, `isAstraMiniDevice()` | ~210 |
 | `dynalgo_ob_device.hpp` | `ObDevice`, `ObPipeline`, `ObContext` declarations | ~106 |
 | `dynalgo_ob_device.cpp` | Full implementation: device enumeration, sensor setup, HW/SW D2C, pipeline start/stop, IMU pipeline | ~447 |
-| `dynalgo_ob_frame_adapter.hpp` | `obFrameSetToNio()` (deep copy all video frames), `obImuToNioSamples()` | ~118 |
+| `dynalgo_ob_frame_adapter.hpp` | `obFrameSetToDynalgo()` (deep copy all video frames), `obImuToDynalgoSamples()` | ~118 |
 | `dynalgo_ob_d2c_align.hpp` | `ObD2CAlign : DynalgoD2CAlign` — wraps `ob::Align` | ~54 |
 
 **Key patterns:**
 
 - `ObDevice::setupPipeline()` downcasts `DynalgoPipeline&` to `ObPipeline&`, iterates SDK sensor list, calls `selectBestProfile()` for each, enables streams on `ob::Config`, applies device quirks (e.g. Gemini 305g disables IR_LEFT), checks HW D2C, returns fully populated `DynalgoSensorInfo`.
-- `ObPipeline::start()` wraps SDK callback: calls `obFrameSetToNio(obFs)` for deep copy, attaches `nativeFrameSet = static_pointer_cast<void>(obFs)`, then calls user callback.
+- `ObPipeline::start()` wraps SDK callback: calls `obFrameSetToDynalgo(obFs)` for deep copy, attaches `nativeFrameSet = static_pointer_cast<void>(obFs)`, then calls user callback.
 - `ObPipeline::getD2CAlignFilter()` returns `make_shared<ObD2CAlign>(alignFilter_)` if SW mode, else nullptr.
 - `ObD2CAlign::process()` restores `ob::FrameSet` from `nativeFrameSet`, calls `ob::Align::process()`, extracts color/depth pointers into `DynalgoAlignedFrame`.
 
@@ -177,16 +177,16 @@ COLOR_LEFT, COLOR_RIGHT, CONFIDENCE, POINT, COUNT
 
 | File | Contents | Lines |
 |------|----------|-------|
-| `dynalgo_rs_adapter.hpp` | `rsFrameFormatToNio()`, `nioFormatToRsFrameFormat()`, `rsImuToNioSamples()` | ~75 |
+| `dynalgo_rs_adapter.hpp` | `rsFrameFormatToDynalgo()`, `dynalgoFormatToRsFrameFormat()`, `rsImuToDynalgoSamples()` | ~75 |
 | `dynalgo_rs_device.hpp` | `RsDevice`, `RsPipeline`, `RsContext` declarations | ~163 |
 | `dynalgo_rs_device.cpp` | Full implementation: USB discovery, dual get/put callback queues, FrameSet synthesis, point-to-depth conversion | ~373 |
-| `dynalgo_rs_frame_adapter.hpp` | `rsDepthToNioFrame()`, `rsPointToNioFrame()`, `rsImageToNioFrame()` | ~121 |
+| `dynalgo_rs_frame_adapter.hpp` | `rsDepthToDynalgoFrame()`, `rsPointToDynalgoFrame()`, `rsImageToDynalgoFrame()` | ~121 |
 
 **Key patterns:**
 
 - `RsDevice` has fixed sensor info (no IR, depth=96×288@10 Y16, color=1920×1080@30 NV12).
 - `RsPipeline` uses `LidarDriver` with dual get/put callback queues (`freeCloudQueue` ↔ `stuffedCloudQueue`, etc.). Three processing threads drain stuffed queues and synthesize `DynalgoFrameSet` when both color and depth arrive.
-- `rsDepthToNioFrame()` synthesizes a 96×288 Y16 depth map from 3D point cloud (distance / 0.005 → uint16, 0 for invalid/NaN).
+- `rsDepthToDynalgoFrame()` synthesizes a 96×288 Y16 depth map from 3D point cloud (distance / 0.005 → uint16, 0 for invalid/NaN).
 - `RsPipeline::isPointCloudDepth()` returns `true`; `getAlignMode()` always returns `HW`.
 - `RsContext::scanDevices()` uses libusb to find VID=0x3840/PID=0x1010 devices, reads serial from USB descriptor, falls back to busnum-devnum UUID.
 - `RsPipeline::start()` must launch processing threads **before** `driver_.start()` so threads are ready when first data arrives.
@@ -201,7 +201,7 @@ For a new vendor "XYZ", create under `app/driver/xyz/`:
 
 ```
 app/driver/xyz/
-├── dynalgo_xyz_.hpp       # Type conversions: XYZ↔Nio
+├── dynalgo_xyz_.hpp       # Type conversions: XYZ↔Dynalgo
 ├── dynalgo_xyz_.hpp # Frame conversion: XYZ frame → DynalgoFrame
 ├── dynalgo_xyz_.hpp        # XyzDevice, XyzPipeline, XyzContext declarations
 └── dynalgo_xyz_.cpp        # Full implementation
@@ -235,13 +235,13 @@ You must provide at minimum:
 
 ```cpp
 // Convert vendor video frame(s) → DynalgoFrameSet (deep copy pixel data)
-DynalgoFrameSet xyzFrameSetToNio(VendorFrameSetType vendorFs);
+DynalgoFrameSet xyzFrameSetToDynalgo(VendorFrameSetType vendorFs);
 
 // Convert vendor IMU data → vector<DynalgoImuSample>
-std::vector<DynalgoImuSample> xyzImuToNioSamples(VendorImuType vendorImu);
+std::vector<DynalgoImuSample> xyzImuToDynalgoSamples(VendorImuType vendorImu);
 ```
 
-Critical rules for `xyzFrameSetToNio`:
+Critical rules for `xyzFrameSetToDynalgo`:
 1. **Deep copy pixel data**: `nf.data.assign(data, data + size)` — do NOT hold SDK buffer pointers.
 2. **Set all DynalgoFrame fields**: type, format, width, height, timestampUs, depthScale (for depth frames), data.
 3. **Attach native FrameSet** if SW D2C alignment needs it later: `nioFs.nativeFrameSet = static_pointer_cast<void>(vendorFs)`. Otherwise leave null.
@@ -321,10 +321,10 @@ bool XyzPipeline::start(DynalgoVideoCallback callback) {
     try {
         vendorPipeline_->start(vendorConfig_, [this](VendorFrameSetType vfs) {
             if (vfs) {
-                auto nioFs = std::make_shared<DynalgoFrameSet>(xyzFrameSetToNio(vfs));
+                auto dynalgoFs = std::make_shared<DynalgoFrameSet>(xyzFrameSetToDynalgo(vfs));
                 // Only attach nativeFrameSet if SW D2C alignment needs it:
-                nioFs->nativeFrameSet = std::static_pointer_cast<void>(vfs);
-                videoCallback_(nioFs);
+                dynalgoFs->nativeFrameSet = std::static_pointer_cast<void>(vfs);
+                videoCallback_(dynalgoFs);
             }
         });
         return true;
@@ -363,12 +363,12 @@ std::vector<DiscoveredDevice> discoverDevices() {
     XyzContext xyzCtx;
     uint32_t xyzCount = xyzCtx.getDeviceCount();
     for (uint32_t i = 0; i < xyzCount; i++) {
-        auto nioDev = xyzCtx.getDevice(i);
-        auto xyzDev = std::dynamic_pointer_cast<XyzDevice>(nioDev);
+        auto dynalgoDev = xyzCtx.getDevice(i);
+        auto xyzDev = std::dynamic_pointer_cast<XyzDevice>(dynalgoDev);
         if (!xyzDev)
             continue;
         DiscoveredDevice dd;
-        dd.device = nioDev;
+        dd.device = dynalgoDev;
         dd.pipeline = std::make_shared<XyzPipeline>(xyzDev);
         result.push_back(std::move(dd));
     }
@@ -438,7 +438,7 @@ extend the condition to `if(ENABLE_ORBBEC OR ENABLE_RS_AC1 OR ENABLE_XYZ)`).
 | Scenario | Pattern | Implementation |
 |----------|---------|----------------|
 | **HW D2C only** (e.g. RS-AC1) | `getAlignMode()` returns `HW`, `getD2CAlignFilter()` returns nullptr | CaptureSession extracts color/depth data directly from `DynalgoFrameSet`; no SW alignment step |
-| **SW D2C only** | `getAlignMode()` returns `SW`, `getD2CAlignFilter()` returns valid `DynalgoD2CAlign*` | CaptureSession calls `alignFilter->process(nioFs->nativeFrameSet, out)`; nativeFrameSet must be populated |
+| **SW D2C only** | `getAlignMode()` returns `SW`, `getD2CAlignFilter()` returns valid `DynalgoD2CAlign*` | CaptureSession calls `alignFilter->process(dynalgoFs->nativeFrameSet, out)`; nativeFrameSet must be populated |
 | **HW preferred, SW fallback** (e.g. Orbbec) | `setupPipeline()` queries HW capability; falls back to SW if unavailable | ObPipeline::checkHWD2CSupport() → setAlignMode(HW or SW) |
 | **No D2C** | `getAlignMode()` returns `NONE`, `getD2CAlignFilter()` returns nullptr | No alignment performed |
 
@@ -461,12 +461,12 @@ if (!hwD2CMode_) {
 ```
 Vendor SDK callback
   │
-  ▼  xyzFrameSetToNio() — deep copy pixel data
-  │  nioFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)  [if SW D2C]
+  ▼  xyzFrameSetToDynalgo() — deep copy pixel data
+  │  dynalgoFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)  [if SW D2C]
   │
 DynalgoFrameSet (owns pixel data + optional opaque native handle)
   │
-  ▼  videoCallback_(nioFs)  —  zero blocking in SDK callback
+  ▼  videoCallback_(dynalgoFs)  —  zero blocking in SDK callback
   │
 VideoFrameQueue (bounded SPSC, capacity 8)
   │
@@ -500,8 +500,8 @@ File creation gating conditions (`app/capture/dynalgo_capture_session.cpp:59-158
 |---------|-------------|-----|
 | Build error: `DYNALGO_DEVICE_VID / isGemini305*` / `isAstraMini*` in core | Orbbec-specific vid/pid checks leaked to core | Move to `app/driver/VENDOR/dynalgo_xyz_.hpp` — use `VENDOR_DEVICE_VID` constant + inline functions |
 | Build error: `ob::` / `OB_` in non-driver file | SDK type used outside driver | Replace with `Nio*` equivalent; move SDK-specific logic to adapter |
-| Segfault in consumer thread | `DynalgoFrame::data` is empty or `rawData()` returns nullptr | Verify `xyzFrameSetToNio()` copies pixel data via `nf.data.assign()` |
-| SW D2C returns garbage | `nativeFrameSet` is null or wrong type | Ensure `start()` sets `nioFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)` and `XyzD2CAlign::process()` casts back correctly |
+| Segfault in consumer thread | `DynalgoFrame::data` is empty or `rawData()` returns nullptr | Verify `xyzFrameSetToDynalgo()` copies pixel data via `nf.data.assign()` |
+| SW D2C returns garbage | `nativeFrameSet` is null or wrong type | Ensure `start()` sets `dynalgoFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)` and `XyzD2CAlign::process()` casts back correctly |
 | Duplicate frames / mixed timestamps | Vendor callback fires on wrong thread / not synchronized | Use mutex + ready flags for async sources (see RsPipeline pattern) |
 | Pipeline start fails silently | Exception swallowed in `start()` | Check `DYNALGO_LOG_ERROR_S` output; verify vendor config is complete before calling vendor start |
 | `setupPipeline()` returns all-zero `DynalgoSensorInfo` | Downcast to concrete pipeline failed | Ensure factory creates correct `XyzPipeline` type paired with `XyzDevice` |
@@ -510,7 +510,247 @@ File creation gating conditions (`app/capture/dynalgo_capture_session.cpp:59-158
 
 ---
 
-## 9. Unresolved / Open Items
+## 9. Actuator Porting Guide
+
+> Actuators are the output end of the perceive–control loop. Phase A introduced the `DynalgoActuator` abstract base class with a self-registration factory; Phase C wires it into the EngagementLoop. Adding a new actuator only requires implementing the abstract interface and calling `registerActuator()` at static init.
+
+### 9.1 Architecture Location
+
+```
+app/
+├── core/
+│   ├── dynalgo_actuator.hpp          # DynalgoActuatorType, DynalgoActuatorConfig, DynalgoActuator abstract
+│   ├── dynalgo_actuator_factory.hpp  # createActuator(), registerActuator()
+│   └── dynalgo_actuator_factory.cpp  # implementation
+├── actuator/
+│   ├── dummy_actuator.hpp/cpp        # DUMMY backend (self-registration demo)
+│   └── CMakeLists.txt                # builds dynalgo_actuators static lib
+├── algo/
+│   └── dynalgo_engagement_loop.cpp   # calls actuator->aimAt(X,Y,Z) → fire()
+└── dynamic_algo_cam/
+    └── dynamic_algo_cam.cpp          # CLI wiring --engage-actuator
+```
+
+### 9.2 Abstract Interface (app/core/dynalgo_actuator.hpp)
+
+```cpp
+enum class DynalgoActuatorType {
+    NONE, DUMMY, LASER_GENERIC, GIMBAL_GENERIC
+};
+
+struct DynalgoActuatorConfig {
+    bool dryRun = true;           // safety default: true = all control is no-op
+    std::string device;           // serial / network device path
+    int channel = 0;              // channel number
+    std::string ip;               // network IP
+    uint16_t port = 0;            // network port
+    int baud = 115200;            // serial baud rate
+};
+
+class DynalgoActuator {
+public:
+    virtual ~DynalgoActuator() = default;
+
+    // Initialize: parse cfg, open device. dryRun=true → log only, return true
+    virtual bool load(const DynalgoActuatorConfig& cfg) = 0;
+
+    // Open/connect device
+    virtual bool open() = 0;
+
+    // Aim: camera optical-center XYZ meters (from TrackBundle::lastX/Y/Z())
+    virtual bool aimAt(float x, float y, float z) = 0;
+
+    // Fire: durationMs = pulse duration. dryRun=true → log only
+    virtual bool fire(int durationMs) = 0;
+
+    // Close/disconnect device
+    virtual bool close() = 0;
+
+    // Backend name for log identification
+    virtual const char* name() const noexcept = 0;
+};
+```
+
+**Key points:**
+- `dryRun` defaults to `true` — all real hardware ops must be inside `if (!cfg.dryRun) { ... }`
+- `aimAt()` coordinate system: **camera optical-center XYZ meters** (Phase B `detectionCenterToCamera3D()` output)
+- `fire()` duration unit: **milliseconds**
+- All methods return `bool`: on failure EngagementLoop logs `DYNALGO_LOG_WARN_S` and continues
+
+### 9.3 Self-Registration Pattern (DUMMY Demo)
+
+`app/actuator/dummy_actuator.cpp` end:
+
+```cpp
+namespace {
+struct DummyRegistrar {
+    DummyRegistrar() {
+        dynalgo::registerActuator(
+            dynalgo::DynalgoActuatorType::DUMMY,
+            [](const dynalgo::DynalgoActuatorConfig& cfg) {
+                return std::make_unique<dynalgo::DummyActuator>(cfg);
+            });
+    }
+} g_dummyRegistrar;
+} // namespace
+```
+
+**Critical requirement:**
+1. Anonymous namespace + static instance ensures registrar TU isn't optimized away at link time
+2. Consumer (main program) linking `libdynalgo_actuators.a` **must** use `--whole-archive`:
+
+```cmake
+# app/dynamic_algo_cam/CMakeLists.txt or root CMakeLists.txt
+target_link_libraries(dynamic_algo_cam PRIVATE
+    "-Wl,--whole-archive" dynalgo::actuators "-Wl,--no-whole-archive"
+)
+```
+
+Without this, the registrar TU is discarded → `createActuator(DUMMY)` returns `nullptr`.
+
+### 9.4 New Actuator Implementation Checklist
+
+For a new actuator "XYZ" under `app/actuator/xyz/`:
+
+```
+app/actuator/xyz/
+├── dynalgo_xyz_actuator.hpp
+├── dynalgo_xyz_actuator.cpp
+└── CMakeLists.txt (optional, or add to app/actuator/CMakeLists.txt)
+```
+
+#### Implementation Steps
+
+1. **Inherit `DynalgoActuator`** and implement all 6 pure virtual methods
+2. **Constructor** stores `DynalgoActuatorConfig`
+3. **`load()`** parses cfg; `dryRun=true` → log only, return `true`
+4. **`open()`** real connect to serial/network; `dryRun=true` → log only
+5. **`aimAt(x,y,z)`** sends command to hardware; `dryRun=true` → log only
+6. **`fire(durationMs)`** triggers emission; `dryRun=true` → log only
+7. **`close()`** closes connection; `dryRun=true` → log only
+8. **`name()`** returns `"XYZ"`
+9. **Self-registration block** (same pattern as DUMMY) at end of `.cpp`
+10. **Update `app/actuator/CMakeLists.txt`** to include source file
+
+#### DUMMY Reference Implementation
+
+```cpp
+// dummy_actuator.hpp
+class DummyActuator : public DynalgoActuator {
+public:
+    explicit DummyActuator(const DynalgoActuatorConfig& cfg);
+    bool load(const DynalgoActuatorConfig& cfg) override;
+    bool open() override;
+    bool aimAt(float x, float y, float z) override;
+    bool fire(int durationMs) override;
+    bool close() override;
+    const char* name() const noexcept override { return "DUMMY"; }
+private:
+    DynalgoActuatorConfig cfg_;
+};
+```
+
+```cpp
+// dummy_actuator.cpp
+bool DummyActuator::load(const DynalgoActuatorConfig& cfg) {
+    cfg_ = cfg;
+    DYNALGO_LOG_INFO_S("DummyActuator::load dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::open() {
+    DYNALGO_LOG_INFO_S("DummyActuator::open dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::aimAt(float x, float y, float z) {
+    DYNALGO_LOG_INFO_S("DummyActuator::aimAt(" << x << "," << y << "," << z << ") dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::fire(int durationMs) {
+    DYNALGO_LOG_INFO_S("DummyActuator::fire durationMs=" << durationMs << " dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::close() {
+    DYNALGO_LOG_INFO_S("DummyActuator::close dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+```
+
+### 9.5 CMake Configuration
+
+`app/actuator/CMakeLists.txt`:
+
+```cmake
+add_library(dynalgo_actuators STATIC
+    dummy_actuator.cpp
+    # add new actuator sources here:
+    # xyz/dynalgo_xyz_actuator.cpp
+)
+
+target_include_directories(dynalgo_actuators PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(dynalgo_actuators PUBLIC
+    dynalgo::core
+)
+
+# alias for consumers
+add_library(dynalgo::actuators ALIAS dynalgo_actuators)
+```
+
+Root `app/CMakeLists.txt` (after `add_subdirectory(capture)`):
+
+```cmake
+add_subdirectory(actuator)
+```
+
+### 9.6 CLI Wiring (app/dynamic_algo_cam/dynamic_algo_cam.cpp)
+
+```cpp
+// parse --engage-actuator
+std::string engageActuator = config.engageActuator; // "DUMMY" / "LASER_GENERIC" etc.
+DynalgoActuatorType actuatorType = DynalgoActuatorType::NONE;
+if (engageActuator == "DUMMY") actuatorType = DynalgoActuatorType::DUMMY;
+else if (engageActuator == "LASER_GENERIC") actuatorType = DynalgoActuatorType::LASER_GENERIC;
+// ...
+
+// create actuator (requires --whole-archive for self-registration)
+auto actuator = createActuator(actuatorType);
+if (actuator) {
+    DynalgoActuatorConfig actuatorCfg;
+    actuatorCfg.dryRun = true; // default safe
+    actuator->load(actuatorCfg);
+    actuator->open();
+    // pass to EngagementLoop constructor
+}
+```
+
+### 9.7 Full Call Chain
+
+```
+dynamic_algo_cam.cpp
+    → createActuator(type)                    [factory lookup]
+        → DummyActuator(cfg)                  [construct]
+            → actuator->load(cfg)             [parse config]
+            → actuator->open()                [connect hardware]
+            → actuator->aimAt(X,Y,Z)          [aim: optical-center XYZ]
+            → actuator->fire(durationMs)      [fire: milliseconds]
+            → actuator->close()               [disconnect]
+```
+
+### 9.8 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `createActuator()` returns `nullptr` | Missing `--whole-archive` at link | `target_link_libraries(... "-Wl,--whole-archive" dynalgo::actuators "-Wl,--no-whole-archive")` |
+| Actuator does nothing (no logs) | `dryRun=true` by default | `load()/open()` log dryRun state — check logs |
+| Build error: `ob::` / `rs::` in actuator code | Vendor SDK leaked to actuator layer | Actuator layer must be SDK-agnostic; depend only on `dynalgo_core` |
+| `aimAt` coordinates wrong | Coordinate system mismatch | Confirm input is **camera optical-center XYZ meters** (TrackBundle output) |
+| Link error: `registerActuator` multiply defined | Multiple TUs define same registrar | Use anonymous-namespace static instance; ensure each backend registers once |
+
+---
+
+## 10. Unresolved / Open Items
 
 1. **`DynalgoFrameSet::nativeFrameSet`** is a transitional escape valve. Goal: remove once all D2C alignment can operate on `DynalgoFrame::data` alone or through a cleaner abstraction.
 2. **`DynalgoPipeline::enableStream(DynalgoStreamConfig)`** is currently a no-op for Orbbec (streams are enabled inside `setupPipeline()`). A future refactor should make stream enable/disable fully configurable through this API.

@@ -78,12 +78,12 @@ std::vector<DiscoveredDevice> discoverDevices(const DriverConfig& cfg) {
         ObContext obCtx(configPath);
         uint32_t obCount = obCtx.getDeviceCount();
         for (uint32_t i = 0; i < obCount; i++) {
-            auto nioDev = obCtx.getDevice(i);
-            auto obDev = std::dynamic_pointer_cast<ObDevice>(nioDev);
+            auto dynalgoDev = obCtx.getDevice(i);
+            auto obDev = std::dynamic_pointer_cast<ObDevice>(dynalgoDev);
             if (!obDev)
                 continue;
             DiscoveredDevice dd;
-            dd.device = nioDev;
+            dd.device = dynalgoDev;
             dd.pipeline = std::make_shared<ObPipeline>(obDev->obDevice());
             result.push_back(std::move(dd));
         }
@@ -95,12 +95,12 @@ std::vector<DiscoveredDevice> discoverDevices(const DriverConfig& cfg) {
         RsContext rsCtx;
         uint32_t rsCount = rsCtx.getDeviceCount();
         for (uint32_t i = 0; i < rsCount; i++) {
-            auto nioDev = rsCtx.getDevice(i);
-            auto rsDev = std::dynamic_pointer_cast<RsDevice>(nioDev);
+            auto dynalgoDev = rsCtx.getDevice(i);
+            auto rsDev = std::dynamic_pointer_cast<RsDevice>(dynalgoDev);
             if (!rsDev)
                 continue;
             DiscoveredDevice dd;
-            dd.device = nioDev;
+            dd.device = dynalgoDev;
             dd.pipeline = std::make_shared<RsPipeline>(rsDev);
             result.push_back(std::move(dd));
         }

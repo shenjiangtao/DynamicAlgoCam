@@ -1,11 +1,11 @@
 // Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// dynalgo_common.cpp — Implementation of shared NIO utilities.
+// dynalgo_common.cpp — Implementation of shared Dynalgo utilities.
 //
 // [文件说明 / File Description]
-// 中文：共享NIO工具实现，包括信号处理、时间戳、目录创建、SEI NAL单元写入和设备匹配
-// English: Shared NIO utilities implementation, including signal handling, timestamps, directory creation, SEI NAL unit writing, and device matching
+// 中文：共享Dynalgo工具实现，包括信号处理、时间戳、目录创建、SEI NAL单元写入和设备匹配
+// English: Shared Dynalgo utilities implementation, including signal handling, timestamps, directory creation, SEI NAL unit writing, and device matching
 //
 // Sections:
 //   1. Signal handling + g_running

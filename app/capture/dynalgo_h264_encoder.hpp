@@ -123,7 +123,7 @@ private:
     // [方法说明 / Method Description]
     // 中文: 将DynalgoFormat映射为FFmpeg AVPixelFormat
     // English: Map DynalgoFormat to FFmpeg AVPixelFormat
-    AVPixelFormat mapNioFormatToAV(DynalgoFormat srcFormat);
+    AVPixelFormat mapDynalgoFormatToAV(DynalgoFormat srcFormat);
     // [方法说明 / Method Description]
     // 中文: 初始化MJPEG解码器
     // English: Initialize MJPEG decoder

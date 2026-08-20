@@ -139,7 +139,7 @@ private:
     bool decodeMjpgSlot(ViewerSlot& slot, const std::vector<uint8_t>& rawCopy, uint32_t rawSz, int w, int h,
                         std::vector<uint8_t>& rgb);
     void cleanupSlot(ViewerSlot& slot);
-    static std::string nioFormatToString(DynalgoFormat fmt);
+    static std::string dynalgoFormatToString(DynalgoFormat fmt);
 
     void rebuildLabelTextures(int winW, int winH);
     void destroyLabelTextures();

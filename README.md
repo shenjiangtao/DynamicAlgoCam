@@ -32,7 +32,7 @@ DynamicAlgoCam uses a **layered architecture** with strict downward-only depende
 │  Entry point: CLI parsing → device discovery → session setup → frame pipeline →      │
 │  optional engagement loop (Phase C) → graceful shutdown on SIGINT/SIGTERM            │
 ├──────────────────────────────────────────────────────────────────────────────────────┤
-│                              Algorithm Layer (Phase C)                               │
+│                         Algorithm Layer (Phase C) — OPTIONAL (--engage-*)           │
 │                          ┌─────────────────────────────────┐                         │
 │  dynalgo_algo            │  DynalgoEngagementLoop          │  --engage-model         │
 │  (static lib)            │  ┌───────────┐ ┌───────────┐   │  --engage-actuator      │
@@ -76,15 +76,15 @@ DynamicAlgoCam uses a **layered architecture** with strict downward-only depende
 │  │ • depthIntrinsic()     │  │ • D2C profile selection│  │ consume(FrameSet)     │     │
 │  │ • depthScale()         │  │ • --engage-* options    │  │ stopTask()            │     │
 │  │ • addFrameConsumer()   │  │                        │  │                        │     │
-│  │ • setEngagementLoop()  │  │ DynalgoFrameQueue      │  │                        │     │
-│  └──────────────────────┘  │ DynalgoStreamTasks      │  └────────────────────────┘     │
+│  │ • setEngagementLoop()  │  │ DynalgoFrameQueue      │  └────────────────────────┘     │
+│  └──────────────────────┘  │ DynalgoStreamTasks      │                                 │
 │                            │ DynalgoH264Encoder      │                                 │
 │  DynalgoSDLViewer          │ DynalgoStreamIO          │  Event-driven recording:       │
 │  DynalgoColorConvert       │ EventWindow              │  ENABLE_EVENT_SIM → EventSim   │
 │  (optional OpenCV plugin)  │ eventSink lambda         │                                │
 │                            └──────────────────────┘                                 │
 ├──────────────────────────────────────────────────────────────────────────────────────┤
-│                           Actuator Layer (dynalgo_actuators)                         │
+│                      Actuator Layer (dynalgo_actuators) — OPTIONAL (--engage-*)     │
 │                          ┌─────────────────────────────────┐                         │
 │  dynalgo_actuators       │  DynalgoActuator (abstract)     │  --engage-actuator      │
 │  (static lib)            │  ┌────────────────────────────┐ │                         │
@@ -134,14 +134,6 @@ DynamicAlgoCam uses a **layered architecture** with strict downward-only depende
 │  Infra: DYNALGO_LOG_*, signalHandler(), mkdirp(), getTimestampMs()                  │
 │  Algo: DynalgoKalmanTracker (6D KF), detectionCenterToCamera3D()                   │
 └──────────────────────────────────────────────────────────────────────────────────────┘
-
-Vendor SDKs (NOT part of C++ build — linked at build time):
-  vendors/OrbbecSDK/   →  libOrbbecSDK.so   (linked into dynalgo_drivers)
-  vendors/RoboSense/   →  libusb / libuvc   (statically linked into dynalgo_drivers)
-
-Optional plugins (conditionally built):
-  dynalgo_opencv_plugin →  dynalgo_capture + dynalgo_core + OpenCV  (if OpenCV found)
-  app/models/           →  YOLOv8 (Python, NOT built by CMake, GPL-3.0 license)
 ```
 
 ### Design Principles
@@ -221,6 +213,8 @@ cmake --build . -j$(nproc)
 ```
 
 The executable is `build/bin/dynamic_algo_cam`. Install with `cmake --install .` (installs to `bin/`).
+
+**Note:** The Algorithm Layer (`dynalgo_algo`) and Actuator Layer (`dynalgo_actuators`) are built as static libraries but are only linked into the executable when the `--engage-model` and/or `--engage-actuator` CLI flags are provided. Without these flags, the executable behaves identically to the baseline (no engagement loop overhead).
 
 ### Runtime Library Path
 

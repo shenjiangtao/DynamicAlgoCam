@@ -8,7 +8,7 @@
 // 中文：将2D检测框中心反投影到相机光学坐标系（米），需要D2C对齐的深度帧
 // English: Back-project a 2D detection box center into the camera optical frame (meters), given a D2C-aligned depth frame
 //
-// Header-only; nio_core consumes no extra source. Mirrors the pinhole model
+// Header-only; dynalgo_core consumes no extra source. Mirrors the pinhole model
 // already used by PointcloudFrameConsumer::backprojectToPointCloud() (see
 // app/capture/dynalgo_frame_consumer.cpp:144-174):
 //
@@ -23,7 +23,7 @@
 //   detection was produced. If a raw (unaligned) depth frame is passed, the
 //   pixel (u, v) refers to a different physical ray than the color pixel at
 //   the same (u, v) — X and Y will be wrong. Callers should check
-//   pipeline->getAlignMode() == dynalgo::types::NioAlignMode::HW or ::SW
+//   pipeline->getAlignMode() == dynalgo::types::DynalgoAlignMode::HW or ::SW
 //   before invoking; otherwise the returned 3-D point is untrustworthy.
 //
 // filterHalf:

@@ -56,3 +56,14 @@ license text.
    from MIT.
 5. (Optional) Add `docs/dynamic_algo_cam/<new_name>_overview.md` describing how
    the model is invoked and how it integrates with the capture pipeline.
+
+## Engineering-only Backends (not in app/models/)
+
+The following C++-side model backends are **not** placed under `app/models/`
+because they contain no third-party code and have no separate license:
+
+| Backend | Type | Location | Purpose |
+|---------|------|----------|---------|
+| `DUMMY` | `DynalgoModelType::DUMMY` | `app/algo/dummy_model_backend.{hpp,cpp}` | Produces a synthetic center-frame detection for dry-run engagement loop testing; self-registers via `registerModelBackend()` |
+
+⚠️ The DUMMY backend is **engineering dry-run only** — it does not perform real inference and does not imply production readiness.

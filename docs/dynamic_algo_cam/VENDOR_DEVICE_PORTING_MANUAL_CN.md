@@ -153,16 +153,16 @@ COLOR_LEFT, COLOR_RIGHT, CONFIDENCE, POINT, COUNT
 
 | 文件 | 内容 | 约行数 |
 |------|------|--------|
-| `dynalgo_ob_adapter.hpp` | `obFormatToNio()`, `nioFormatToOb()`, `obFrameTypeToNio()`, `nioFrameTypeToOb()`, `nioFrameTypeToObSensor()`, `obIntrinsicToNio()`, `nioIntrinsicToOb()`, `selectBestProfile()`, `isLiDARDevice()`, `OB_DEVICE_VID` (0x2bc5), `isGemini305Device()`, `isGemini305gDevice()`, `isAstraMiniDevice()` | ~210 |
+| `dynalgo_ob_adapter.hpp` | `obFormatToDynalgo()`, `dynalgoFormatToOb()`, `obFrameTypeToDynalgo()`, `obFrameTypeToDynalgo()`, `obFrameTypeToDynalgoSensor()`, `obIntrinsicToDynalgo()`, `dynalgoIntrinsicToOb()`, `selectBestProfile()`, `isLiDARDevice()`, `OB_DEVICE_VID` (0x2bc5), `isGemini305Device()`, `isGemini305gDevice()`, `isAstraMiniDevice()` | ~210 |
 | `dynalgo_ob_device.hpp` | `ObDevice`, `ObPipeline`, `ObContext` 声明 | ~106 |
 | `dynalgo_ob_device.cpp` | 完整实现：设备枚举、传感器配置、HW/SW D2C、管道启停、IMU 管道 | ~447 |
-| `dynalgo_ob_frame_adapter.hpp` | `obFrameSetToNio()`（深拷贝所有视频帧）、`obImuToNioSamples()` | ~118 |
+| `dynalgo_ob_frame_adapter.hpp` | `obFrameSetToDynalgo()`（深拷贝所有视频帧）、`obImuToDynalgoSamples()` | ~118 |
 | `dynalgo_ob_d2c_align.hpp` | `ObD2CAlign : DynalgoD2CAlign` — 封装 `ob::Align` | ~54 |
 
 **关键模式**：
 
 - `ObDevice::setupPipeline()` 将 `DynalgoPipeline&` 下转为 `ObPipeline&`，遍历 SDK 传感器列表，对每个传感器调用 `selectBestProfile()`，在 `ob::Config` 上启用流，应用设备 quirks（如 Gemini 305g 禁用 IR_LEFT），检查 HW D2C，返回完整填充的 `DynalgoSensorInfo`。
-- `ObPipeline::start()` 封装 SDK 回调：调用 `obFrameSetToNio(obFs)` 深拷贝，附加 `nativeFrameSet = static_pointer_cast<void>(obFs)`，然后调用用户回调。
+- `ObPipeline::start()` 封装 SDK 回调：调用 `obFrameSetToDynalgo(obFs)` 深拷贝，附加 `nativeFrameSet = static_pointer_cast<void>(obFs)`，然后调用用户回调。
 - `ObPipeline::getD2CAlignFilter()` — SW 模式返回 `make_shared<ObD2CAlign>(alignFilter_)`，否则 nullptr。
 - `ObD2CAlign::process()` 从 `nativeFrameSet` 还原 `ob::FrameSet`，调用 `ob::Align::process()`，提取 color/depth 指针到 `DynalgoAlignedFrame`。
 
@@ -170,16 +170,16 @@ COLOR_LEFT, COLOR_RIGHT, CONFIDENCE, POINT, COUNT
 
 | 文件 | 内容 | 约行数 |
 |------|------|--------|
-| `dynalgo_rs_adapter.hpp` | `rsFrameFormatToNio()`, `nioFormatToRsFrameFormat()`, `rsImuToNioSamples()` | ~75 |
+| `dynalgo_rs_adapter.hpp` | `rsFrameFormatToDynalgo()`, `dynalgoFormatToRsFrameFormat()`, `rsImuToDynalgoSamples()` | ~75 |
 | `dynalgo_rs_device.hpp` | `RsDevice`, `RsPipeline`, `RsContext` 声明 | ~163 |
 | `dynalgo_rs_device.cpp` | 完整实现：USB 发现、双 get/put 回调队列、FrameSet 合成、点云转深度图 | ~373 |
-| `dynalgo_rs_frame_adapter.hpp` | `rsDepthToNioFrame()`, `rsPointToNioFrame()`, `rsImageToNioFrame()` | ~121 |
+| `dynalgo_rs_frame_adapter.hpp` | `rsDepthToDynalgoFrame()`, `rsPointToDynalgoFrame()`, `rsImageToDynalgoFrame()` | ~121 |
 
 **关键模式**：
 
 - `RsDevice` 传感器信息固定（无 IR，depth=96×288@10 Y16，color=1920×1080@30 NV12）。
 - `RsPipeline` 使用 `LidarDriver` + 双回调队列（`freeCloudQueue` ↔ `stuffedCloudQueue` 等）。三个处理线程排空 stuffed 队列，color 和 depth 同时到达时合成 `DynalgoFrameSet`。
-- `rsDepthToNioFrame()` 从 3D 点云合成 96×288 Y16 深度图（distance / 0.005 → uint16，无效/NaN 为 0）。
+- `rsDepthToDynalgoFrame()` 从 3D 点云合成 96×288 Y16 深度图（distance / 0.005 → uint16，无效/NaN 为 0）。
 - `RsPipeline::isPointCloudDepth()` 返回 `true`；`getAlignMode()` 始终返回 `HW`。
 - `RsContext::scanDevices()` 使用 libusb 查找 VID=0x3840/PID=0x1010 设备，从 USB 描述符读取序列号，回退到 busnum-devnum UUID。
 - `RsPipeline::start()` **必须在** `driver_.start()` **之前**启动处理线程，确保首个数据到达时线程就绪。
@@ -194,7 +194,7 @@ COLOR_LEFT, COLOR_RIGHT, CONFIDENCE, POINT, COUNT
 
 ```
 app/driver/xyz/
-├── dynalgo_xyz_.hpp       # 类型映射：XYZ↔Nio
+├── dynalgo_xyz_.hpp       # 类型映射：XYZ↔Dynalgo
 ├── dynalgo_xyz_.hpp # 帧转换：XYZ frame → DynalgoFrame
 ├── dynalgo_xyz_.hpp        # XyzDevice, XyzPipeline, XyzContext 声明
 └── dynalgo_xyz_.cpp        # 完整实现
@@ -228,13 +228,13 @@ app/driver/xyz/
 
 ```cpp
 // 厂商视频帧 → DynalgoFrameSet（深拷贝像素数据）
-DynalgoFrameSet xyzFrameSetToNio(VendorFrameSetType vendorFs);
+DynalgoFrameSet xyzFrameSetToDynalgo(VendorFrameSetType vendorFs);
 
 // 厂商 IMU 数据 → vector<DynalgoImuSample>
-std::vector<DynalgoImuSample> xyzImuToNioSamples(VendorImuType vendorImu);
+std::vector<DynalgoImuSample> xyzImuToDynalgoSamples(VendorImuType vendorImu);
 ```
 
-`xyzFrameSetToNio` 的关键规则：
+`xyzFrameSetToDynalgo` 的关键规则：
 1. **深拷贝像素数据**：`nf.data.assign(data, data + size)` — 绝不可持有 SDK 缓冲区指针。
 2. **填充所有 DynalgoFrame 字段**：type, format, width, height, timestampUs, depthScale（深度帧），data。
 3. **附加原生 FrameSet**（仅 SW D2C 需要时）：`nioFs.nativeFrameSet = static_pointer_cast<void>(vendorFs)`。否则留空。
@@ -312,10 +312,10 @@ bool XyzPipeline::start(DynalgoVideoCallback callback) {
     try {
         vendorPipeline_->start(vendorConfig_, [this](VendorFrameSetType vfs) {
             if (vfs) {
-                auto nioFs = std::make_shared<DynalgoFrameSet>(xyzFrameSetToNio(vfs));
+                auto dynalgoFs = std::make_shared<DynalgoFrameSet>(xyzFrameSetToDynalgo(vfs));
                 // 仅 SW D2C 对齐需要时附加 nativeFrameSet：
-                nioFs->nativeFrameSet = std::static_pointer_cast<void>(vfs);
-                videoCallback_(nioFs);
+                dynalgoFs->nativeFrameSet = std::static_pointer_cast<void>(vfs);
+                videoCallback_(dynalgoFs);
             }
         });
         return true;
@@ -355,12 +355,12 @@ std::vector<DiscoveredDevice> discoverDevices() {
     XyzContext xyzCtx;
     uint32_t xyzCount = xyzCtx.getDeviceCount();
     for (uint32_t i = 0; i < xyzCount; i++) {
-        auto nioDev = xyzCtx.getDevice(i);
-        auto xyzDev = std::dynamic_pointer_cast<XyzDevice>(nioDev);
+        auto dynalgoDev = xyzCtx.getDevice(i);
+        auto xyzDev = std::dynamic_pointer_cast<XyzDevice>(dynalgoDev);
         if (!xyzDev)
             continue;
         DiscoveredDevice dd;
-        dd.device = nioDev;
+        dd.device = dynalgoDev;
         dd.pipeline = std::make_shared<XyzPipeline>(xyzDev);
         result.push_back(std::move(dd));
     }
@@ -456,7 +456,7 @@ if(ENABLE_ORBBEC OR ENABLE_RS_AC1 OR ENABLE_XYZ)
 | 场景 | 模式 | 实现 |
 |------|------|------|
 | **仅 HW D2C**（如 RS-AC1） | `getAlignMode()` 返回 `HW`，`getD2CAlignFilter()` 返回 nullptr | CaptureSession 直接从 `DynalgoFrameSet` 提取 color/depth 数据；无 SW 对齐步骤 |
-| **仅 SW D2C** | `getAlignMode()` 返回 `SW`，`getD2CAlignFilter()` 返回有效 `DynalgoD2CAlign*` | CaptureSession 调用 `alignFilter->process(nioFs->nativeFrameSet, out)`；nativeFrameSet 必须填充 |
+| **仅 SW D2C** | `getAlignMode()` 返回 `SW`，`getD2CAlignFilter()` 返回有效 `DynalgoD2CAlign*` | CaptureSession 调用 `alignFilter->process(dynalgoFs->nativeFrameSet, out)`；nativeFrameSet 必须填充 |
 | **HW 优先，SW 回退**（如 Orbbec） | `setupPipeline()` 查询 HW 能力；不可用时回退到 SW | `checkHWD2CSupport()` → `setAlignMode(HW or SW)` |
 | **无 D2C** | `getAlignMode()` 返回 `NONE`，`getD2CAlignFilter()` 返回 nullptr | 不执行对齐 |
 
@@ -478,12 +478,12 @@ if (!hwD2CMode_) {
 ```
 厂商 SDK 回调
   │
-  ▼  xyzFrameSetToNio() — 深拷贝像素数据
-  │  nioFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)  [仅 SW D2C]
+  ▼  xyzFrameSetToDynalgo() — 深拷贝像素数据
+  │  dynalgoFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)  [仅 SW D2C]
   │
 DynalgoFrameSet（拥有像素数据 + 可选不透明原生句柄）
   │
-  ▼  videoCallback_(nioFs)  —  SDK 回调中零阻塞
+  ▼  videoCallback_(dynalgoFs)  —  SDK 回调中零阻塞
   │
 VideoFrameQueue（有界 SPSC，容量 8）
   │
@@ -517,8 +517,8 @@ VideoFrameQueue（有界 SPSC，容量 8）
 |------|----------|----------|
 | 编译错误：`DYNALGO_DEVICE_VID / isGemini305*` 出现在 core | 厂商特定 VID/PID 检查泄漏到 core | 移至 `app/driver/VENDOR/dynalgo_xyz_.hpp`，使用 `VENDOR_DEVICE_VID` 常量 + inline 函数 |
 | 编译错误：`ob::` / `OB_` 出现在非 driver 文件 | SDK 类型在 driver 层外被使用 | 替换为 `Nio*` 等价物；将 SDK 特定逻辑移至适配器 |
-| 消费者线程 Segfault | `DynalgoFrame::data` 为空或 `rawData()` 返回 nullptr | 检查 `xyzFrameSetToNio()` 是否通过 `nf.data.assign()` 拷贝像素数据 |
-| SW D2C 输出乱码 | `nativeFrameSet` 为 null 或类型错误 | 确保 `start()` 中设置 `nioFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)`，`XyzD2CAlign::process()` 中正确还原类型 |
+| 消费者线程 Segfault | `DynalgoFrame::data` 为空或 `rawData()` 返回 nullptr | 检查 `xyzFrameSetToDynalgo()` 是否通过 `nf.data.assign()` 拷贝像素数据 |
+| SW D2C 输出乱码 | `nativeFrameSet` 为 null 或类型错误 | 确保 `start()` 中设置 `dynalgoFs->nativeFrameSet = static_pointer_cast<void>(vendorFs)`，`XyzD2CAlign::process()` 中正确还原类型 |
 | 重复帧 / 时间戳混乱 | 厂商回调在不正确线程触发 / 未同步 | 使用 mutex + ready 标志处理异步源（见 RsPipeline 模式） |
 | Pipeline start 静默失败 | 异常在 `start()` 中被吞 | 检查 `DYNALGO_LOG_ERROR_S` 输出；在调用厂商 start 前确认配置完整 |
 | `setupPipeline()` 返回全零 `DynalgoSensorInfo` | 下转为具体 Pipeline 类型失败 | 确保工厂创建正确的 `XyzPipeline` 类型与 `XyzDevice` 配对 |
@@ -527,7 +527,247 @@ VideoFrameQueue（有界 SPSC，容量 8）
 
 ---
 
-## 9. 待解决 / 开放项
+## 9. 执行器移植指南
+
+> 执行器（Actuator）是感知-控制闭环的输出端。Phase A 引入 `DynalgoActuator` 抽象基类与自注册工厂，Phase C 将其接入 EngagementLoop。新增执行器只需实现抽象接口并在静态初始化时调用 `registerActuator()`。
+
+### 9.1 架构位置
+
+```
+app/
+├── core/
+│   ├── dynalgo_actuator.hpp          # DynalgoActuatorType, DynalgoActuatorConfig, DynalgoActuator 抽象
+│   ├── dynalgo_actuator_factory.hpp  # createActuator(), registerActuator()
+│   └── dynalgo_actuator_factory.cpp  # 实现
+├── actuator/
+│   ├── dummy_actuator.hpp/cpp        # DUMMY 后端（自注册演示）
+│   └── CMakeLists.txt                # 生成 dynalgo_actuators 静态库
+├── algo/
+│   └── dynalgo_engagement_loop.cpp   # 调用 actuator->aimAt(X,Y,Z) → fire()
+└── dynamic_algo_cam/
+    └── dynamic_algo_cam.cpp          # CLI 接线 --engage-actuator
+```
+
+### 9.2 抽象接口 (app/core/dynalgo_actuator.hpp)
+
+```cpp
+enum class DynalgoActuatorType {
+    NONE, DUMMY, LASER_GENERIC, GIMBAL_GENERIC
+};
+
+struct DynalgoActuatorConfig {
+    bool dryRun = true;           // 安全默认：true 时所有控制为 no-op
+    std::string device;           // 串口/网络设备路径
+    int channel = 0;              // 通道号
+    std::string ip;               // 网络 IP
+    uint16_t port = 0;            // 网络端口
+    int baud = 115200;            // 串口波特率
+};
+
+class DynalgoActuator {
+public:
+    virtual ~DynalgoActuator() = default;
+
+    // 初始化：解析 cfg，打开设备。dryRun=true 时仅记录日志返回 true
+    virtual bool load(const DynalgoActuatorConfig& cfg) = 0;
+
+    // 打开/连接设备
+    virtual bool open() = 0;
+
+    // 瞄准：光心坐标系 XYZ 米（来自 TrackBundle::lastX/Y/Z()）
+    virtual bool aimAt(float x, float y, float z) = 0;
+
+    // 触发：durationMs = 发射时长。dryRun=true 时仅记录日志
+    virtual bool fire(int durationMs) = 0;
+
+    // 关闭/断开设备
+    virtual bool close() = 0;
+
+    // 后端名称，用于日志区分
+    virtual const char* name() const noexcept = 0;
+};
+```
+
+**关键点**：
+- `dryRun` 默认 `true` —— 所有真实硬件操作必须在 `if (!cfg.dryRun) { ... }` 块内
+- `aimAt()` 坐标系：**相机光心 XYZ 米**（Phase B `detectionCenterToCamera3D()` 输出）
+- `fire()` 持续时间单位：**毫秒**
+- 所有方法返回 `bool`：失败时 EngagementLoop 会记录 `DYNALGO_LOG_WARN_S` 并继续
+
+### 9.3 自注册模式 (DUMMY 演示)
+
+`app/actuator/dummy_actuator.cpp` 末尾：
+
+```cpp
+namespace {
+struct DummyRegistrar {
+    DummyRegistrar() {
+        dynalgo::registerActuator(
+            dynalgo::DynalgoActuatorType::DUMMY,
+            [](const dynalgo::DynalgoActuatorConfig& cfg) {
+                return std::make_unique<dynalgo::DummyActuator>(cfg);
+            });
+    }
+} g_dummyRegistrar;
+} // namespace
+```
+
+**关键要求**：
+1. 匿名命名空间 + 静态实例确保链接时不被优化掉
+2. 消费端（主程序）链接 `libdynalgo_actuators.a` 时**必须**使用 `--whole-archive`：
+
+```cmake
+# app/dynamic_algo_cam/CMakeLists.txt 或根 CMakeLists.txt
+target_link_libraries(dynamic_algo_cam PRIVATE
+    "-Wl,--whole-archive" dynalgo::actuators "-Wl,--no-whole-archive"
+)
+```
+
+否则 registrar TU 被链接器丢弃 → `createActuator(DUMMY)` 返回 `nullptr`。
+
+### 9.4 实现新执行器清单
+
+为新执行器 "XYZ" 在 `app/actuator/xyz/` 下创建：
+
+```
+app/actuator/xyz/
+├── dynalgo_xyz_actuator.hpp
+├── dynalgo_xyz_actuator.cpp
+└── CMakeLists.txt  (可选，或直接加入 app/actuator/CMakeLists.txt)
+```
+
+#### 实现步骤
+
+1. **继承 `DynalgoActuator`** 并实现 6 个纯虚方法
+2. **构造函数** 保存 `DynalgoActuatorConfig`
+3. **`load()`** 解析 cfg，`dryRun=true` 时仅记录日志返回 `true`
+4. **`open()`** 真实连接串口/网络；`dryRun=true` 仅记录日志
+5. **`aimAt(x,y,z)`** 发送指令到硬件；`dryRun=true` 仅记录日志
+6. **`fire(durationMs)`** 触发发射；`dryRun=true` 仅记录日志
+6. **`close()`** 关闭连接；`dryRun=true` 仅记录日志
+7. **`name()`** 返回 `"XYZ"`
+8. **自注册块**（同 DUMMY 模式）放在 `.cpp` 末尾
+9. **更新 `app/actuator/CMakeLists.txt`** 加入源文件
+
+#### DUMMY 实现参考
+
+```cpp
+// dummy_actuator.hpp
+class DummyActuator : public DynalgoActuator {
+public:
+    explicit DummyActuator(const DynalgoActuatorConfig& cfg);
+    bool load(const DynalgoActuatorConfig& cfg) override;
+    bool open() override;
+    bool aimAt(float x, float y, float z) override;
+    bool fire(int durationMs) override;
+    bool close() override;
+    const char* name() const noexcept override { return "DUMMY"; }
+private:
+    DynalgoActuatorConfig cfg_;
+};
+```
+
+```cpp
+// dummy_actuator.cpp
+bool DummyActuator::load(const DynalgoActuatorConfig& cfg) {
+    cfg_ = cfg;
+    DYNALGO_LOG_INFO_S("DummyActuator::load dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::open() {
+    DYNALGO_LOG_INFO_S("DummyActuator::open dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::aimAt(float x, float y, float z) {
+    DYNALGO_LOG_INFO_S("DummyActuator::aimAt(" << x << "," << y << "," << z << ") dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::fire(int durationMs) {
+    DYNALGO_LOG_INFO_S("DummyActuator::fire durationMs=" << durationMs << " dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+bool DummyActuator::close() {
+    DYNALGO_LOG_INFO_S("DummyActuator::close dryRun=" << (cfg_.dryRun ? "on" : "off"));
+    return true;
+}
+```
+
+### 9.5 CMake 配置
+
+`app/actuator/CMakeLists.txt`：
+
+```cmake
+add_library(dynalgo_actuators STATIC
+    dummy_actuator.cpp
+    # 新增执行器源文件：
+    # xyz/dynalgo_xyz_actuator.cpp
+)
+
+target_include_directories(dynalgo_actuators PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(dynalgo_actuators PUBLIC
+    dynalgo::core
+)
+
+# 别名供消费者使用
+add_library(dynalgo::actuators ALIAS dynalgo_actuators)
+```
+
+根 `app/CMakeLists.txt`（在 `add_subdirectory(capture)` 后）：
+
+```cmake
+add_subdirectory(actuator)
+```
+
+### 9.6 CLI 接线 (app/dynamic_algo_cam/dynamic_algo_cam.cpp)
+
+```cpp
+// 解析 --engage-actuator
+std::string engageActuator = config.engageActuator; // "DUMMY" / "LASER_GENERIC" 等
+DynalgoActuatorType actuatorType = DynalgoActuatorType::NONE;
+if (engageActuator == "DUMMY") actuatorType = DynalgoActuatorType::DUMMY;
+else if (engageActuator == "LASER_GENERIC") actuatorType = DynalgoActuatorType::LASER_GENERIC;
+// ...
+
+// 创建 actuator（需 --whole-archive 确保自注册生效）
+auto actuator = createActuator(actuatorType);
+if (actuator) {
+    DynalgoActuatorConfig actuatorCfg;
+    actuatorCfg.dryRun = true; // 默认安全
+    actuator->load(actuatorCfg);
+    actuator->open();
+    // 传给 EngagementLoop 构造
+}
+```
+
+### 9.7 完整调用链
+
+```
+dynamic_algo_cam.cpp
+    → createActuator(type)                    [工厂查找注册表]
+        → DummyActuator(cfg)                  [构造]
+            → actuator->load(cfg)             [解析配置]
+            → actuator->open()                [连接硬件]
+            → actuator->aimAt(X,Y,Z)          [瞄准：光心坐标系]
+            → actuator->fire(durationMs)      [发射：毫秒]
+            → actuator->close()               [断开]
+```
+
+### 9.8 故障排查
+
+| 现象 | 原因 | 修复 |
+|------|------|------|
+| `createActuator()` 返回 `nullptr` | 未使用 `--whole-archive` 链接 | `target_link_libraries(... "-Wl,--whole-archive" dynalgo::actuators "-Wl,--no-whole-archive")` |
+| 执行器不工作（无日志） | `dryRun=true` 且未检查 | `load()/open()` 中已记录 dryRun 状态，检查日志 |
+| 编译报错：`ob::` / `rs::` 出现在 actuator 代码 | 厂商 SDK 泄漏到 actuator 层 | 执行器层必须 SDK-agnostic，仅依赖 `dynalgo_core` |
+| `aimAt` 坐标错误 | 坐标系不匹配 | 确认输入为**相机光心 XYZ 米**（TrackBundle 输出） |
+| 链接报错：`registerActuator` 重复定义 | 多个 TU 定义同一 registrar | 使用匿名命名空间静态实例，确保每个后端仅注册一次 |
+
+---
+
+## 10. 待解决 / 开放项
 
 1. **`DynalgoFrameSet::nativeFrameSet`** 是过渡性设计。目标：当所有 D2C 对齐可基于 `DynalgoFrame::data` 工作时移除。
 2. **`DynalgoPipeline::enableStream(DynalgoStreamConfig)`** 对 Orbbec 当前为 no-op（流在 `setupPipeline()` 内启用）。未来重构应使流启停完全通过此 API 配置。

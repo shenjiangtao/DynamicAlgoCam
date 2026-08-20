@@ -140,18 +140,18 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
         case OB_SENSOR_COLOR:
             {
                 si.hasColor = true;
-                OBFormat obPreferred = nioFormatToOb(colorPreferredFmt);
+                OBFormat obPreferred = dynalgoFormatToOb(colorPreferredFmt);
                 auto profile = selectBestProfile(profileList, obPreferred);
                 DynalgoFormat resolvedFmt = DynalgoFormat::UNKNOWN;
                 if (profile) {
-                    resolvedFmt = obFormatToNio(profile->getFormat());
+                    resolvedFmt = obFormatToDynalgo(profile->getFormat());
                     if (resolvedFmt == DynalgoFormat::UNKNOWN) {
                         for (uint32_t k = 0; k < profileList->getCount(); k++) {
                             try {
                                 auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
                                 if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
                                     profile = p;
-                                    resolvedFmt = obFormatToNio(p->getFormat());
+                                    resolvedFmt = obFormatToDynalgo(p->getFormat());
                                     break;
                                 }
                             } catch (...) {
@@ -168,7 +168,7 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                     si.colorH = profile->getHeight();
                     si.colorFps = profile->getFps();
                     try {
-                        si.colorIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
+                        si.colorIntrinsic = obIntrinsicToDynalgo(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
                     } catch (...) {
                         DYNALGO_LOG_WARN_S("Color intrinsic not available");
                     }
@@ -192,14 +192,14 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                 auto profile = selectBestProfile(profileList, OB_FORMAT_Y16, hwD2CProfiles);
                 DynalgoFormat resolvedFmt = DynalgoFormat::UNKNOWN;
                 if (profile) {
-                    resolvedFmt = obFormatToNio(profile->getFormat());
+                    resolvedFmt = obFormatToDynalgo(profile->getFormat());
                     if (resolvedFmt == DynalgoFormat::UNKNOWN) {
                         for (uint32_t k = 0; k < profileList->getCount(); k++) {
                             try {
                                 auto p = profileList->getProfile(k)->as<ob::VideoStreamProfile>();
                                 if (p && p->getFormat() != OB_FORMAT_UNKNOWN) {
                                     profile = p;
-                                    resolvedFmt = obFormatToNio(p->getFormat());
+                                    resolvedFmt = obFormatToDynalgo(p->getFormat());
                                     break;
                                 }
                             } catch (...) {
@@ -216,7 +216,7 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                     si.depthH = profile->getHeight();
                     si.depthFps = profile->getFps();
                     try {
-                        si.depthIntrinsic = obIntrinsicToNio(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
+                        si.depthIntrinsic = obIntrinsicToDynalgo(profile->as<ob::VideoStreamProfile>()->getIntrinsic());
                     } catch (...) {
                         DYNALGO_LOG_WARN_S("Depth intrinsic not available");
                     }
@@ -240,7 +240,7 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                 si.hasIR = true;
                 auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if (profile) {
-                    si.irFormat = obFormatToNio(profile->getFormat());
+                    si.irFormat = obFormatToDynalgo(profile->getFormat());
                     if (si.irFormat == DynalgoFormat::UNKNOWN)
                         si.irFormat = DynalgoFormat::Y8;
                     obCfg->enableStream(profile);
@@ -257,7 +257,7 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                 si.hasIRLeft = true;
                 auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if (profile) {
-                    si.irLeftFormat = obFormatToNio(profile->getFormat());
+                    si.irLeftFormat = obFormatToDynalgo(profile->getFormat());
                     if (si.irLeftFormat == DynalgoFormat::UNKNOWN)
                         si.irLeftFormat = DynalgoFormat::Y8;
                     obCfg->enableStream(profile);
@@ -274,7 +274,7 @@ DynalgoSensorInfo ObDevice::setupPipeline(DynalgoPipeline& pipeline) {
                 si.hasIRRight = true;
                 auto profile = selectBestProfile(profileList, OB_FORMAT_Y8);
                 if (profile) {
-                    si.irRightFormat = obFormatToNio(profile->getFormat());
+                    si.irRightFormat = obFormatToDynalgo(profile->getFormat());
                     if (si.irRightFormat == DynalgoFormat::UNKNOWN)
                         si.irRightFormat = DynalgoFormat::Y8;
                     obCfg->enableStream(profile);
@@ -340,7 +340,7 @@ void ObPipeline::enableStream(const DynalgoStreamConfig& /*cfg*/) {
 // 中文: 禁用流
 // English: Disable stream
 void ObPipeline::disableStream(DynalgoFrameType type) {
-    obConfig_->disableStream(nioFrameTypeToObSensor(type));
+    obConfig_->disableStream(dynalgoFrameTypeToObSensor(type));
 }
 
 // [函数说明 / Function Description]
@@ -414,34 +414,34 @@ void ObPipeline::enableFrameSync() {
 // English: Start video stream (callback processes point cloud, alignment, converts to DynalgoFrameSet)
 bool ObPipeline::start(DynalgoVideoCallback callback) {
     videoCallback_ = std::move(callback);
-    try {
-        obPipeline_->start(obConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
-            if (obFs) {
-                if (pointCloudFilter_) {
-                    try {
-                        auto pointFrame = pointCloudFilter_->process(obFs);
-                        if (pointFrame) {
-                            obFs->pushFrame(pointFrame);
+try {
+                obPipeline_->start(obConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
+                    if (obFs) {
+                        if (pointCloudFilter_) {
+                            try {
+                                auto pointFrame = pointCloudFilter_->process(obFs);
+                                if (pointFrame) {
+                                    obFs->pushFrame(pointFrame);
+                                }
+                            } catch (...) {
+                                DYNALGO_LOG_WARN_S("pointCloudFilter_->process threw");
+                            }
                         }
-                    } catch (...) {
-                        DYNALGO_LOG_WARN_S("pointCloudFilter_->process threw");
+                        if (alignFilter_) {
+                            try {
+                                auto aligned = alignFilter_->process(obFs);
+                                auto alignedFS = aligned ? std::dynamic_pointer_cast<ob::FrameSet>(aligned) : nullptr;
+                                if (alignedFS)
+                                    obFs = alignedFS;
+                            } catch (...) {
+                                DYNALGO_LOG_WARN_S("alignFilter_->process threw — using unaligned frames");
+                            }
+                        }
+                        auto dynalgoFs = std::make_shared<DynalgoFrameSet>(obFrameSetToDynalgo(obFs));
+                        videoCallback_(dynalgoFs);
                     }
-                }
-                if (alignFilter_) {
-                    try {
-                        auto aligned = alignFilter_->process(obFs);
-                        auto alignedFS = aligned ? std::dynamic_pointer_cast<ob::FrameSet>(aligned) : nullptr;
-                        if (alignedFS)
-                            obFs = alignedFS;
-                    } catch (...) {
-                        DYNALGO_LOG_WARN_S("alignFilter_->process threw — using unaligned frames");
-                    }
-                }
-                auto nioFs = std::make_shared<DynalgoFrameSet>(obFrameSetToNio(obFs));
-                videoCallback_(nioFs);
-            }
-        });
-        return true;
+                });
+                return true;
     } catch (ob::Error& e) {
         DYNALGO_LOG_ERROR_S("Pipeline start failed: " << e.what());
         videoCallback_ = nullptr;
@@ -465,7 +465,7 @@ bool ObPipeline::startImu(DynalgoImuCallback callback) {
         imuCallback_ = callback;
         imuPipeline_->start(imuConfig_, [this](std::shared_ptr<ob::FrameSet> obFs) {
             if (obFs) {
-                auto samples = obImuToNioSamples(obFs);
+                auto samples = obImuToDynalgoSamples(obFs);
                 if (!samples.empty())
                     imuCallback_(samples);
             }

@@ -147,8 +147,8 @@ bool H264Encoder::initSws(AVPixelFormat srcFmt, int width, int height) {
 }
 
 // Map DynalgoFormat to AVPixelFormat for sws_getContext
-// 将NioFormat映射为FFmpeg AVPixelFormat
-AVPixelFormat H264Encoder::mapNioFormatToAV(DynalgoFormat srcFormat) {
+// 将DynalgoFormat映射为FFmpeg AVPixelFormat
+AVPixelFormat H264Encoder::mapDynalgoFormatToAV(DynalgoFormat srcFormat) {
     switch (srcFormat) {
     case DynalgoFormat::YUYV:
         return AV_PIX_FMT_YUYV422;
@@ -202,7 +202,7 @@ void H264Encoder::initMjpgDecoder(int width, int height) {
 }
 
 // init: main entry point — create encoder + sws for the given DynalgoFormat
-// init：主入口 — 根据NioFormat创建编码器 + sws转换上下文
+// init：主入口 — 根据DynalgoFormat创建编码器 + sws转换上下文
 bool H264Encoder::init(int width, int height, int fps, DynalgoFormat srcFormat, int bitRate, const char* seiUuid) {
     srcFormat_ = srcFormat;
     seiUuid_ = seiUuid ? seiUuid : "jiangtao.shen@ad";
@@ -210,9 +210,9 @@ bool H264Encoder::init(int width, int height, int fps, DynalgoFormat srcFormat, 
     if (!initEncoder(width, height, fps, bitRate))
         return false;
 
-    AVPixelFormat srcFmt = mapNioFormatToAV(srcFormat);
+    AVPixelFormat srcFmt = mapDynalgoFormatToAV(srcFormat);
     if (srcFmt == AV_PIX_FMT_NONE) {
-        DYNALGO_LOG_ERROR_S("Unsupported format for H264 encoding: " << nioFormatToStr(srcFormat) << " " << width << "x"
+        DYNALGO_LOG_ERROR_S("Unsupported format for H264 encoding: " << dynalgoFormatToStr(srcFormat) << " " << width << "x"
                                                                  << height);
         close();
         return false;
@@ -227,7 +227,7 @@ bool H264Encoder::init(int width, int height, int fps, DynalgoFormat srcFormat, 
         swsCtx_ =
             sws_getContext(width, height, swsSrcFmt, width, height, dstFmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!swsCtx_) {
-            DYNALGO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << nioFormatToStr(srcFormat));
+            DYNALGO_LOG_ERROR_S("Failed to create sws context for H264 encoder, format=" << dynalgoFormatToStr(srcFormat));
             close();
             return false;
         }

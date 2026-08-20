@@ -89,6 +89,7 @@ except ImportError:
 
 HEADER_SIZE = 44
 NIO_DEPTH_RAW_MAGIC = b"NIO_DEPTH_RAW"
+DYNALOGO_DEPTH_RAW_MAGIC = b"DYNALOGO_DEPTH_RAW"
 ORBBEC_DEPTH_RAW_MAGIC = b"ORBBEC_DEPTH_RAW"
 
 DEVICE_PATTERNS = {
@@ -221,7 +222,7 @@ def parse_depth_raw(filepath):
         with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
             magic = mm[0:16]
             magic_str = magic.split(b'\x00')[0].decode('ascii', errors='replace') if isinstance(magic, bytes) else str(magic)
-            if not (magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW')):
+            if not (magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW') or magic_str.startswith('DYNALOGO_DEPTH_RAW')):
                 return None
             w = struct.unpack_from('<I', mm, 16)[0]
             h = struct.unpack_from('<I', mm, 20)[0]

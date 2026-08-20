@@ -1,12 +1,12 @@
 // Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// dynalgo_common.hpp — Shared NIO utilities: signal handling, timestamps,
+// dynalgo_common.hpp — Shared Dynalgo utilities: signal handling, timestamps,
 // directory creation, SEI NAL unit writing, device matching.
 //
 // [文件说明 / File Description]
-// 中文：共享NIO工具：信号处理、时间戳、目录创建、SEI NAL单元写入、设备匹配
-// English: Shared NIO utilities: signal handling, timestamps, directory creation, SEI NAL unit writing, device matching
+// 中文：共享Dynalgo工具：信号处理、时间戳、目录创建、SEI NAL单元写入、设备匹配
+// English: Shared Dynalgo utilities: signal handling, timestamps, directory creation, SEI NAL unit writing, device matching
 //
 // g_running / signalHandler: atomic flag set to false on SIGINT/SIGTERM,
 // used by the main capture loop to exit cleanly.

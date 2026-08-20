@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 //
 // dynalgo_ob_adapter.hpp — Conversion functions between Orbbec SDK types and
-// Nio neutral types.  Only code that directly uses the Orbbec SDK should
+// Dynalgo neutral types.  Only code that directly uses the Orbbec SDK should
 // include this file; all downstream consumers use dynalgo_types.hpp instead.
 //
 // Also contains selectBestProfile (score-based stream profile selection)
@@ -20,7 +20,7 @@ namespace dynalgo {
 // [函数说明 / Function Description]
 // 中文: OBFormat 转 DynalgoFormat
 // English: OBFormat to DynalgoFormat
-inline DynalgoFormat obFormatToNio(OBFormat f) {
+inline DynalgoFormat obFormatToDynalgo(OBFormat f) {
     switch (f) {
     case OB_FORMAT_Y8:
         return DynalgoFormat::Y8;
@@ -64,7 +64,7 @@ inline DynalgoFormat obFormatToNio(OBFormat f) {
 // [函数说明 / Function Description]
 // 中文: DynalgoFormat 转 OBFormat
 // English: DynalgoFormat to OBFormat
-inline OBFormat nioFormatToOb(DynalgoFormat f) {
+inline OBFormat dynalgoFormatToOb(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
         return OB_FORMAT_Y8;
@@ -106,7 +106,7 @@ inline OBFormat nioFormatToOb(DynalgoFormat f) {
 // [函数说明 / Function Description]
 // 中文: OBFrameType 转 DynalgoFrameType
 // English: OBFrameType to DynalgoFrameType
-inline DynalgoFrameType obFrameTypeToNio(OBFrameType t) {
+inline DynalgoFrameType obFrameTypeToDynalgo(OBFrameType t) {
     switch (t) {
     case OB_FRAME_COLOR:
         return DynalgoFrameType::COLOR;
@@ -138,7 +138,7 @@ inline DynalgoFrameType obFrameTypeToNio(OBFrameType t) {
 // [函数说明 / Function Description]
 // 中文: DynalgoFrameType 转 OBSensorType（用于 disableStream 等）
 // English: DynalgoFrameType to OBSensorType (for disableStream etc.)
-inline OBSensorType nioFrameTypeToObSensor(DynalgoFrameType t) {
+inline OBSensorType dynalgoFrameTypeToObSensor(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:
         return OB_SENSOR_COLOR;
@@ -162,7 +162,7 @@ inline OBSensorType nioFrameTypeToObSensor(DynalgoFrameType t) {
 // [函数说明 / Function Description]
 // 中文: DynalgoFrameType 转 OBFrameType
 // English: DynalgoFrameType to OBFrameType
-inline OBFrameType nioFrameTypeToOb(DynalgoFrameType t) {
+inline OBFrameType dynalgoFrameTypeToOb(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:
         return OB_FRAME_COLOR;
@@ -194,7 +194,7 @@ inline OBFrameType nioFrameTypeToOb(DynalgoFrameType t) {
 // [函数说明 / Function Description]
 // 中文: OBCameraIntrinsic 转 DynalgoIntrinsic
 // English: OBCameraIntrinsic to DynalgoIntrinsic
-inline DynalgoIntrinsic obIntrinsicToNio(const OBCameraIntrinsic& ob) {
+inline DynalgoIntrinsic obIntrinsicToDynalgo(const OBCameraIntrinsic& ob) {
     DynalgoIntrinsic n;
     n.fx = ob.fx;
     n.fy = ob.fy;
@@ -208,7 +208,7 @@ inline DynalgoIntrinsic obIntrinsicToNio(const OBCameraIntrinsic& ob) {
 // [函数说明 / Function Description]
 // 中文: DynalgoIntrinsic 转 OBCameraIntrinsic
 // English: DynalgoIntrinsic to OBCameraIntrinsic
-inline OBCameraIntrinsic nioIntrinsicToOb(const DynalgoIntrinsic& n) {
+inline OBCameraIntrinsic dynalgoIntrinsicToOb(const DynalgoIntrinsic& n) {
     OBCameraIntrinsic ob = {};
     ob.fx = n.fx;
     ob.fy = n.fy;

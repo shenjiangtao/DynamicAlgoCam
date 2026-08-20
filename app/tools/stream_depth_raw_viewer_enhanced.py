@@ -146,7 +146,7 @@ def run_viewer(path, fx, fy, cx, cy, max_depth_m, downsample, debug,
     with open(path, 'rb') as f:
         hdr = parse_header_from_file(f)
         if not hdr['has_header']:
-            raise RuntimeError("No NIO_DEPTH_RAW header found. Use a file with NIO_DEPTH_RAW or ORBBEC_DEPTH_RAW header.")
+            raise RuntimeError("No valid header found. Use a file with NIO_DEPTH_RAW, ORBBEC_DEPTH_RAW, or DYNALOGO_DEPTH_RAW header.")
         w = hdr['width']; h = hdr['height']; scale = hdr['scale']
         frame_size = hdr['frame_size']; header_size = hdr['header_size']
         magic = hdr.get('magic', '')

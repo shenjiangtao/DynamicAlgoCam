@@ -1,10 +1,10 @@
 // Copyright (c) shenjiangtao. All Rights Reserved.
 // Licensed under the MIT License.
 //
-// dynalgo_rs_adapter.hpp — RS-AC1 ↔ Nio type conversions.
+// dynalgo_rs_adapter.hpp — RS-AC1 ↔ Dynalgo type conversions.
 //
 // Converts between RoboSense rs_driver types (frame_format_t, ImuData)
-// and SDK-neutral Nio types (DynalgoFormat, DynalgoImuSample).
+// and SDK-neutral Dynalgo types (DynalgoFormat, DynalgoImuSample).
 
 #pragma once
 
@@ -18,7 +18,7 @@ namespace dynalgo {
 // [函数说明 / Function Description]
 // 中文: RS frame_format_t 转 DynalgoFormat
 // English: RS frame_format_t to DynalgoFormat
-inline DynalgoFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
+inline DynalgoFormat rsFrameFormatToDynalgo(robosense::lidar::frame_format_t fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
     case F::FRAME_FORMAT_NV12:
@@ -37,7 +37,7 @@ inline DynalgoFormat rsFrameFormatToNio(robosense::lidar::frame_format_t fmt) {
 // [函数说明 / Function Description]
 // 中文: DynalgoFormat 转 RS frame_format_t
 // English: DynalgoFormat to RS frame_format_t
-inline robosense::lidar::frame_format_t nioFormatToRsFrameFormat(DynalgoFormat fmt) {
+inline robosense::lidar::frame_format_t dynalgoFormatToRsFrameFormat(DynalgoFormat fmt) {
     using F = robosense::lidar::frame_format_t;
     switch (fmt) {
     case DynalgoFormat::NV12:
@@ -56,7 +56,7 @@ inline robosense::lidar::frame_format_t nioFormatToRsFrameFormat(DynalgoFormat f
 // [函数说明 / Function Description]
 // 中文: RS ImuData 转 vector<DynalgoImuSample>（一个 ACCEL + 一个 GYRO）
 // English: RS ImuData to vector<DynalgoImuSample> (one ACCEL + one GYRO)
-inline std::vector<DynalgoImuSample> rsImuToNioSamples(const std::shared_ptr<robosense::lidar::ImuData>& imu) {
+inline std::vector<DynalgoImuSample> rsImuToDynalgoSamples(const std::shared_ptr<robosense::lidar::ImuData>& imu) {
     std::vector<DynalgoImuSample> samples;
     auto tsUs = static_cast<uint64_t>(imu->timestamp * 1e6);
 

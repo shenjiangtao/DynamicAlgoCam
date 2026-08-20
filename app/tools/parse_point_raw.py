@@ -4,7 +4,7 @@ NIO Point Cloud Raw Data (.raw) Parser & PCD Converter
 
 Data structure of .point_raw file:
   File header (68 bytes, frame 0 only):
-    [0:20]   Magic string: "NIO_POINT_CLOUD_RAW\0"  (20 bytes)
+    [0:20]   Magic string: "DYNALOGO_POINT_CLOUD_RAW\0"  (20 bytes)
     [20:24]  Version      (uint32) = 1
     [24:28]  Field count  (uint32) = 6
     [28:68]  Field names  (40 bytes, null-separated: "x\\0y\\0z\\0intensity\\0ring\\0timestamp")
@@ -33,7 +33,7 @@ import os
 import struct
 import sys
 
-MAGIC = b"NIO_POINT_CLOUD_RAW\x00"
+MAGIC = b"DYNALOGO_POINT_CLOUD_RAW\x00"
 FILE_HEADER_SIZE = 68
 FRAME_HEADER_SIZE = 32
 POINT_SIZE = 26
@@ -92,7 +92,7 @@ def parse_file(filepath):
     with open(filepath, "rb") as f:
         hdr = read_file_header(f)
         if hdr is None:
-            print("Error: not a NIO_POINT_CLOUD_RAW file (bad magic)", file=sys.stderr)
+            print("Error: not a DYNALOGO_POINT_CLOUD_RAW file (bad magic)", file=sys.stderr)
             return None, None
         print(f"Version: {hdr['version']}, Fields: {hdr['field_count']}")
         while True:

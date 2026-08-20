@@ -3,9 +3,9 @@
 //
 // dynalgo_rs_frame_adapter.hpp — RS-AC1 PointCloudMsg + ImageData → DynalgoFrame conversion.
 //
-// Provides rsDepthToNioFrame() (synthetic 2D depth map from point cloud),
-// rsImageToNioFrame() (image data → DynalgoFrame),
-// and rsPointToNioFrame() (raw point cloud → DynalgoFrame for PCD recording).
+// Provides rsDepthToDynalgoFrame() (synthetic 2D depth map from point cloud),
+// rsImageToDynalgoFrame() (image data → DynalgoFrame),
+// and rsPointToDynalgoFrame() (raw point cloud → DynalgoFrame for PCD recording).
 
 #pragma once
 
@@ -32,7 +32,7 @@ static constexpr int AC1_COLOR_H = 1080;
 // [函数说明 / Function Description]
 // 中文: 将 RS-AC1 PointCloudMsg 转换为 DynalgoFrame（合成 Y16 深度图）
 // English: Convert RS-AC1 PointCloudMsg to DynalgoFrame (synthetic Y16 depth map)
-inline DynalgoFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
+inline DynalgoFrame rsDepthToDynalgoFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     DynalgoFrame f;
     f.type = DynalgoFrameType::DEPTH;
     f.format = DynalgoFormat::Y16;
@@ -84,7 +84,7 @@ inline DynalgoFrame rsDepthToNioFrame(const std::shared_ptr<::PointCloudT<::Poin
 //   [pointCount * 24B packed PointXYZIRT data]
 // The PcdFieldDesc entries describe field offsets within the 24-byte
 // PointXYZIRT struct (which has 1 byte padding after intensity).
-inline DynalgoFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
+inline DynalgoFrame rsPointToDynalgoFrame(const std::shared_ptr<::PointCloudT<::PointXYZIRT>>& cloud) {
     DynalgoFrame f;
     f.type = DynalgoFrameType::POINT;
     f.format = DynalgoFormat::POINT;
@@ -124,10 +124,10 @@ inline DynalgoFrame rsPointToNioFrame(const std::shared_ptr<::PointCloudT<::Poin
 // [函数说明 / Function Description]
 // 中文: 将 RS-AC1 ImageData 转换为 DynalgoFrame（颜色帧）
 // English: Convert RS-AC1 ImageData to DynalgoFrame (color frame)
-inline DynalgoFrame rsImageToNioFrame(const std::shared_ptr<robosense::lidar::ImageData>& img) {
+inline DynalgoFrame rsImageToDynalgoFrame(const std::shared_ptr<robosense::lidar::ImageData>& img) {
     DynalgoFrame f;
     f.type = DynalgoFrameType::COLOR;
-    f.format = rsFrameFormatToNio(img->frame_format);
+    f.format = rsFrameFormatToDynalgo(img->frame_format);
     f.width = static_cast<int>(img->width);
     f.height = static_cast<int>(img->height);
     f.timestampUs = static_cast<uint64_t>(img->timestamp * 1e6);

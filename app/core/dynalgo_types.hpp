@@ -201,7 +201,7 @@ enum class DynalgoFormat {
 // [函数说明 / Function Description]
 // 中文：获取单平面格式的每像素字节数，多平面或压缩格式返回0
 // English: Bytes per pixel for single-plane formats, returns 0 for multi-plane or compressed formats
-inline int nioFormatBpp(DynalgoFormat f) {
+inline int dynalgoFormatBpp(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
         return 1;
@@ -226,7 +226,7 @@ inline int nioFormatBpp(DynalgoFormat f) {
 // [函数说明 / Function Description]
 // 中文：给定格式和分辨率的原始缓冲区大小（字节），可变大小格式返回0
 // English: Raw buffer size in bytes for a given format + resolution, returns 0 for variable-size formats
-inline size_t nioFormatRawSize(DynalgoFormat f, int w, int h) {
+inline size_t dynalgoFormatRawSize(DynalgoFormat f, int w, int h) {
     switch (f) {
     case DynalgoFormat::Y8:
         return static_cast<size_t>(w * h);
@@ -339,7 +339,7 @@ using DynalgoFrameCounts = std::map<DynalgoFrameType, uint64_t>;
 // [函数说明 / Function Description]
 // 中文：DynalgoFormat转字符串，用于日志和FPS报告
 // English: DynalgoFormat → string (for logging / FPS reports)
-inline const char* nioFormatToStr(DynalgoFormat f) {
+inline const char* dynalgoFormatToStr(DynalgoFormat f) {
     switch (f) {
     case DynalgoFormat::Y8:
         return "Y8";
@@ -387,7 +387,7 @@ inline const char* nioFormatToStr(DynalgoFormat f) {
 // [函数说明 / Function Description]
 // 中文：DynalgoFrameType转字符串，用于日志和FPS报告
 // English: DynalgoFrameType → string (for logging / FPS reports)
-inline const char* nioFrameTypeToStr(DynalgoFrameType t) {
+inline const char* dynalgoFrameTypeToStr(DynalgoFrameType t) {
     switch (t) {
     case DynalgoFrameType::COLOR:
         return "COLOR";

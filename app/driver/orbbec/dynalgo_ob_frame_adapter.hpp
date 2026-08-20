@@ -21,16 +21,16 @@ namespace dynalgo {
 // [函数说明 / Function Description]
 // 中文: 将 ob::FrameSet 转换为 DynalgoFrameSet（深拷贝像素数据）
 // English: Convert ob::FrameSet to DynalgoFrameSet (deep copy pixel data)
-inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
-    DynalgoFrameSet nioFs;
+inline DynalgoFrameSet obFrameSetToDynalgo(std::shared_ptr<ob::FrameSet> obFs) {
+    DynalgoFrameSet dynalgoFs;
 
-    auto extract = [&](OBFrameType obType, DynalgoFrameType nioType) {
+    auto extract = [&](OBFrameType obType, DynalgoFrameType dynalgoType) {
         auto frame = obFs->getFrame(obType);
         if (!frame)
             return;
         DynalgoFrame nf;
-        nf.type = nioType;
-        nf.format = obFormatToNio(frame->getFormat());
+        nf.type = dynalgoType;
+        nf.format = obFormatToDynalgo(frame->getFormat());
         nf.timestampUs = frame->getTimeStampUs();
 
         try {
@@ -40,8 +40,8 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
                 nf.height = vf->getHeight();
             }
         } catch (...) {
-            DYNALGO_LOG_WARN_S("obFrameSetToNio: VideoFrame cast/size query threw for "
-                           << static_cast<int>(nioType));
+            DYNALGO_LOG_WARN_S("obFrameSetToDynalgo: VideoFrame cast/size query threw for "
+                           << static_cast<int>(dynalgoType));
         }
 
         // Depth scale / 深度比例
@@ -51,7 +51,7 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
                 if (df)
                     nf.depthScale = df->getValueScale();
             } catch (...) {
-                DYNALGO_LOG_WARN_S("obFrameSetToNio: DepthFrame getValueScale threw");
+                DYNALGO_LOG_WARN_S("obFrameSetToDynalgo: DepthFrame getValueScale threw");
             }
         }
 
@@ -60,7 +60,7 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
         if (data && size > 0)
             nf.data.assign(data, data + size);
 
-        nioFs.setFrame(nioType, std::move(nf));
+        dynalgoFs.setFrame(dynalgoType, std::move(nf));
     };
 
     extract(OB_FRAME_COLOR, DynalgoFrameType::COLOR);
@@ -100,17 +100,17 @@ inline DynalgoFrameSet obFrameSetToNio(std::shared_ptr<ob::FrameSet> obFs) {
             dst += nFields * sizeof(PcdFieldDesc);
             std::memcpy(dst, srcData, static_cast<size_t>(nPts) * layout.srcPointSize);
 
-            nioFs.setFrame(DynalgoFrameType::POINT, std::move(nf));
+            dynalgoFs.setFrame(DynalgoFrameType::POINT, std::move(nf));
         }
     }
 
-    return nioFs;
+    return dynalgoFs;
 }
 
 // [函数说明 / Function Description]
 // 中文: 从 ob::FrameSet 提取 IMU 样本为 vector<DynalgoImuSample>
 // English: Extract IMU samples from ob::FrameSet to vector<DynalgoImuSample>
-inline std::vector<DynalgoImuSample> obImuToNioSamples(std::shared_ptr<ob::FrameSet> obFs) {
+inline std::vector<DynalgoImuSample> obImuToDynalgoSamples(std::shared_ptr<ob::FrameSet> obFs) {
     std::vector<DynalgoImuSample> samples;
 
     auto accelFrameRaw = obFs->getFrame(OB_FRAME_ACCEL);
@@ -129,7 +129,7 @@ inline std::vector<DynalgoImuSample> obImuToNioSamples(std::shared_ptr<ob::Frame
                 samples.push_back(s);
             }
         } catch (...) {
-            DYNALGO_LOG_WARN_S("obImuToNioSamples: AccelFrame parse threw");
+            DYNALGO_LOG_WARN_S("obImuToDynalgoSamples: AccelFrame parse threw");
         }
     }
 
@@ -149,7 +149,7 @@ inline std::vector<DynalgoImuSample> obImuToNioSamples(std::shared_ptr<ob::Frame
                 samples.push_back(s);
             }
         } catch (...) {
-            DYNALGO_LOG_WARN_S("obImuToNioSamples: GyroFrame parse threw");
+            DYNALGO_LOG_WARN_S("obImuToDynalgoSamples: GyroFrame parse threw");
         }
     }
 

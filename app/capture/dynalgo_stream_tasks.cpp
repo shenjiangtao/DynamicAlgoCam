@@ -69,7 +69,7 @@ float alpha, float depthMinM, float depthMaxM, float depthScale,
     }
 }
 
-void FusionStreamTask::enqueueNioFrameSet(std::shared_ptr<DynalgoFrameSet> frameSet) {
+void FusionStreamTask::enqueueDynalgoFrameSet(std::shared_ptr<DynalgoFrameSet> frameSet) {
     {
         std::lock_guard<std::mutex> lock(frameSetMtx_);
         latestFrameSet_ = std::move(frameSet);
@@ -143,18 +143,18 @@ void FusionStreamTask::onIdleSwD2C() {
     if (!frameSetReady_.load())
         return;
 
-    std::shared_ptr<DynalgoFrameSet> nioFrameSet;
+    std::shared_ptr<DynalgoFrameSet> dynalgoFrameSet;
     {
         std::lock_guard<std::mutex> lock(frameSetMtx_);
-        nioFrameSet = std::move(latestFrameSet_);
+        dynalgoFrameSet = std::move(latestFrameSet_);
         frameSetReady_ = false;
     }
 
-    if (!nioFrameSet)
+    if (!dynalgoFrameSet)
         return;
 
-    auto* colorFrame = nioFrameSet->getFrame(DynalgoFrameType::COLOR);
-    auto* depthFrame = nioFrameSet->getFrame(DynalgoFrameType::DEPTH);
+    auto* colorFrame = dynalgoFrameSet->getFrame(DynalgoFrameType::COLOR);
+    auto* depthFrame = dynalgoFrameSet->getFrame(DynalgoFrameType::DEPTH);
     if (!colorFrame || !depthFrame)
         return;
 

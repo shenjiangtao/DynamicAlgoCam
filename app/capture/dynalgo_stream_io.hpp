@@ -87,7 +87,7 @@ void writeH264StartCode(std::ofstream& f);
 // writeH264Frame: write H.264 NALs to file; skips frames until first keyframe
 void writeH264Frame(std::ofstream& file, const uint8_t* data, uint32_t size, bool& keyFrameWritten, std::mutex& mtx);
 
-// writeDepthRawWithHeader: write depth frame with NIO_DEPTH_RAW header
+// writeDepthRawWithHeader: write depth frame with DYNALOGO_DEPTH_RAW header
 // (magic, width, height, bpp, scale, frameSize, timestamp) on frame 0
 void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t size, int width, int height,
                              float scale, uint64_t frameIndex, std::mutex& mtx, uint64_t deviceTsUs = 0);
@@ -109,7 +109,7 @@ void writePcdFile(const std::string& outputDir, const std::string& baseName, con
 //
 // File layout:
 //   [Header]
-//     16B  magic = "NIO_PCD_STREAM\0"
+//     16B  magic = "DYNALOGO_PCD_STREAM\0"
 //     4B   numFields  (uint32)
 //     4B   srcPointSize (uint32)
 //     4B   pcdPointSize (uint32)

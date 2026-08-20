@@ -192,7 +192,7 @@ static SDL_Surface* renderBitmapText(const std::string& text, int scale, uint8_t
 
 // === Helpers ===
 
-std::string SDLViewer::nioFormatToString(DynalgoFormat fmt) {
+std::string SDLViewer::dynalgoFormatToString(DynalgoFormat fmt) {
     switch (fmt) {
     case DynalgoFormat::MJPG:
         return "MJPG";
@@ -243,10 +243,10 @@ int SDLViewer::addViewerSlot(const std::string& label, DynalgoFormat fmt, int w,
     auto& s = *slots_.back();
     s.label = label;
     s.format = fmt;
-    s.formatStr = nioFormatToString(fmt);
+    s.formatStr = dynalgoFormatToString(fmt);
     s.w = w;
     s.h = h;
-    size_t rawMax = nioFormatRawSize(fmt, w, h);
+    size_t rawMax = dynalgoFormatRawSize(fmt, w, h);
     if (rawMax == 0)
         rawMax = w * h * 4;
     s.rawBuf.resize(rawMax, 0);

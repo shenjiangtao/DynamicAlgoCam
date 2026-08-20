@@ -87,7 +87,7 @@ void CaptureSession::createColorEncoder() {
     frameConsumers_.push_back(
         std::unique_ptr<FrameConsumer>(new ColorFrameConsumer(task, nullptr, -1, ViewerChannel::COLOR, sf)));
     DYNALGO_LOG_INFO_S("Color output: " << (filePrefix_.empty()?baseName_:filePrefix_) + "_color_" + startTs_ + ".h264"
-                                    << " fmt=" << nioFormatToStr(sensorInfo_.colorFormat));
+                                    << " fmt=" << dynalgoFormatToStr(sensorInfo_.colorFormat));
 }
 
 void CaptureSession::createDepthEncoder() {
@@ -284,28 +284,28 @@ void CaptureSession::videoConsumerLoop() {
     DYNALGO_LOG_DEBUG_S("Video consumer started: " << safeName_);
 
     while (consumersRunning_.load()) {
-        std::shared_ptr<DynalgoFrameSet> nioFs;
-        if (!videoQueue_.pop(nioFs, 5))
+        std::shared_ptr<DynalgoFrameSet> dynalgoFs;
+        if (!videoQueue_.pop(dynalgoFs, 5))
             continue;
-        if (!nioFs)
+        if (!dynalgoFs)
             continue;
 
         if (canFuse_ && fusionTask_) {
             if (hwD2CMode_) {
-                auto colorFrame = nioFs->getFrame(DynalgoFrameType::COLOR);
-                auto depthFrame = nioFs->getFrame(DynalgoFrameType::DEPTH);
+                auto colorFrame = dynalgoFs->getFrame(DynalgoFrameType::COLOR);
+                auto depthFrame = dynalgoFs->getFrame(DynalgoFrameType::DEPTH);
                 if (colorFrame && depthFrame) {
                     fusionTask_->enqueueColor(colorFrame->rawData(), colorFrame->dataSize(), colorFrame->timestampUs);
                     fusionTask_->enqueueDepth(depthFrame->rawData(), depthFrame->dataSize(), depthFrame->timestampUs,
                                               depthFrame->depthScale);
                 }
             } else {
-                fusionTask_->enqueueNioFrameSet(nioFs);
+                fusionTask_->enqueueDynalgoFrameSet(dynalgoFs);
             }
         }
 
         for (auto& fc : frameConsumers_)
-            fc->consume(nioFs);
+            fc->consume(dynalgoFs);
     }
 
     DYNALGO_LOG_DEBUG_S("Video consumer stopped: " << safeName_);
@@ -320,7 +320,7 @@ static void onImuSamples(const std::vector<DynalgoImuSample>& samples, ImuFrameQ
 
     for (const auto& s : samples) {
         std::ostringstream oss;
-        oss << nowMs << "," << nioFrameTypeToStr(s.type) << "," << s.timestampUs << "," << std::fixed
+        oss << nowMs << "," << dynalgoFrameTypeToStr(s.type) << "," << s.timestampUs << "," << std::fixed
             << std::setprecision(6) << s.x << "," << s.y << "," << s.z << "," << s.temperature << "\n";
         imuQueue.push(oss.str());
         std::lock_guard<std::mutex> lock(sensorFiles->countMtx);
@@ -363,9 +363,9 @@ void CaptureSession::startVideoPipeline(SDLViewer& viewer, bool noShow) {
     consumersRunning_ = true;
     videoConsumerThread_ = std::thread(&CaptureSession::videoConsumerLoop, this);
 
-    bool ok = pipeline_->start([this](std::shared_ptr<DynalgoFrameSet> nioFs) {
-        if (nioFs) {
-            videoQueue_.push(std::move(nioFs));
+    bool ok = pipeline_->start([this](std::shared_ptr<DynalgoFrameSet> dynalgoFs) {
+        if (dynalgoFs) {
+            videoQueue_.push(std::move(dynalgoFs));
             // Notify start-video caller that the pipeline is delivering frames.
             {
                 std::lock_guard<std::mutex> lk(firstFrameMtx_);
@@ -504,7 +504,7 @@ void CaptureSession::reportFps(uint64_t reportDurationMs) {
         fpsLine << "Recording... FPS: ";
         std::string sep;
         for (const auto& item : tempCounts) {
-            auto name = nioFrameTypeToStr(item.first);
+            auto name = dynalgoFrameTypeToStr(item.first);
             float rate = (reportDurationMs > 0) ? (item.second / (reportDurationMs / 1000.0f)) : 0.0f;
             fpsLine << std::fixed << std::setprecision(1) << sep << name << "=" << rate;
             sep = ", ";

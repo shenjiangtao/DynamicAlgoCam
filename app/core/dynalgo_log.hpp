@@ -288,37 +288,37 @@ private:
 
 #define DYNALGO_LOG_TRACE_S(msg)          \
     do {                              \
-        std::ostringstream _nio_ss;   \
-        _nio_ss << msg;               \
-        DYNALGO_LOG_TRACE(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;   \
+        _dynalgo_ss << msg;               \
+        DYNALGO_LOG_TRACE(_dynalgo_ss.str()); \
     } while (0)
 #define DYNALGO_LOG_DEBUG_S(msg)          \
     do {                              \
-        std::ostringstream _nio_ss;   \
-        _nio_ss << msg;               \
-        DYNALGO_LOG_DEBUG(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;   \
+        _dynalgo_ss << msg;               \
+        DYNALGO_LOG_DEBUG(_dynalgo_ss.str()); \
     } while (0)
 #define DYNALGO_LOG_INFO_S(msg)          \
     do {                             \
-        std::ostringstream _nio_ss;  \
-        _nio_ss << msg;              \
-        DYNALGO_LOG_INFO(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;  \
+        _dynalgo_ss << msg;              \
+        DYNALGO_LOG_INFO(_dynalgo_ss.str()); \
     } while (0)
 #define DYNALGO_LOG_WARN_S(msg)          \
     do {                             \
-        std::ostringstream _nio_ss;  \
-        _nio_ss << msg;              \
-        DYNALGO_LOG_WARN(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;  \
+        _dynalgo_ss << msg;              \
+        DYNALGO_LOG_WARN(_dynalgo_ss.str()); \
     } while (0)
 #define DYNALGO_LOG_ERROR_S(msg)          \
     do {                              \
-        std::ostringstream _nio_ss;   \
-        _nio_ss << msg;               \
-        DYNALGO_LOG_ERROR(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;   \
+        _dynalgo_ss << msg;               \
+        DYNALGO_LOG_ERROR(_dynalgo_ss.str()); \
     } while (0)
 #define DYNALGO_LOG_FATAL_S(msg)          \
     do {                              \
-        std::ostringstream _nio_ss;   \
-        _nio_ss << msg;               \
-        DYNALGO_LOG_FATAL(_nio_ss.str()); \
+        std::ostringstream _dynalgo_ss;   \
+        _dynalgo_ss << msg;               \
+        DYNALGO_LOG_FATAL(_dynalgo_ss.str()); \
     } while (0)

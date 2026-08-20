@@ -5,7 +5,7 @@
 //
 // Sections:
 //   1. isH264KeyFrame / writeH264StartCode / writeH264Frame — native H.264 NAL handling
-//   2. writeDepthRawWithHeader — NIO_DEPTH_RAW format writer
+//   2. writeDepthRawWithHeader — DYNALOGO_DEPTH_RAW format writer
 //   2b. writePcdFile — PCD v0.7 binary per-frame point cloud writer
 //   3. openBufferedFile — large-buffer ofstream factory
 //   4. createStreamEncoder / writeStreamFrame — encoder+file management
@@ -76,8 +76,8 @@ void writeH264Frame(std::ofstream& file, const uint8_t* data, uint32_t size, boo
     }
 }
 
-// === Section 2: Depth raw file writer with NIO_DEPTH_RAW header ===
-// Header layout: "NIO_DEPTH_RAW" (16B, null-padded) | width (4B) | height (4B) |
+// === Section 2: Depth raw file writer with DYNALOGO_DEPTH_RAW header ===
+// Header layout: "DYNALOGO_DEPTH_RAW" (16B, null-padded) | width (4B) | height (4B) |
 // bpp (4B) | scale (4B float) | frameSize (4B) | timestamp (8B)
 // Subsequent frames are raw Y16 pixel data, each followed by flush.
 
@@ -88,7 +88,7 @@ void writeDepthRawWithHeader(std::ofstream& file, const uint8_t* data, uint32_t 
         return;
 
     if (frameIndex == 0) {
-        const char magic[] = "NIO_DEPTH_RAW";
+        const char magic[] = "DYNALOGO_DEPTH_RAW";
         file.write(magic, 16);
 
         uint32_t w32 = static_cast<uint32_t>(width);
@@ -263,7 +263,7 @@ bool writePcdStreamHeader(PcdStream& stream, const uint8_t* wireData, uint32_t w
 
     stream.layout = layout;
 
-    const char magic[] = "NIO_PCD_STREAM";
+    const char magic[] = "DYNALOGO_PCD_STREAM";
     stream.file->write(magic, 16);
 
     uint32_t n = static_cast<uint32_t>(layout.fields.size());
@@ -371,7 +371,7 @@ std::shared_ptr<StreamEncoder> createStreamEncoder(const std::string& filePath, 
 
     se->encoder = std::make_shared<H264Encoder>();
     if (!se->encoder->init(w, h, fps, format, 4000000, seiUuid)) {
-        DYNALGO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << nioFormatToStr(format)
+        DYNALGO_LOG_WARN_S("Fallback: H264 encoder init failed for " << filePath << " format=" << dynalgoFormatToStr(format)
                                                                  << " " << w << "x" << h << "@" << fps);
         se->encoder.reset();
         se->file = openBufferedFile(filePath, std::ios::binary, DYNALGO_FILE_BUF_SIZE, &se->fileBuf);

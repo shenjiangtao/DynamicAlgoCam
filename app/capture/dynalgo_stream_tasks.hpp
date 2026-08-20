@@ -94,9 +94,9 @@ public:
     std::atomic<uint64_t> frameCount{ 0 };
 
     // [方法说明 / Method Description]
-    // 中文: 入队NIO帧集，用于D2C融合
-    // English: Enqueue NIO frame set for D2C fusion
-    void enqueueNioFrameSet(std::shared_ptr<DynalgoFrameSet> frameSet);
+    // 中文: 入队Dynalgo帧集，用于D2C融合
+    // English: Enqueue Dynalgo frame set for D2C fusion
+    void enqueueDynalgoFrameSet(std::shared_ptr<DynalgoFrameSet> frameSet);
     // [方法说明 / Method Description]
     // 中文: 入队彩色帧数据
     // English: Enqueue color frame data

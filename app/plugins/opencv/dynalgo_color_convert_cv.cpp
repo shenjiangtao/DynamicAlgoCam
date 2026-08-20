@@ -91,7 +91,7 @@ cv::Mat frameToBGR(const DynalgoFrame& frame) {
         return bgr;
     }
 
-    DYNALGO_LOG_WARN_S("Unsupported display format: " << nioFormatToStr(fmt));
+    DYNALGO_LOG_WARN_S("Unsupported display format: " << dynalgoFormatToStr(fmt));
     return cv::Mat();
 }
 

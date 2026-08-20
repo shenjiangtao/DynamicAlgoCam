@@ -42,7 +42,7 @@ std::unique_ptr<DynalgoActuator> createActuator(DynalgoActuatorType type);
 //   translation unit. When the backend library is a static archive (.a),
 //   the linker drops unreferenced object files by default, so the registrar
 //   may never run and createActuator() would return nullptr. Concrete
-//   backend archives (e.g. libnio_actuators.a) must be linked with
+//   backend archives (e.g. libdynalgo_actuators.a) must be linked with
 //   `--whole-archive`:
 //
 //     target_link_libraries(<consumer> PRIVATE

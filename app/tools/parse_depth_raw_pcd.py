@@ -4,7 +4,7 @@ NIO Depth Raw Data (.raw) Parser & Point Cloud Generator
 
 Data structure of .raw file:
   Header (44 bytes):
-    [0:16]  Magic string: "NIO_DEPTH_RAW" (new) or "ORBBEC_DEPTH_RAW" (legacy)
+    [0:16]  Magic string: "NIO_DEPTH_RAW" (legacy) or "ORBBEC_DEPTH_RAW" (legacy) or "DYNALOGO_DEPTH_RAW" (current)
     [16:20] Width       (uint32_t)
     [20:24] Height      (uint32_t)
     [24:28] BPP         (uint32_t) - bytes per pixel (2 for Y16)
@@ -88,7 +88,7 @@ def parse_header(data):
     else:
         magic_str = str(magic)
 
-    if magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW'):
+    if magic_str.startswith('NIO_DEPTH_RAW') or magic_str.startswith('ORBBEC_DEPTH_RAW') or magic_str.startswith('DYNALOGO_DEPTH_RAW'):
         header['has_header'] = True
         header['magic'] = magic_str
         header['width'] = struct.unpack_from('<I', data, 16)[0]

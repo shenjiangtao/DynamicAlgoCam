@@ -165,7 +165,7 @@ bool RsPipeline::start(DynalgoVideoCallback callback) {
     param.input_type = robosense::lidar::InputType::USB;
     param.lidar_type = robosense::lidar::LidarType::RS_AC1;
     param.input_param.enable_image = enableImage_;
-    param.input_param.image_format = nioFormatToRsFrameFormat(imageFormat_);
+    param.input_param.image_format = dynalgoFormatToRsFrameFormat(imageFormat_);
     param.input_param.image_width = imageWidth_;
     param.input_param.image_height = imageHeight_;
     param.input_param.image_fps = imageFps_;
@@ -290,8 +290,8 @@ void RsPipeline::processCloud() {
         auto msg = stuffedCloudQueue_.popWait(10000); // 10ms timeout for real-time
         if (!msg)
             continue;
-        auto depthFrame = std::make_shared<DynalgoFrame>(rsDepthToNioFrame(msg));
-        auto pointFrame = std::make_shared<DynalgoFrame>(rsPointToNioFrame(msg));
+        auto depthFrame = std::make_shared<DynalgoFrame>(rsDepthToDynalgoFrame(msg));
+        auto pointFrame = std::make_shared<DynalgoFrame>(rsPointToDynalgoFrame(msg));
         {
             std::lock_guard<std::mutex> lk(syncMtx_);
             depthFrame_ = depthFrame;
@@ -314,7 +314,7 @@ void RsPipeline::processImageData() {
         auto msg = stuffedImageQueue_.popWait(10000); // 10ms timeout for real-time
         if (!msg)
             continue;
-        auto colorFrame = std::make_shared<DynalgoFrame>(rsImageToNioFrame(msg));
+        auto colorFrame = std::make_shared<DynalgoFrame>(rsImageToDynalgoFrame(msg));
         {
             std::lock_guard<std::mutex> lk(syncMtx_);
             colorFrame_ = colorFrame;
@@ -353,15 +353,15 @@ void RsPipeline::tryEmitFrameSet() {
     // Both depth and color must be ready to guarantee aligned data.
     // Emit when a fresh colour frame arrives, using the latest depth frame if available.
     if (colorReady_ && depthReady_) {
-        auto nioFs = std::make_shared<DynalgoFrameSet>();
+        auto dynalgoFs = std::make_shared<DynalgoFrameSet>();
         // Use the latest colour frame.
-        nioFs->setFrame(DynalgoFrameType::COLOR, *colorFrame_);
+        dynalgoFs->setFrame(DynalgoFrameType::COLOR, *colorFrame_);
         // Use the latest depth frame.
-        nioFs->setFrame(DynalgoFrameType::DEPTH, *depthFrame_);
+        dynalgoFs->setFrame(DynalgoFrameType::DEPTH, *depthFrame_);
         if (pointFrame_)
-            nioFs->setFrame(DynalgoFrameType::POINT, *pointFrame_);
+            dynalgoFs->setFrame(DynalgoFrameType::POINT, *pointFrame_);
         if (videoCallback_)
-            videoCallback_(nioFs);
+            videoCallback_(dynalgoFs);
         // Reset colour readiness; keep depthReady_ true to reuse latest depth for next colour frame.
         colorReady_ = false;
         return;
@@ -377,7 +377,7 @@ void RsPipeline::emitImuData(const std::shared_ptr<robosense::lidar::ImuData>& i
     if (!imu || !imuCallback_)
         return;
 
-    auto samples = rsImuToNioSamples(imu);
+    auto samples = rsImuToDynalgoSamples(imu);
     if (!samples.empty())
         imuCallback_(samples);
 }

@@ -63,6 +63,7 @@ import numpy as np
 PCD_FIELD_DESC_SIZE = 24
 PCD_FIELD_DESC_FMT = '<16s BBB B 4s'  # name[16], srcSize, srcOffset, pcdSize, pcdType, pad[4]
 HEADER_MAGIC = b'NIO_PCD_STREAM'
+DYNALOGO_PCD_STREAM_MAGIC = b'DYNALOGO_PCD_STREAM'
 
 
 def parse_field_desc(data, offset):
@@ -87,8 +88,8 @@ def parse_header(data):
 
     magic = data[0:16]
     magic_str = magic.split(b'\x00')[0].decode('ascii', errors='replace')
-    if magic_str != 'NIO_PCD_STREAM':
-        print(f"ERROR: Invalid magic: '{magic_str}' (expected 'NIO_PCD_STREAM')")
+    if magic_str != 'NIO_PCD_STREAM' and magic_str != 'DYNALOGO_PCD_STREAM':
+        print(f"ERROR: Invalid magic: '{magic_str}' (expected 'NIO_PCD_STREAM' or 'DYNALOGO_PCD_STREAM')")
         return None
 
     num_fields = struct.unpack_from('<I', data, 16)[0]
