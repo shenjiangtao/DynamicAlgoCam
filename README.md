@@ -172,6 +172,196 @@ Capture Session
 Output Files (.h264, .raw, .txt, .csv)
 ```
 
+### app/ Directory Structure
+
+The `app/` directory contains all C++ source code organized in a **strictly layered architecture** with downward-only dependencies:
+
+```
+app/
+├── core/                    # Core Layer (dynalgo_core)
+│   ├── dynalgo_*_factory.*  # Factory + self-registration
+│   ├── dynalgo_*.hpp        # Frame, Types, Model, Actuator, Device abstractions
+│   └── utils*               # Logging, timestamps, threading
+│
+├── driver/                  # Driver Layer (dynalgo_drivers)
+│   ├── orbbec/              # OrbbecSDK adapter
+│   ├── robosense/           # RoboSense rs_driver adapter
+│   └── stereo/              # Stereo camera abstraction (optional)
+│
+├── capture/                 # Capture Layer (dynalgo_capture)
+│   ├── dynalgo_capture_session.*    # Session orchestration
+│   ├── dynalgo_h264_encoder.*       # H.264 encoding
+│   ├── dynalgo_stream_io.*          # File writing
+│   ├── dynalgo_frame_queue.*        # Lock-free SPSC queues
+│   ├── dynalgo_stream_tasks.*       # Stream task management
+│   ├── dynalgo_sdl_viewer.*         # SDL preview
+│   ├── dynalgo_color_convert.*      # Color space conversion
+│   └── dynalgo_frame_consumer.*     # FrameConsumer chain
+│
+├── algo/                    # Algorithm Layer (dynalgo_algo) — optional
+│   ├── bytetrack/           # ByteTrack multi-object tracking
+│   ├── sahi/                # SAHI sliced inference for small objects
+│   ├── dynalgo_engagement_loop.*    # Perceive→Locate→Estimate→Control
+│   ├── dynalgo_engagement_consumer.*
+│   ├── dynalgo_target_selector.*    # Target selection strategies
+│   ├── dynalgo_track_bundle.*       # Kalman + 3D cache
+│   └── dummy_model_backend.*        # Dry-run model stub
+│
+├── model_backends/          # Inference Backends (optional, ENABLE_MODEL_BACKENDS)
+│   ├── common/              # Shared preprocessing, NMS, postprocess
+│   ├── tensorrt/            # TensorRT C++ backend
+│   ├── onnxruntime/         # ONNX Runtime C++ backend
+│   └── rknn/                # RKNN Runtime C++ backend
+│
+├── actuator/                # Actuator Layer (optional, --engage-actuator)
+│   ├── dynalgo_actuator.*   # Abstract interface
+│   ├── dummy_actuator.*     # Dry-run implementation
+│   └── CMakeLists.txt
+│
+├── dynamic_algo_cam/        # Main executable entry point
+│   └── dynamic_algo_cam.cpp
+│
+├── plugins/                 # Optional plugins
+│   └── opencv/              # OpenCV color conversion plugin
+│
+├── models/                  # Vendored Python model packages (NOT built by CMake)
+│   └── yolov8/              # Ultralytics YOLOv8 (GPL-3.0)
+│
+├── training/                # Python training pipeline (NOT built by CMake)
+│   ├── scripts/             # train, export, validate, convert
+│   └── configs/             # YOLOv11 mosquito/weed, RT-DETR configs
+│
+└── tools/                   # Python post-processing tools
+    └── parse_*.py, stream_*.py, evaluate_*.py
+```
+
+**Dependency Flow (strictly downward):**
+
+```
+dynamic_algo_cam
+       │
+       ▼
+┌──────────────────┐
+│  capture + algo  │  ← depend on core + actuator
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│     driver       │  ← depends on core
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│      core        │  ← zero vendor dependencies
+└──────────────────┘
+```
+
+**Key Principles:**
+- **Vendor isolation**: OrbbecSDK / rs_driver headers only in `app/driver/<vendor>/`
+- **Self-registration**: Model backends & actuators register at static-init via factory hooks
+- **Dry-run safety**: `dryRun=true` by default; all control actions are no-ops until explicitly enabled
+- **Optional layers**: `algo/`, `model_backends/`, `actuator/`, `driver/stereo/` only linked when corresponding CMake options or CLI flags are enabled
+
+### UML Sequence Diagram
+
+The following sequence diagram illustrates the key interactions during a capture session with the engagement loop enabled (`--engage-model DUMMY --engage-actuator DUMMY`):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant CLI as dynamic_algo_cam
+    participant Factory as DynalgoDriverFactory
+    participant Device as DynalgoDevice (Orbbec/RS)
+    participant Pipeline as DynalgoPipeline
+    participant Session as DynalgoCaptureSession
+    participant Encoder as DynalgoH264Encoder
+    participant Writer as DynalgoStreamIO
+    participant Viewer as DynalgoSDLViewer
+    participant Consumer as EngagementFrameConsumer
+    participant Loop as DynalgoEngagementLoop
+    participant Model as DynalgoModelBackend
+    participant Selector as TargetSelector
+    participant Tracker as DynalgoTrackBundle
+    participant Actuator as DynalgoActuator
+
+    rect rgb(240, 248, 255)
+        note right of CLI: Startup & Device Discovery
+    end
+    User->>CLI: ./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY
+    CLI->>Factory: discoverDevices()
+    Factory->>Device: scan USB / enumerate
+    Device-->>Factory: vector<DiscoveredDevice>
+    Factory-->>CLI: discovered devices
+
+    rect rgb(255, 248, 240)
+        note right of CLI: Pipeline Setup
+    end
+    CLI->>Session: setupPipeline(device, config)
+    Session->>Pipeline: setupPipeline(config)
+    Pipeline->>Device: enable streams (color, depth, IR, IMU)
+    Device-->>Pipeline: sensor profiles + intrinsics
+    Pipeline-->>Session: DynalgoSensorInfo (depthIntrinsic, depthScale)
+    Session->>Model: createModelBackend(DUMMY)
+    Session->>Actuator: createActuator(DUMMY)
+    Session->>Loop: new EngagementLoop(model, actuator, selector, tracker)
+    Session->>Consumer: new EngagementFrameConsumer(loop)
+    Session->>Session: addFrameConsumer(consumer)
+
+    rect rgb(240, 255, 240)
+        note right of Pipeline: Capture Loop (per frame)
+    end
+    loop for each frame
+        Pipeline->>Device: waitForFrames() / callback
+        Device-->>Pipeline: raw vendor frames
+        Pipeline->>Pipeline: convert to DynalgoFrameSet (deep copy)
+        Pipeline-->>Session: videoCallback(frameSet)
+
+        par Recording Path
+            Session->>Encoder: encode(frameSet.color, frameSet.depth, ...)
+            Encoder-->>Writer: H.264 packets
+            Writer->>Writer: write to .h264 files
+        and Preview Path
+            Session->>Viewer: render(frameSet)
+        and Engagement Path (optional)
+            Session->>Consumer: consume(frameSet)
+            Consumer->>Loop: onFrame(frameSet)
+            Loop->>Model: infer(frameSet.color)
+            Model-->>Loop: vector<DynalgoDetectionResult>
+            Loop->>Selector: pickTarget(detections, strategy)
+            Selector-->>Loop: optional<DynalgoDetectionResult>
+            alt target found
+                Loop->>Tracker: update(detection, depthFrame, intr, scale)
+                Tracker->>Tracker: Kalman predict/update
+                Tracker-->>Loop: hasFix(), lastX/Y/Z()
+                Loop->>Loop: stateMachine(IDLE→LOCKING→TRACKING→FIRING)
+                alt state == FIRING
+                    Loop->>Actuator: aimAt(X, Y, Z)
+                    Loop->>Actuator: fire(durationMs)
+                end
+            else no target
+                Loop->>Loop: stateMachine(TRACKING→LOST→IDLE)
+            end
+        end
+    end
+
+    rect rgb(255, 240, 248)
+        note right of CLI: Shutdown (Ctrl+C / SIGTERM)
+    end
+    User->>CLI: SIGINT / SIGTERM
+    CLI->>Session: stop()
+    Session->>Consumer: stopTask()
+    Session->>Pipeline: stop()
+    Pipeline->>Device: stop streams
+    Session->>Encoder: flush()
+    Session->>Writer: close files
+    Session->>Actuator: close()
+    Session->>Model: (cleanup)
+    CLI->>User: "All recordings saved to: <dir>"
+```
+
+> **Note**: The engagement loop path is only active when both `--engage-model` and `--engage-actuator` are provided. Without these flags, the `FrameConsumer` chain remains empty and the capture session behaves identically to the baseline (zero overhead).
+
 ## Build
 
 ### Prerequisites

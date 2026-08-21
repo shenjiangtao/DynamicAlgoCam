@@ -3,10 +3,17 @@
 #
 # dynalgo_algo static library — algorithm orchestration (EngagementLoop, TargetSelector,
 # TrackBundle, DummyModelBackend). Links dynalgo_core + dynalgo_actuators.
+# Also includes: ByteTrack (multi-object tracking), SAHI (small object detection).
 
 cmake_minimum_required(VERSION 3.16)
 
 project(dynalgo_algo LANGUAGES CXX)
+
+# ByteTrack subdirectory
+add_subdirectory(bytetrack)
+
+# SAHI subdirectory
+add_subdirectory(sahi)
 
 add_library(dynalgo_algo STATIC
     dynalgo_engagement_loop.cpp
@@ -19,11 +26,15 @@ add_library(dynalgo_algo STATIC
 target_include_directories(dynalgo_algo PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../core
+    ${CMAKE_CURRENT_SOURCE_DIR}/bytetrack
+    ${CMAKE_CURRENT_SOURCE_DIR}/sahi
 )
 
 target_link_libraries(dynalgo_algo PUBLIC
     dynalgo::core
     dynalgo::actuators
+    dynalgo::bytetrack
+    dynalgo::sahi
 )
 
 # C++17 required
@@ -39,5 +50,7 @@ install(FILES
     dynalgo_target_selector.hpp
     dynalgo_track_bundle.hpp
     dummy_model_backend.hpp
+    bytetrack/bytetrack.hpp
+    sahi/sahi.hpp
     DESTINATION include/dynalgo
 )

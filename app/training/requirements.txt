@@ -1,0 +1,26 @@
+# Training pipeline requirements
+# Install with: pip install -r requirements.txt
+
+# Core ML
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0
+onnx>=1.14.0
+onnxruntime>=1.15.0
+onnxruntime-gpu>=1.15.0  # for CUDA support
+
+# Data handling
+opencv-python>=4.8.0
+pyyaml>=6.0
+numpy>=1.24.0
+tqdm>=4.65.0
+Pillow>=9.5.0
+
+# Export/Convert
+onnx-simplifier>=0.4.0
+
+# Optional: TensorRT (install via system package)
+# tensorrt>=8.6.0
+
+# Optional: RKNN (install from Rockchip SDK)
+# rknn-toolkit2>=1.6.0

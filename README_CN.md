@@ -180,6 +180,196 @@ DynamicAlgoCam 采用**分层架构**，依赖方向严格向下。厂商 SDK �
 输出文件（.h264, .raw, .txt, .csv）
 ```
 
+### app/ 目录结构
+
+`app/` 目录包含所有 C++ 源代码，采用**严格分层架构**，依赖方向仅向下：
+
+```
+app/
+├── core/                    # 核心层
+│   ├── dynalgo_*_factory.*  # 工厂 + 自注册
+│   ├── dynalgo_*.hpp        # Frame, Types, Model, Actuator, Device 抽象
+│   └── utils*               # 日志、时间戳、线程工具
+│
+├── driver/                  # 驱动层
+│   ├── orbbec/              # OrbbecSDK 适配
+│   ├── robosense/           # RoboSense rs_driver 适配
+│   └── stereo/              # 双目相机抽象（可选）
+│
+├── capture/                 # 采集层
+│   ├── dynalgo_capture_session.*    # 会话编排
+│   ├── dynalgo_h264_encoder.*       # H.264 编码
+│   ├── dynalgo_stream_io.*          # 文件写入
+│   ├── dynalgo_frame_queue.*        # 无锁 SPSC 队列
+│   ├── dynalgo_stream_tasks.*       # 流任务管理
+│   ├── dynalgo_sdl_viewer.*         # SDL 预览
+│   ├── dynalgo_color_convert.*      # 色彩空间转换
+│   └── dynalgo_frame_consumer.*     # FrameConsumer 链
+│
+├── algo/                    # 算法层 — 可选
+│   ├── bytetrack/           # ByteTrack 多目标跟踪
+│   ├── sahi/                # SAHI 切片推理（小目标）
+│   ├── dynalgo_engagement_loop.*    # 感知→定位→估计→控制
+│   ├── dynalgo_engagement_consumer.*
+│   ├── dynalgo_target_selector.*    # 目标选择策略
+│   ├── dynalgo_track_bundle.*       # 卡尔曼 + 3D 缓存
+│   └── dummy_model_backend.*        # Dry-run 模型桩
+│
+├── model_backends/          # 推理后端 — 可选 (ENABLE_MODEL_BACKENDS)
+│   ├── common/              # 共享预处理、NMS、后处理
+│   ├── tensorrt/            # TensorRT C++ 后端
+│   ├── onnxruntime/         # ONNX Runtime C++ 后端
+│   └── rknn/                # RKNN Runtime C++ 后端
+│
+├── actuator/                # 执行器层 — 可选 (--engage-actuator)
+│   ├── dynalgo_actuator.*   # 抽象接口
+│   ├── dummy_actuator.*     # Dry-run 实现
+│   └── CMakeLists.txt
+│
+├── dynamic_algo_cam/        # 主可执行程序入口
+│   └── dynamic_algo_cam.cpp
+│
+├── plugins/                 # 可选插件
+│   └── opencv/              # OpenCV 色彩转换插件
+│
+├── models/                  # Python 模型包（不参与 CMake 构建）
+│   └── yolov8/              # Ultralytics YOLOv8 (GPL-3.0)
+│
+├── training/                # Python 训练流水线（不参与 CMake 构建）
+│   ├── scripts/             # 训练、导出、验证、转换
+│   └── configs/             # YOLOv11 蚊虫/杂草、RT-DETR 配置
+│
+└── tools/                   # Python 后处理工具
+    └── parse_*.py, stream_*.py, evaluate_*.py
+```
+
+**依赖流向（严格单向向下）：**
+
+```
+dynamic_algo_cam
+       │
+       ▼
+┌──────────────────┐
+│  capture + algo  │  ← 依赖 core + actuator
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│     driver       │  ← 依赖 core
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│      core        │  ← 零厂商依赖
+└──────────────────┘
+```
+
+**关键原则：**
+- **厂商隔离**：OrbbecSDK / rs_driver 头文件仅限 `app/driver/<vendor>/`
+- **自注册**：模型后端与执行器在静态初始化时通过工厂钩子自注册
+- **Dry-run 安全**：`dryRun=true` 默认；所有控制动作默认为空操作，显式启用前无副作用
+- **可选层**：`algo/`、`model_backends/`、`actuator/`、`driver/stereo/` 仅在对应 CMake 选项或 CLI 参数启用时链接
+
+### UML 时序图
+
+下图展示启用闭环（`--engage-model DUMMY --engage-actuator DUMMY`）时的关键交互流程：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor 用户
+    participant CLI as dynamic_algo_cam
+    participant 工厂 as DynalgoDriverFactory
+    participant 设备 as DynalgoDevice (Orbbec/RS)
+    participant 管线 as DynalgoPipeline
+    participant 会话 as DynalgoCaptureSession
+    participant 编码器 as DynalgoH264Encoder
+    participant 写入器 as DynalgoStreamIO
+    participant 预览 as DynalgoSDLViewer
+    participant 消费者 as EngagementFrameConsumer
+    participant 闭环 as DynalgoEngagementLoop
+    participant 模型 as DynalgoModelBackend
+    participant 选择器 as TargetSelector
+    participant 跟踪器 as DynalgoTrackBundle
+    participant 执行器 as DynalgoActuator
+
+    rect rgb(240, 248, 255)
+        note right of CLI: 启动与设备发现
+    end
+    用户->>CLI: ./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY
+    CLI->>工厂: discoverDevices()
+    工厂->>设备: 扫描 USB / 枚举
+    设备-->>工厂: vector<DiscoveredDevice>
+    工厂-->>CLI: 发现的设备列表
+
+    rect rgb(255, 248, 240)
+        note right of CLI: 管线建立
+    end
+    CLI->>会话: setupPipeline(device, config)
+    会话->>管线: setupPipeline(config)
+    管线->>设备: 启用流（color, depth, IR, IMU）
+    设备-->>管线: 传感器配置 + 内参
+    管线-->>会话: DynalgoSensorInfo (depthIntrinsic, depthScale)
+    会话->>模型: createModelBackend(DUMMY)
+    会话->>执行器: createActuator(DUMMY)
+    会话->>闭环: new EngagementLoop(model, actuator, selector, tracker)
+    会话->>消费者: new EngagementFrameConsumer(loop)
+    会话->>会话: addFrameConsumer(consumer)
+
+    rect rgb(240, 255, 240)
+        note right of 管线: 采集循环（每帧）
+    end
+    loop 每一帧
+        管线->>设备: waitForFrames() / 回调
+        设备-->>管线: 原始厂商帧
+        管线->>管线: 转换为 DynalgoFrameSet（深拷贝）
+        管线-->>会话: videoCallback(frameSet)
+
+        par 录制路径
+            会话->>编码器: encode(frameSet.color, frameSet.depth, ...)
+            编码器-->>写入器: H.264 数据包
+            写入器->>写入器: 写入 .h264 文件
+        and 预览路径
+            会话->>预览: render(frameSet)
+        and 闭环路径（可选）
+            会话->>消费者: consume(frameSet)
+            消费者->>闭环: onFrame(frameSet)
+            闭环->>模型: infer(frameSet.color)
+            模型-->>闭环: vector<DynalgoDetectionResult>
+            闭环->>选择器: pickTarget(detections, strategy)
+            选择器-->>闭环: optional<DynalgoDetectionResult>
+            alt 发现目标
+                闭环->>跟踪器: update(detection, depthFrame, intr, scale)
+                跟踪器->>跟踪器: 卡尔曼预测/更新
+                跟踪器-->>闭环: hasFix(), lastX/Y/Z()
+                闭环->>闭环: 状态机(IDLE→LOCKING→TRACKING→FIRING)
+                alt 状态 == FIRING
+                    闭环->>执行器: aimAt(X, Y, Z)
+                    闭环->>执行器: fire(durationMs)
+                end
+            else 未发现目标
+                闭环->>闭环: 状态机(TRACKING→LOST→IDLE)
+            end
+        end
+    end
+
+    rect rgb(255, 240, 248)
+        note right of CLI: 关闭（Ctrl+C / SIGTERM）
+    end
+    用户->>CLI: SIGINT / SIGTERM
+    CLI->>会话: stop()
+    会话->>消费者: stopTask()
+    会话->>管线: stop()
+    管线->>设备: 停止流
+    会话->>编码器: flush()
+    会话->>写入器: 关闭文件
+    会话->>执行器: close()
+    会话->>模型: (清理)
+    CLI->>用户: "All recordings saved to: <dir>"
+```
+
+> **注意**：仅当同时提供 `--engage-model` 和 `--engage-actuator` 时，闭环路径才会激活。未提供这些参数时，`FrameConsumer` 链为空，采集会话行为与基线版本完全一致（零开销）。
+
 ## 构建
 
 ### 前置依赖

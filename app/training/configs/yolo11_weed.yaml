@@ -1,0 +1,43 @@
+# YOLOv11-seg Weed Detection Config
+# For instance segmentation of weeds vs crops
+# Use with: python train_yolo.py --data configs/yolo11_weed.yaml --model yolo11n-seg.pt
+
+path: /data/weed_dataset
+train: images/train
+val: images/val
+test: images/test
+
+nc: 2
+names:
+  0: weed
+  1: crop
+
+# Instance segmentation specific settings
+hyp:
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+  pose: 12.0
+  kobj: 1.0
+  label_smoothing: 0.0
+  nbs: 64
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 10.0       # rotation for field variability
+  translate: 0.1
+  scale: 0.5
+  shear: 2.0
+  perspective: 0.0001
+  flipud: 0.1
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.1
+  copy_paste: 0.3     # higher copy-paste for segmentation

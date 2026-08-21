@@ -1,0 +1,45 @@
+# YOLOv11 Mosquito Detection Config
+# For small, fast-moving targets (mosquitoes/flies)
+# Use with: python train_yolo.py --data configs/yolo11_mosquito.yaml
+
+path: /data/mosquito_dataset  # dataset root directory
+train: images/train
+val: images/val
+test: images/test
+
+nc: 3  # number of classes
+names:
+  0: mosquito
+  1: fly
+  2: other_insect
+
+# Training hyperparameters optimized for small objects
+# Small objects need higher resolution and specific augmentations
+hyp:
+  lr0: 0.01            # initial learning rate
+  lrf: 0.01            # final lr fraction
+  momentum: 0.937      # SGD momentum
+  weight_decay: 0.0005 # optimizer weight decay
+  warmup_epochs: 3.0   # warmup epochs
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  box: 7.5             # box loss gain
+  cls: 0.5             # cls loss gain
+  dfl: 1.5             # dfl loss gain
+  pose: 12.0           # pose loss gain
+  kobj: 1.0            # keypoint obj loss gain
+  label_smoothing: 0.0
+  nbs: 64              # nominal batch size
+  hsv_h: 0.015         # image HSV-Hue augmentation
+  hsv_s: 0.7           # image HSV-Saturation augmentation
+  hsv_v: 0.4           # image HSV-Value augmentation
+  degrees: 0.0         # rotation (+/- deg)
+  translate: 0.1       # translation (+/- fraction)
+  scale: 0.5           # scale (+/- gain)
+  shear: 0.0           # shear (+/- deg)
+  perspective: 0.0     # perspective (+/- fraction)
+  flipud: 0.0          # flip up-down (probability)
+  fliplr: 0.5          # flip left-right (probability)
+  mosaic: 1.0          # mosaic (probability)
+  mixup: 0.1           # mixup (probability)
+  copy_paste: 0.1      # copy paste (probability)

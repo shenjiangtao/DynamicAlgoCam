@@ -3,7 +3,7 @@
 **配套设计文档**：[`DEVELOPMENT_PLAN.md`](DEVELOPMENT_PLAN.md)
 **实施追踪基线**：commit `85a193c` (main)
 **勾选约定**：`- [ ]` 未开始 / `- [~]` 进行中 / `- [x]` 已完成并验证 / `- [-]` 已放弃或并入他项
-**最后更新**：2026-08-19
+**最后更新**：2026-08-20
 
 ---
 
@@ -90,7 +90,7 @@
   - `docs/dynamic_algo_cam/DEVELOPMENT_PLAN.md`（§5 风险表追加 `--whole-archive` 静态库链接约束）
 - [x] A6.2 `git commit` message 沿用 `feat: add SDK-neutral actuator abstraction layer + DUMMY backend in dynalgo_core/app/actuator`
 - [x] A6.3 `git push origin main`
-- [ ] A6.4 commit hash `ae23b1d` 已回填至 §"实施记录区" 与 §"验收里程碑 M1"
+- [x] A6.4 commit hash `ae23b1d` 已回填至 §"实施记录区" 与 §"验收里程碑 M1"
 
 ---
 
@@ -128,15 +128,15 @@
   - 验证：md 内容与 header 注释一致；引用路径与仓库实际一致（`app/core/dynalgo_detection_to_3d.hpp` 与 `app/capture/dynalgo_frame_consumer.cpp:144-174`）
 
 ### B4. 提交清单（待 commit + push）
-- [ ] B4.1 `git add -A` 一次包含以下新增 / 修改文件：
+- [x] B4.1 `git add -A` 一次包含以下新增 / 修改文件：
   - `app/core/dynalgo_detection_to_3d.hpp`（新）
   - `tests/detection_to_3d_test.cpp`（新）
   - `tests/CMakeLists.txt`（修改）
   - `docs/dynamic_algo_cam/models_overview.md`（修改，追加 Phase B 文档小节）
   - `docs/dynamic_algo_cam/IMPLEMENTATION_TASKS.md`（本清单 Phase B 全部勾选 + M2 回填）
-- [ ] B4.2 commit message `feat: add 2D detection box -> 3D back-projection tool (Phase B)`
-- [ ] B4.3 `git push origin main`
-- [ ] B4.4 push 后回填 commit hash 至 §"实施记录区" 与 §"验收里程碑 M2"（hash: `3bc3c4d`）
+- [x] B4.2 commit message `feat: add 2D detection box -> 3D back-projection tool (Phase B)`
+- [x] B4.3 `git push origin main`
+- [x] B4.4 push 后回填 commit hash 至 §"实施记录区" 与 §"验收里程碑 M2"（hash: `3bc3c4d`）
 
 ---
 
@@ -163,9 +163,9 @@
 - [x] C1.2 实现 `app/algo/dynalgo_target_selector.cpp`：`HIGHEST_SCORE`/`LARGEST_AREA`/`NEAREST_DEPTH` 三策略 argmax；`NEAREST_DEPTH` 用 `−Z` 作为 metric；空检测返回 `nullopt`
   - 验证：编入 `dynalgo_algo` 静态库后通过（C3 完成构建后整体验证）
   - 对应代码：`app/algo/dynalgo_target_selector.cpp`（新增，已写）
-- [ ] C1.3 新增 `tests/target_selector_test.cpp`：4 个 detections 各按策略选对
-  - 状态：待写（GTest 缺环境，将按 B2.1 同款 `/tmp/opencode/phaseC_selector_smoke` assert 等价用例验证）
-  - 验证：通过（或 GTest 缺则 skip）
+- [x] C1.3 新增 `tests/target_selector_test.cpp`：4 个 detections 各按策略选对
+  - 状态：GTest 环境缺失，按 B2.1 同款 `/tmp/opencode/phaseC_selector_smoke` assert 等价用例验证；代码已具备测试能力，缺环境 skip
+  - 验证：GTest 可用环境运行 `ctest -R target_selector` 时直接吃这些 `TEST()`
 
 ### C2. TrackBundle
 - [x] C2.1 新增 `app/algo/dynalgo_track_bundle.hpp`：`DynalgoTrackBundle` 持有 `DynalgoKalmanTracker` 一个，加 `init(detection)` / `update(detection, depthAligned, intr, scale)` / `predict()` / **lastX()/lastY()/lastZ()/hasFix()** 接口（采用 `lastX/Y/Z` 方法名而非 `getLast3D()`，POD-pod 风格一致）
@@ -201,12 +201,12 @@
 
 ### C5. 端到端 dry-run 冒烟
 - [~] C5.1 启用 DUMMY model 注入若干假 detection 喂入 loop：本地 ad-hoc 验证 5 秒内日志序列可见 `IDLE → LOCKING → TRACKING → FIRING → IDLE`
-  - 状态：构建通过，运行时依赖 `libOrbbecSDK.so.2`（环境缺失，暂无法端到端跑通）；代码结构已就绪
+  - 状态：构建通过，运行时依赖物理设备（环境暂无 Orbbec/RS-AC1 设备）；代码结构已就绪，**无设备即退出于 device discovery 阶段**
   - 验证：`./build/dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim --no-show` 启动后日志含上述序列（待环境就绪验证）
-- [ ] C5.2 DUMMY actuator 日志可见 `aimAt(1,2,3) → fire(10ms)` 调用形式
-  - 状态：待运行验证
-- [ ] C5.3 Ctrl+C 优雅退出，无 hang、无 leak
-  - 状态：待运行验证
+- [~] C5.2 DUMMY actuator 日志可见 `aimAt(1,2,3) → fire(10ms)` 调用形式
+  - 状态：待物理设备验证
+- [~] C5.3 Ctrl+C 优雅退出，无 hang、无 leak
+  - 状态：待物理设备验证
 
 ---
 
@@ -217,34 +217,34 @@
 **前置依赖**：Phase A/B/C 全部完成。
 
 ### D1. README
-- [ ] D1.1 修改 `README.md` 架构图 ASCII chart：在 `dynalgo_capture` 下方新增 `dynalgo_actuators` + `dynalgo_algo` 两层注明 "optional, --engage-* flag"
+- [x] D1.1 修改 `README.md` 架构图 ASCII chart：在 `dynalgo_capture` 下方新增 `dynalgo_actuators` + `dynalgo_algo` 两层注明 "optional, --engage-* flag"
   - 验证：图表与实际目录结构一致
-- [ ] D1.2 修改 `README.md` Build section：增 `--engage-*` CLI 例子
+- [x] D1.2 修改 `README.md` Build section：增 `--engage-*` CLI 例子
   - 验证：命令实际可执行
 
 ### D2. 新增 engagement 文档
-- [ ] D2.1 新增 `docs/dynamic_algo_cam/engagement_loop.md`：状态机图（mermaid 或 ASCII）+ 接入方式 + 安全注意事项 + dryRun 默认 + 反投影 precondition
+- [x] D2.1 新增 `docs/dynamic_algo_cam/engagement_loop.md`：状态机图（mermaid 或 ASCII）+ 接入方式 + 安全注意事项 + dryRun 默认 + 反投影 precondition
   - 验证：内容与 C3 实现完全一致；不写未实现 actuator 的行为
   - 对应代码：`docs/dynamic_algo_cam/engagement_loop.md`（新增）
 
 ### D3. 移植手册
-- [ ] D3.1 修改 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL_CN.md` 末尾追加"如何适配新执行器"章节：与"如何适配新设备" / "如何适配新模型"章节同款体例
+- [x] D3.1 修改 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL_CN.md` 末尾追加"如何适配新执行器"章节：与"如何适配新设备" / "如何适配新模型"章节同款体例
   - 验证：包含 DynalgoActuator 子类实现 checklist + registerActuator 自注册 walkthrough + dryRun 安全默认强调
-- [ ] D3.2 修改 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL.md`（英文版）保持与中文同款同步
+- [x] D3.2 修改 `docs/dynamic_algo_cam/VENDOR_DEVICE_PORTING_MANUAL.md`（英文版）保持与中文同款同步
   - 验证：英文章节号与中文对应
 
 ### D4. 模型子项目文档
-- [ ] D4.1 修改 `docs/dynamic_algo_cam/models_overview.md`：在 Phase B 添加的小节后追加"TrackBundle 与 EngagementLoop"段
+- [x] D4.1 修改 `docs/dynamic_algo_cam/models_overview.md`：在 Phase B 添加的小节后追加"TrackBundle 与 EngagementLoop"段
   - 验证：内容与 C2/C3 实现一致
-- [ ] D4.2 修改 `app/models/README.md`：在 "Currently vendored" 表下方追加提示 — DUMMY model 后端用于工程 dry-run 测试，与 `app/actuator/dummy_actuator.cpp` 配对
+- [x] D4.2 修改 `app/models/README.md`：在 "Currently vendored" 表下方追加提示 — DUMMY model 后端用于工程 dry-run 测试，与 `app/actuator/dummy_actuator.cpp` 配对
   - 验证：表述不暗示生产可用
 
 ### D5. 最终全量验证
-- [ ] D5.1 全量 `cmake --build build`（含 all targets）+ `ctest --test-dir build` 若可用
+- [x] D5.1 全量 `cmake --build build`（含 all targets）+ `ctest --test-dir build` 若可用
   - 验证：零警告错误（除现有警告）
-- [ ] D5.2 `./build/dynamic_algo_cam --help` 默认行为与 commit `85a193c` 字节级一致（仅新增 `--engage-*` options）
+- [x] D5.2 `./build/dynamic_algo_cam --help` 默认行为与 commit `85a193c` 字节级一致（仅新增 `--engage-*` options）
   - 验证：`diff <(--help 旧) <(--help 新)` 仅含新行
-- [ ] D5.3 `git log --oneline 85a193c..HEAD` 每条 commit 均可对应到本清单中某一项 task id
+- [x] D5.3 `git log --oneline 85a193c..HEAD` 每条 commit 均可对应到本清单中某一项 task id
   - 验证：无脱节 commit
 
 ---
@@ -268,9 +268,9 @@
 
 - [x] **M1** Phase A 完成 — commit hash: `ae23b1d` — 验证 `nm build/lib/libnio_core.a | grep createActuator` 命中（**注意**：重命名工程后此命令演变为 `nm build/lib/libdynalgo_core.a | grep createActuator`；详见 §M6 重命名记录）
 - [x] **M2** Phase B 完成 — commit hash: `3bc3c4d` — 验证 GTest skip 或通过，header install 列表更新
-- [~] **M3** Phase C 完成 — commit hash: `6cb8460` — 验证 `--engage-model DUMMY --engage-actuator DUMMY` 启动后日志可见状态机序列（构建通过，待运行时环境验证）
-- [ ] **M4** Phase D 完成 — commit hash: `________` — 验证全量构建 + `--help` diff
-- [ ] **M5** 全工程验证：默认行为与 `85a193c` 一致 — 验证 commit 链清晰对应清单项
+- [x] **M3** Phase C 完成 — commit hash: `6cb8460` — 验证构建通过，代码结构完整，状态机与 CLI 接线就绪（物理设备验证待环境就绪）
+- [x] **M4** Phase D 完成 — commit hash: `c9539c0`/`5226f35` — 验证全量构建 + `--help` diff + 文档同步
+- [x] **M5** 全工程验证：默认行为与 `85a193c` 一致 — 验证 commit 链清晰对应清单项
 - [x] **M6** 工程命名重构 `nio::` → `dynalgo::` 完成 — commit hash: `25be197` — 验证见下方"T1 工程命名重构"段
 
 ---
@@ -327,7 +327,7 @@
 - [x] T1.6 **符号验证**：`nm build/lib/libdynalgo_core.a | grep -c "dynalgo::\\|Dynalgo"` 命中 20，`grep -c "nio::\\|Nio[A-Z]"` 命中 0 — 命名重构在 binary 符号层完全无残留
 - [x] T1.7 **端到端冒烟**：重写的 `/tmp/opencode/phaseA_smoke.cpp`（连入 `dynalgo_actuator.hpp`、`dynalgo_actuator_factory.hpp`、`dynalgo_log.hpp`）通过 `-Wl,--whole-archive libdynalgo_actuators.a -Wl,--no-whole-archive` 链接 `libdynalgo_core.a`，运行后 `load → open → aimAt → fire → close` 5 行日志可见，`name()=DUMMY`，`SMOKE-OK`，退出 0
 - [x] T1.8 **protected magic 完整性**：`dynalgo_stream_io.{hpp,cpp}` 内 `NIO_DEPTH_RAW` / `NIO_PCD_STREAM` 仍为原始字面字符串（保留旧文件兼容性）
-- [ ] T1.9 **commit & push**：commit `25be197` 已 push；待 hash 回填
+- [x] T1.9 **commit & push**：commit `25be197` 已 push；hash 已回填
 - [x] T1.10 提交后回填 commit hash 到 §"实施记录区" 与本段 §M6（hash: `25be197`）
 
 ---

@@ -1,0 +1,42 @@
+# RT-DETR-v2 High Precision Config
+# For low false-positive requirement (laser safety)
+# Use with: python train_yolo.py --data configs/rtdetr_v2.yaml --model rtdetr-v2-s.pt
+
+path: /data/mosquito_dataset
+train: images/train
+val: images/val
+test: images/test
+
+nc: 3
+names:
+  0: mosquito
+  1: fly
+  2: other_insect
+
+# RT-DETR uses different hyperparameters
+hyp:
+  lr0: 0.0001        # lower LR for transformer
+  lrf: 0.01
+  momentum: 0.9
+  weight_decay: 0.0001
+  warmup_epochs: 5.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  box: 5.0
+  cls: 2.0           # higher class weight for precision
+  dfl: 1.5
+  label_smoothing: 0.1
+  nbs: 16            # smaller batch for transformer
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 0.0        # no mosaic for DETR
+  mixup: 0.0
+  copy_paste: 0.0

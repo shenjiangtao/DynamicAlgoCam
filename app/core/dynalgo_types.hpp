@@ -290,6 +290,15 @@ struct DynalgoIntrinsic
 };
 
 // [结构体说明 / Struct Description]
+// 中文：相机外参（旋转矩阵+平移向量，左目到右目）
+// English: Camera extrinsic parameters (rotation + translation, left to right)
+struct DynalgoExtrinsic
+{
+    float r[9] = {1,0,0, 0,1,0, 0,0,1}; // 3x3 rotation matrix (row-major)
+    float t[3] = {0,0,0};                // translation vector (meters)
+};
+
+// [结构体说明 / Struct Description]
 // 中文：流配置文件，包含分辨率、帧率和格式
 // English: Stream profile — resolution + fps + format for one sensor stream
 struct DynalgoStreamProfile
