@@ -767,7 +767,261 @@ dynamic_algo_cam.cpp
 
 ---
 
-## 10. 待解决 / 开放项
+## 10. 模型后端移植指南
+
+> 模型后端（Model Backend）是感知-定位-估计-控制闭环的推理引擎。Phase C 引入 `DynalgoModelBackend` 抽象基类与自注册工厂，Phase C 将其接入 EngagementLoop。新增模型后端只需实现抽象接口并在静态初始化时调用 `registerModelBackend()`。
+
+### 10.1 架构位置
+
+```
+app/
+├── core/
+│   ├── dynalgo_model.hpp           # DynalgoModelType, DynalgoModelConfig, DynalgoDetectionResult, DynalgoModelBackend 抽象
+│   ├── dynalgo_model_factory.hpp   # createModelBackend(), registerModelBackend()
+│   └── dynalgo_model_factory.cpp   # 实现
+├── model_backends/
+│   ├── common/
+│   │   ├── preprocessing.hpp/cpp   # Letterbox, NMS, 后处理（共享）
+│   │   └── CMakeLists.txt
+│   ├── tensorrt/
+│   │   ├── trt_backend.hpp/cpp     # TensorRT C++ 后端
+│   │   └── CMakeLists.txt
+│   ├── onnxruntime/
+│   │   ├── ort_backend.hpp/cpp     # ONNX Runtime C++ 后端
+│   │   └── CMakeLists.txt
+│   ├── rknn/
+│   │   ├── rknn_backend.hpp/cpp    # RKNN Runtime C++ 后端
+│   │   └── CMakeLists.txt
+│   └── CMakeLists.txt              # Meta-library with ENABLE_* options
+├── algo/
+│   └── dynalgo_engagement_loop.cpp # 调用 model->infer(frame, detections)
+└── dynamic_algo_cam/
+    └── dynamic_algo_cam.cpp        # CLI 接线 --engage-model
+```
+
+### 10.2 抽象接口 (app/core/dynalgo_model.hpp)
+
+```cpp
+enum class DynalgoModelType {
+    NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT
+};
+
+struct DynalgoModelConfig {
+    std::string modelPath;       // 权重 / 模型文件或模型名
+    std::string deviceHint;      // 如 "cpu", "gpu", "cuda:0", 空=默认
+    float confThreshold = 0.25f; // 最小置信度
+    float iouThreshold = 0.45f;  // NMS IoU 阈值
+};
+
+class DynalgoModelBackend {
+public:
+    virtual ~DynalgoModelBackend() = default;
+
+    // 加载权重/初始化后端。成功返回 true。必须在 infer() 前调用一次。
+    virtual bool load(const DynalgoModelConfig& cfg) = 0;
+
+    // 对单帧运行推理。结果追加到 `out`。线程安全实现应支持多线程调用。
+    virtual bool infer(const DynalgoFrame& frame, std::vector<DynalgoDetectionResult>& out) = 0;
+
+    // 返回人类可读的后端名称
+    virtual const char* name() const = 0;
+};
+```
+
+### 10.3 TensorRT 后端 (app/model_backends/tensorrt/)
+
+TensorRT 后端 (`trt_backend.hpp/cpp`) 为 NVIDIA GPU 提供高性能推理，完整支持 TensorRT 特性。
+
+#### 配置 (TrtBackendConfig)
+
+```cpp
+struct TrtBackendConfig {
+    std::string modelPath;           // .engine 或 .onnx 文件路径
+    bool fp16 = true;                // 启用 FP16 模式
+    bool int8 = false;               // 启用 INT8 模式（需标定）
+    std::string calibrationCache;    // INT8 标定缓存文件路径
+    std::string timingCache;         // 时序缓存文件路径
+    int maxBatchSize = 1;            // 最大批大小
+    size_t workspaceSize = 1 << 30;  // 工作空间大小（默认 1GB）
+    int deviceId = 0;                // GPU 设备 ID
+    bool enableDynamicBatch = true;  // 启用动态批优化配置文件
+    cudaStream_t externalStream = 0; // 外部 CUDA 流用于异步管线
+};
+```
+
+#### 核心特性
+
+| 特性 | 说明 |
+|------|------|
+| **FP16** | `config.fp16 = true` 启用 FP16（需 GPU 支持 FP16） |
+| **INT8 量化** | `config.int8 = true` + `calibrationCache` + 标定器 |
+| **动态批** | `config.enableDynamicBatch = true` + `maxBatchSize` 创建优化配置文件 |
+| **时序缓存** | `config.timingCache` 路径用于内核选择时序缓存（加载/保存） |
+| **标定缓存** | `config.calibrationCache` 路径用于 INT8 标定缓存（加载/保存） |
+| **异步管线** | `config.externalStream` 或 `setCUDAStream()` 集成外部 CUDA 流 |
+| **引擎序列化** | `serializeEngine(path)` 导出构建好的引擎用于部署 |
+
+#### 从 ONNX 构建引擎
+
+```cpp
+auto backend = createModelBackend(DynalgoModelType::TENSORRT);
+auto* trt = dynamic_cast<TrtBackend*>(backend.get());
+
+TrtBackendConfig config;
+config.modelPath = "model.onnx";
+config.fp16 = true;
+config.int8 = false;
+config.maxBatchSize = 4;
+config.workspaceSize = 1 << 30; // 1GB
+config.timingCache = "model_timing.cache";
+config.enableDynamicBatch = true;
+config.externalStream = myCudaStream; // 异步管线用
+
+if (!trt->buildEngineFromOnnx(config)) {
+    // 处理错误
+}
+```
+
+#### INT8 量化
+
+```cpp
+// 实现自定义标定器
+class MyCalibrator : public IInt8CalibratorProvider {
+    bool getBatch(void* bindings[], const char* names[], int nbBindings) override {
+        // 用标定数据填充 bindings
+        return true; // 或完成时返回 false
+    }
+    // ... 实现其他方法
+};
+
+MyCalibrator calibrator;
+TrtBackendConfig config;
+config.modelPath = "model.onnx";
+config.int8 = true;
+config.calibrationCache = "model_int8.cache";
+config.maxBatchSize = 4;
+
+if (!trt->buildEngineWithCalibration(config, &calibrator)) {
+    // 处理错误
+}
+```
+
+#### 异步管线集成
+
+```cpp
+// 创建用于异步操作的 CUDA 流
+cudaStream_t myStream;
+cudaStreamCreate(&myStream);
+
+// 配置后端
+trt->setCUDAStream(myStream);
+
+// 推理循环
+while (running) {
+    // 预处理（主机或单独流）
+    // ...
+
+    // 使用外部流推理
+    trt->infer(frame, detections); // 内部使用外部流
+
+    // 仅在需要结果时同步
+    cudaStreamSynchronize(myStream);
+    
+    // 处理检测结果...
+}
+```
+
+#### 自注册模式
+
+```cpp
+// 在 trt_backend.cpp
+std::unique_ptr<DynalgoModelBackend> createTrtBackend() {
+    return std::make_unique<TrtBackend>();
+}
+
+// 静态注册（文件末尾匿名命名空间）
+namespace {
+struct TrtRegistrar {
+    TrtRegistrar() {
+        dynalgo::registerModelBackend(
+            dynalgo::DynalgoModelType::TENSORRT,
+            []() { return std::make_unique<TrtBackend>(); });
+    }
+} g_trtRegistrar;
+}
+```
+
+### 10.4 CMake 配置
+
+`app/model_backends/CMakeLists.txt`：
+
+```cmake
+option(ENABLE_TENSORRT "Enable TensorRT backend" OFF)
+if(ENABLE_TENSORRT)
+    find_package(CUDA REQUIRED)
+    find_package(TensorRT REQUIRED)
+    add_subdirectory(tensorrt)
+endif()
+
+option(ENABLE_ONNXRUNTIME "Enable ONNX Runtime backend" OFF)
+if(ENABLE_ONNXRUNTIME)
+    find_package(ONNXRuntime REQUIRED)
+    add_subdirectory(onnxruntime)
+endif()
+
+option(ENABLE_RKNN "Enable RKNN backend" OFF)
+if(ENABLE_RKNN)
+    add_subdirectory(rknn)
+endif()
+
+# Meta-library
+if(ENABLE_TENSORRT OR ENABLE_ONNXRUNTIME OR ENABLE_RKNN)
+    add_library(dynalgo_model_backends STATIC model_backends_dummy.cpp)
+    target_link_libraries(dynalgo_model_backends PUBLIC dynalgo::core dynalgo::model_backends_common)
+    if(ENABLE_TENSORRT)
+        target_link_libraries(dynalgo_model_backends PUBLIC dynalgo::model_backend_trt)
+    endif()
+    # ...
+endif()
+```
+
+构建：
+
+```bash
+cmake -B build -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+cmake --build build -j$(nproc)
+```
+
+### 10.5 CLI 接线 (app/dynamic_algo_cam/dynamic_algo_cam.cpp)
+
+```cpp
+// 解析 --engage-model
+std::string engageModel = config.engageModel; // "DUMMY", "ONNXRUNTIME", "TENSORRT"
+DynalgoModelType modelType = DynalgoModelType::NONE;
+if (engageModel == "TENSORRT") modelType = DynalgoModelType::TENSORRT;
+else if (engageModel == "ONNXRUNTIME") modelType = DynalgoModelType::ONNXRUNTIME;
+// ...
+
+auto model = createModelBackend(modelType);
+if (model) {
+    DynalgoModelConfig modelCfg;
+    modelCfg.modelPath = config.engageModelPath;
+    modelCfg.deviceHint = "cuda:0";
+    modelCfg.confThreshold = 0.25f;
+    model->load(modelCfg);
+    // 传给 EngagementLoop 构造
+}
+```
+
+用法：
+
+```bash
+./dynamic_algo_cam --engage-model TENSORRT --engage-actuator DUMMY --engage-model-path model.engine --no-show
+```
+
+---
+
+## 11. 待解决 / 开放项
 
 1. **`DynalgoFrameSet::nativeFrameSet`** 是过渡性设计。目标：当所有 D2C 对齐可基于 `DynalgoFrame::data` 工作时移除。
 2. **`DynalgoPipeline::enableStream(DynalgoStreamConfig)`** 对 Orbbec 当前为 no-op（流在 `setupPipeline()` 内启用）。未来重构应使流启停完全通过此 API 配置。

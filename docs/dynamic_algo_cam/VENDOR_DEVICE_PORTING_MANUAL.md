@@ -750,7 +750,261 @@ dynamic_algo_cam.cpp
 
 ---
 
-## 10. Unresolved / Open Items
+## 10. Model Backend Porting Guide
+
+> Model backends are the inference engines for the perceive–locate–estimate–control loop. Phase C introduced the `DynalgoModelBackend` abstract base class with a self-registration factory; Phase C wires it into the EngagementLoop. Adding a new model backend only requires implementing the abstract interface and calling `registerModelBackend()` at static init.
+
+### 10.1 Architecture Location
+
+```
+app/
+├── core/
+│   ├── dynalgo_model.hpp           # DynalgoModelType, DynalgoModelConfig, DynalgoDetectionResult, DynalgoModelBackend abstract
+│   ├── dynalgo_model_factory.hpp   # createModelBackend(), registerModelBackend()
+│   └── dynalgo_model_factory.cpp   # implementation
+├── model_backends/
+│   ├── common/
+│   │   ├── preprocessing.hpp/cpp   # Letterbox, NMS, postprocess (shared)
+│   │   └── CMakeLists.txt
+│   ├── tensorrt/
+│   │   ├── trt_backend.hpp/cpp     # TensorRT C++ backend
+│   │   └── CMakeLists.txt
+│   ├── onnxruntime/
+│   │   ├── ort_backend.hpp/cpp     # ONNX Runtime C++ backend
+│   │   └── CMakeLists.txt
+│   ├── rknn/
+│   │   ├── rknn_backend.hpp/cpp    # RKNN Runtime C++ backend
+│   │   └── CMakeLists.txt
+│   └── CMakeLists.txt              # Meta-library with ENABLE_* options
+├── algo/
+│   └── dynalgo_engagement_loop.cpp # calls model->infer(frame, detections)
+└── dynamic_algo_cam/
+    └── dynamic_algo_cam.cpp        # CLI wiring --engage-model
+```
+
+### 10.2 Abstract Interface (app/core/dynalgo_model.hpp)
+
+```cpp
+enum class DynalgoModelType {
+    NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT
+};
+
+struct DynalgoModelConfig {
+    std::string modelPath;       // weights / model file or model name
+    std::string deviceHint;      // e.g. "cpu", "gpu", "cuda:0", empty = default
+    float confThreshold = 0.25f; // minimum score to keep a detection
+    float iouThreshold = 0.45f;  // NMS IoU threshold (when applicable)
+};
+
+class DynalgoModelBackend {
+public:
+    virtual ~DynalgoModelBackend() = default;
+
+    // Load weights / initialise backend. Returns true on success. Must be called once before infer().
+    virtual bool load(const DynalgoModelConfig& cfg) = 0;
+
+    // Run inference on one frame. Results appended to `out`. Thread-safe implementations should support multi-threaded calls.
+    virtual bool infer(const DynalgoFrame& frame, std::vector<DynalgoDetectionResult>& out) = 0;
+
+    // Return human-readable backend name
+    virtual const char* name() const = 0;
+};
+```
+
+### 10.3 TensorRT Backend (app/model_backends/tensorrt/)
+
+The TensorRT backend (`trt_backend.hpp/cpp`) provides high-performance inference on NVIDIA GPUs with full TensorRT feature support.
+
+#### Configuration (TrtBackendConfig)
+
+```cpp
+struct TrtBackendConfig {
+    std::string modelPath;           // Path to .engine or .onnx file
+    bool fp16 = true;                // Enable FP16 mode
+    bool int8 = false;               // Enable INT8 mode (requires calibration)
+    std::string calibrationCache;    // Path to calibration cache file
+    std::string timingCache;         // Path to timing cache file
+    int maxBatchSize = 1;            // Maximum batch size
+    size_t workspaceSize = 1 << 30;  // Workspace size (1GB default)
+    int deviceId = 0;                // GPU device ID
+    bool enableDynamicBatch = true;  // Enable dynamic batch optimization profile
+    cudaStream_t externalStream = 0; // External CUDA stream for async pipeline
+};
+```
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **FP16** | `config.fp16 = true` enables FP16 mode (requires GPU with FP16 support) |
+| **INT8 Quantization** | `config.int8 = true` + `calibrationCache` + calibrator provider for INT8 |
+| **Dynamic Batch** | `config.enableDynamicBatch = true` + `maxBatchSize` creates optimization profiles |
+| **Timing Cache** | `config.timingCache` path for kernel selection timing cache (load/save) |
+| **Calibration Cache** | `config.calibrationCache` path for INT8 calibration cache (load/save) |
+| **Async Pipeline** | `config.externalStream` or `setCUDAStream()` for async CUDA stream integration |
+| **Engine Serialization** | `serializeEngine(path)` exports built engine for deployment |
+
+#### Building Engine from ONNX
+
+```cpp
+auto backend = createModelBackend(DynalgoModelType::TENSORRT);
+auto* trt = dynamic_cast<TrtBackend*>(backend.get());
+
+TrtBackendConfig config;
+config.modelPath = "model.onnx";
+config.fp16 = true;
+config.int8 = false;
+config.maxBatchSize = 4;
+config.workspaceSize = 1 << 30; // 1GB
+config.timingCache = "model_timing.cache";
+config.enableDynamicBatch = true;
+config.externalStream = myCudaStream; // For async pipeline
+
+if (!trt->buildEngineFromOnnx(config)) {
+    // Handle error
+}
+```
+
+#### INT8 Quantization
+
+```cpp
+// Implement custom calibrator
+class MyCalibrator : public IInt8CalibratorProvider {
+    bool getBatch(void* bindings[], const char* names[], int nbBindings) override {
+        // Fill bindings with calibration data
+        return true; // or false when done
+    }
+    // ... implement other methods
+};
+
+MyCalibrator calibrator;
+TrtBackendConfig config;
+config.modelPath = "model.onnx";
+config.int8 = true;
+config.calibrationCache = "model_int8.cache";
+config.maxBatchSize = 4;
+
+if (!trt->buildEngineWithCalibration(config, &calibrator)) {
+    // Handle error
+}
+```
+
+#### Async Pipeline Integration
+
+```cpp
+// Create CUDA stream for async operations
+cudaStream_t myStream;
+cudaStreamCreate(&myStream);
+
+// Configure backend
+trt->setCUDAStream(myStream);
+
+// In inference loop
+while (running) {
+    // Preprocess on host or separate stream
+    // ...
+
+    // Infer with external stream
+    trt->infer(frame, detections); // Uses external stream internally
+
+    // Synchronize only when results needed
+    cudaStreamSynchronize(myStream);
+    
+    // Process detections...
+}
+```
+
+#### Self-Registration Pattern
+
+```cpp
+// In trt_backend.cpp
+std::unique_ptr<DynalgoModelBackend> createTrtBackend() {
+    return std::make_unique<TrtBackend>();
+}
+
+// Static registration (in anonymous namespace at file end)
+namespace {
+struct TrtRegistrar {
+    TrtRegistrar() {
+        dynalgo::registerModelBackend(
+            dynalgo::DynalgoModelType::TENSORRT,
+            []() { return std::make_unique<TrtBackend>(); });
+    }
+} g_trtRegistrar;
+}
+```
+
+### 10.4 CMake Configuration
+
+`app/model_backends/CMakeLists.txt`:
+
+```cmake
+option(ENABLE_TENSORRT "Enable TensorRT backend" OFF)
+if(ENABLE_TENSORRT)
+    find_package(CUDA REQUIRED)
+    find_package(TensorRT REQUIRED)
+    add_subdirectory(tensorrt)
+endif()
+
+option(ENABLE_ONNXRUNTIME "Enable ONNX Runtime backend" OFF)
+if(ENABLE_ONNXRUNTIME)
+    find_package(ONNXRuntime REQUIRED)
+    add_subdirectory(onnxruntime)
+endif()
+
+option(ENABLE_RKNN "Enable RKNN backend" OFF)
+if(ENABLE_RKNN)
+    add_subdirectory(rknn)
+endif()
+
+# Meta-library
+if(ENABLE_TENSORRT OR ENABLE_ONNXRUNTIME OR ENABLE_RKNN)
+    add_library(dynalgo_model_backends STATIC model_backends_dummy.cpp)
+    target_link_libraries(dynalgo_model_backends PUBLIC dynalgo::core dynalgo::model_backends_common)
+    if(ENABLE_TENSORRT)
+        target_link_libraries(dynalgo_model_backends PUBLIC dynalgo::model_backend_trt)
+    endif()
+    # ...
+endif()
+```
+
+Build with:
+
+```bash
+cmake -B build -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+cmake --build build -j$(nproc)
+```
+
+### 10.5 CLI Wiring (app/dynamic_algo_cam/dynamic_algo_cam.cpp)
+
+```cpp
+// parse --engage-model
+std::string engageModel = config.engageModel; // "DUMMY", "ONNXRUNTIME", "TENSORRT"
+DynalgoModelType modelType = DynalgoModelType::NONE;
+if (engageModel == "TENSORRT") modelType = DynalgoModelType::TENSORRT;
+else if (engageModel == "ONNXRUNTIME") modelType = DynalgoModelType::ONNXRUNTIME;
+// ...
+
+auto model = createModelBackend(modelType);
+if (model) {
+    DynalgoModelConfig modelCfg;
+    modelCfg.modelPath = config.engageModelPath;
+    modelCfg.deviceHint = "cuda:0";
+    modelCfg.confThreshold = 0.25f;
+    model->load(modelCfg);
+    // pass to EngagementLoop constructor
+}
+```
+
+Usage:
+
+```bash
+./dynamic_algo_cam --engage-model TENSORRT --engage-actuator DUMMY --engage-model-path model.engine --no-show
+```
+
+---
+
+## 11. Unresolved / Open Items
 
 1. **`DynalgoFrameSet::nativeFrameSet`** is a transitional escape valve. Goal: remove once all D2C alignment can operate on `DynalgoFrame::data` alone or through a cleaner abstraction.
 2. **`DynalgoPipeline::enableStream(DynalgoStreamConfig)`** is currently a no-op for Orbbec (streams are enabled inside `setupPipeline()`). A future refactor should make stream enable/disable fully configurable through this API.
