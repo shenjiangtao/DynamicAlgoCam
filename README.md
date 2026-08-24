@@ -396,6 +396,18 @@ Options are declared in `app/model_backends/CMakeLists.txt`. These are optional 
 | `ENABLE_ONNXRUNTIME` | OFF | Build ONNX Runtime backend (requires ONNX Runtime SDK) |
 | `ENABLE_RKNN` | OFF | Build RKNN backend (requires Rockchip RKNN SDK) |
 
+### CUDA Acceleration Options
+
+Options are declared in `app/model_backends/common/CMakeLists.txt` and root `CMakeLists.txt`. These enable GPU-accelerated preprocessing and NMS.
+
+| CMake Option | Default | Effect |
+|---|---|---|
+| `ENABLE_CUDA` | OFF | Enable CUDA acceleration for preprocessing and NMS (requires CUDA Toolkit) |
+
+When `ENABLE_CUDA=ON`, the following operations are accelerated on GPU:
+- **Preprocessing**: Letterbox resize + BGR→RGB conversion + normalization + HWC→CHW layout conversion
+- **NMS (Non-Maximum Suppression)**: Parallel IoU computation with shared memory optimization
+
 ### Build Steps
 
 ```bash
@@ -421,6 +433,12 @@ cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_RKNN=ON
 
 # All backends
 cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
+
+# With CUDA acceleration for preprocessing/NMS
+cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+
+# All backends with CUDA acceleration
+cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
 
 cmake --build . -j$(nproc)
 ```

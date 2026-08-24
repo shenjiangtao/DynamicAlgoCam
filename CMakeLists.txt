@@ -25,6 +25,7 @@ set(DYNALGO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 option(ENABLE_ORBBEC "Enable Orbbec device support" ON)
 option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
 option(ENABLE_EVENT_SIM "Enable synthetic event simulator for testing" OFF)
+option(ENABLE_CUDA "Enable CUDA acceleration for preprocessing/NMS" OFF)
 
 # Default to Release if user didn't specify — capture tool should ship
 # optimized. Developers wanting debug symbols pass -DCMAKE_BUILD_TYPE=Debug.

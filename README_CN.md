@@ -404,6 +404,18 @@ sequenceDiagram
 | `ENABLE_ONNXRUNTIME` | OFF | 构建 ONNX Runtime 后端（需要 ONNX Runtime SDK） |
 | `ENABLE_RKNN` | OFF | 构建 RKNN 后端（需要 Rockchip RKNN SDK） |
 
+### CUDA 加速选项
+
+选项在 `app/model_backends/common/CMakeLists.txt` 和根 `CMakeLists.txt` 中声明。这些启用 GPU 加速的预处理和 NMS。
+
+| CMake 选项 | 默认值 | 效果 |
+|---|---|---|
+| `ENABLE_CUDA` | OFF | 启用 CUDA 加速预处理和 NMS（需要 CUDA Toolkit） |
+
+当 `ENABLE_CUDA=ON` 时，以下操作在 GPU 上加速：
+- **预处理**：Letterbox 缩放 + BGR→RGB 转换 + 归一化 + HWC→CHW 布局转换
+- **NMS（非极大值抑制）**：并行 IoU 计算，共享内存优化
+
 ### 构建步骤
 
 ```bash
@@ -429,6 +441,12 @@ cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_RKNN=ON
 
 # 启用所有后端
 cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
+
+# 启用 CUDA 加速预处理/NMS
+cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+
+# 启用所有后端 + CUDA 加速
+cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
 
 cmake --build . -j$(nproc)
 ```
