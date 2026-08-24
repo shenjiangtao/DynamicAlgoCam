@@ -385,6 +385,17 @@ Options are declared in the **root** `CMakeLists.txt`. At least one must be ON.
 | `ENABLE_ORBBEC` | ON | Build OrbbecSDK adapter, link `ob::OrbbecSDK` |
 | `ENABLE_RS_AC1` | ON | Build rs_driver adapter, link `usb-ac-static` / `uvc-ac-static` |
 
+### Model Backend Options
+
+Options are declared in `app/model_backends/CMakeLists.txt`. These are optional and require corresponding SDKs.
+
+| CMake Option | Default | Effect |
+|---|---|---|
+| `ENABLE_MODEL_BACKENDS` | OFF | Enable model inference backends |
+| `ENABLE_TENSORRT` | OFF | Build TensorRT backend (requires CUDA + TensorRT SDK) |
+| `ENABLE_ONNXRUNTIME` | OFF | Build ONNX Runtime backend (requires ONNX Runtime SDK) |
+| `ENABLE_RKNN` | OFF | Build RKNN backend (requires Rockchip RKNN SDK) |
+
 ### Build Steps
 
 ```bash
@@ -398,6 +409,18 @@ cmake .. -DENABLE_RS_AC1=OFF
 
 # RS-AC1 only
 cmake .. -DENABLE_ORBBEC=OFF
+
+# With TensorRT backend (requires CUDA + TensorRT SDK)
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+
+# With ONNX Runtime backend
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_ONNXRUNTIME=ON
+
+# With RKNN backend (requires Rockchip RKNN SDK)
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_RKNN=ON
+
+# All backends
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
 
 cmake --build . -j$(nproc)
 ```
@@ -441,6 +464,15 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 
 # Dry-run with synthetic events
 ./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim
+
+# Engagement loop with TensorRT backend
+./dynamic_algo_cam --engage-model TENSORRT --engage-actuator DUMMY --engage-model-path model.engine --no-show
+
+# Engagement loop with ONNX Runtime backend
+./dynamic_algo_cam --engage-model ONNXRUNTIME --engage-actuator DUMMY --engage-model-path model.onnx --no-show
+
+# Engagement loop with RKNN backend
+./dynamic_algo_cam --engage-model RKNN --engage-actuator DUMMY --engage-model-path model.rknn --no-show
 ```
 
 ### CLI Parameters
@@ -454,7 +486,7 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 | `--depth-max M` | 5.0 | Max depth for jet colormap (meters) |
 | `--no-fusion` | off | Skip D2C fusion output |
 | `--no-show` | off | Disable SDL preview window |
-| `--engage-model TYPE` | (empty) | Model backend: NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT |
+| `--engage-model TYPE` | (empty) | Model backend: NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT, RKNN |
 | `--engage-actuator TYPE` | (empty) | Actuator backend: NONE, DUMMY, LASER_GENERIC, GIMBAL_GENERIC |
 | `--engage-model-path PATH` | (empty) | Path to model weights (used by non-DUMMY backends) |
 | `--help` | — | Show help |

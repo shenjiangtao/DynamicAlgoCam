@@ -393,6 +393,17 @@ sequenceDiagram
 | `ENABLE_ORBBEC` | ON | 构建 OrbbecSDK 适配器，链接 `ob::OrbbecSDK` |
 | `ENABLE_RS_AC1` | ON | 构建 rs_driver 适配器，链接 `usb-ac-static` / `uvc-ac-static` |
 
+### 模型后端选项
+
+选项在 `app/model_backends/CMakeLists.txt` 中声明。这些是可选的，需要相应的 SDK 支持。
+
+| CMake 选项 | 默认值 | 效果 |
+|---|---|---|
+| `ENABLE_MODEL_BACKENDS` | OFF | 启用模型推理后端 |
+| `ENABLE_TENSORRT` | OFF | 构建 TensorRT 后端（需要 CUDA + TensorRT SDK） |
+| `ENABLE_ONNXRUNTIME` | OFF | 构建 ONNX Runtime 后端（需要 ONNX Runtime SDK） |
+| `ENABLE_RKNN` | OFF | 构建 RKNN 后端（需要 Rockchip RKNN SDK） |
+
 ### 构建步骤
 
 ```bash
@@ -406,6 +417,18 @@ cmake .. -DENABLE_RS_AC1=OFF
 
 # 仅 RS-AC1
 cmake .. -DENABLE_ORBBEC=OFF
+
+# 启用 TensorRT 后端（需要 CUDA + TensorRT SDK）
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
+
+# 启用 ONNX Runtime 后端
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_ONNXRUNTIME=ON
+
+# 启用 RKNN 后端（需要 Rockchip RKNN SDK）
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_RKNN=ON
+
+# 启用所有后端
+cmake .. -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
 
 cmake --build . -j$(nproc)
 ```
@@ -447,6 +470,15 @@ RS-AC1 依赖静态链接 — 运行时无需 `.so`。
 
 # Dry-run 启用合成事件
 ./dynamic_algo_cam --engage-model DUMMY --engage-actuator DUMMY --enable-event-sim
+
+# 启用 TensorRT 后端的闭环
+./dynamic_algo_cam --engage-model TENSORRT --engage-actuator DUMMY --engage-model-path model.engine --no-show
+
+# 启用 ONNX Runtime 后端的闭环
+./dynamic_algo_cam --engage-model ONNXRUNTIME --engage-actuator DUMMY --engage-model-path model.onnx --no-show
+
+# 启用 RKNN 后端的闭环
+./dynamic_algo_cam --engage-model RKNN --engage-actuator DUMMY --engage-model-path model.rknn --no-show
 ```
 
 ### CLI 参数
@@ -460,7 +492,7 @@ RS-AC1 依赖静态链接 — 运行时无需 `.so`。
 | `--depth-max M` | 5.0 | jet colormap 最大深度（米） |
 | `--no-fusion` | 关 | 跳过 D2C 融合输出 |
 | `--no-show` | 关 | 禁用 SDL 预览窗口 |
-| `--engage-model TYPE` | （空） | 模型后端：NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT |
+| `--engage-model TYPE` | （空） | 模型后端：NONE, DUMMY, YOLOV8_PY, ONNXRUNTIME, TENSORRT, RKNN |
 | `--engage-actuator TYPE` | （空） | 执行器后端：NONE, DUMMY, LASER_GENERIC, GIMBAL_GENERIC |
 | `--engage-model-path PATH` | （空） | 模型权重路径（非 DUMMY 后端使用） |
 | `--help` | — | 显示帮助 |
