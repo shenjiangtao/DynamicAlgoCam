@@ -97,7 +97,7 @@ void mkdirp(const std::string& path) {
 // [全局常量 / Global Constant]
 // 中文：SEI版权信息字符串
 // English: SEI copyright information string
-const char* SEI_COPYRIGHT = "Copyright jiangtao.shen@nio.com";
+const char* SEI_COPYRIGHT = "Copyright shenjiangtao@gmail.com";
 
 // [方法说明 / Method Description]
 // 中文：写入H.264未注册SEI NAL单元，包含16字节UUID前缀和载荷字符串
