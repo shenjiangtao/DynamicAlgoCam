@@ -64,7 +64,7 @@ void DynalgoEngagementLoop::onFrame(const DynalgoFrameSet& frameSet)
                 zMeters.reserve(detections.size());
                 for (const auto& det : detections) {
                     float X, Y, Z;
-                    if (detectionCenterToCamera3D(depthAligned, depthIntr_, depthScale_, 0, det, X, Y, Z))
+                    if (detectionCenterToCamera3D(depthAligned, depthIntr_, depthScale_, 2, det, X, Y, Z))
                         zMeters.push_back(Z);
                     else
                         zMeters.push_back(std::numeric_limits<float>::quiet_NaN());

@@ -32,7 +32,7 @@ void DynalgoTrackBundle::update(const DynalgoDetectionResult& det,
     // window, etc.) keep the previous cached fix so the engagement loop can
     // decide what to do.
     float X, Y, Z;
-    if (detectionCenterToCamera3D(depthAligned, intr, depthScale, /*filterHalf=*/0,
+    if (detectionCenterToCamera3D(depthAligned, intr, depthScale, /*filterHalf=*/2,
                                    smoothed, X, Y, Z)) {
         lastX_ = X; lastY_ = Y; lastZ_ = Z;
         lastHasFix_ = true;

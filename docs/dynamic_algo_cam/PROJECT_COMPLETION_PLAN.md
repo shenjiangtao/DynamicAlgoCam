@@ -139,11 +139,27 @@ cmake --build build -j$(nproc)
 - Added CUDA compilation support with `CUDA_SEPARABLE_COMPILATION`
 - CPU fallback: `preprocessFrame()` and `nmsCPU()` remain available when CUDA disabled
 
-### Sprint 3: Stereo + Fusion (Week 3-4)
-- Implement `StereoRectifier` class in `app/driver/stereo/`
-- Add calibration YAML parser (OpenCV FileStorage)
-- Implement `computeDepthROIMedian()` in `dynalgo_engagement_loop.cpp`
-- Change `filterHalf` default from 0 → 2 (3×3 median)
+### Sprint 3: Stereo + Fusion (Week 3-4) ✅ COMPLETED
+```bash
+# Enable stereo camera support
+cmake -B build -DENABLE_STEREO=ON
+cmake --build build -j$(nproc)
+```
+
+**Code work completed:**
+- Implemented `StereoRectifier` class in `app/driver/stereo/stereo_rectifier.cpp`
+  - Loads stereo calibration from OpenCV YAML/XML (M1, D1, M2, D2, R, T, R1, R2, P1, P2, Q)
+  - Computes rectification maps using `cv::initUndistortRectifyMap`
+  - Performs rectification with `cv::remap`
+  - Implements SGBM stereo matching for disparity/depth computation
+  - Outputs disparity (Y16) and depth (float32) frames
+- Updated `UvcStereoCamera` in `app/driver/stereo/stereo_uvc.cpp`
+  - Loads calibration from YAML file specified in `StereoConfig::calibrationFile`
+  - Uses `StereoRectifier` for rectification in `grab()`
+  - Computes depth using SGBM when `cfg.computeDepth=true`
+- Added OpenCV dependency to stereo CMakeLists.txt
+- Updated engagement loop to use `filterHalf=2` (5×5 median filter) for robust depth estimation
+- Added `calibrationFile` field to `StereoConfig`
 
 ### Sprint 4: 3D Tracking + Actuators (Week 4-5)
 - Extend `ByteTrack::Track` with `z, vz` state

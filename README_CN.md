@@ -416,6 +416,24 @@ sequenceDiagram
 - **预处理**：Letterbox 缩放 + BGR→RGB 转换 + 归一化 + HWC→CHW 布局转换
 - **NMS（非极大值抑制）**：并行 IoU 计算，共享内存优化
 
+### 双目相机选项
+
+选项在 `app/driver/stereo/CMakeLists.txt` 中声明。这些启用双目相机支持。
+
+| CMake 选项 | 默认值 | 效果 |
+|---|---|---|
+| `ENABLE_STEREO` | OFF | 启用双目相机支持（包含 ENABLE_STEREO_UVC） |
+| `ENABLE_STEREO_UVC` | ON | 启用通用 UVC 双目相机驱动 |
+| `ENABLE_ZED` | OFF | 启用 Stereolabs ZED SDK 支持 |
+| `ENABLE_MYNT_EYE` | OFF | 启用 MYNT EYE SDK 支持 |
+| `ENABLE_DEPTHAI` | OFF | 启用 Luxonis DepthAI/OAK 支持 |
+
+当 `ENABLE_STEREO=ON` 时，双目驱动层将构建支持：
+- 通用 UVC 双目相机（双 UVC 设备）
+- 从 OpenCV YAML/XML 加载标定
+- 双目校正（去畸变 + 矫正）
+- SGBM 双目匹配生成视差/深度
+
 ### 构建步骤
 
 ```bash
@@ -447,6 +465,12 @@ cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
 
 # 启用所有后端 + CUDA 加速
 cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
+
+# 启用双目相机支持
+cmake .. -DENABLE_STEREO=ON
+
+# 启用双目 + CUDA + TensorRT
+cmake .. -DENABLE_STEREO=ON -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
 
 cmake --build . -j$(nproc)
 ```
@@ -497,6 +521,9 @@ RS-AC1 依赖静态链接 — 运行时无需 `.so`。
 
 # 启用 RKNN 后端的闭环
 ./dynamic_algo_cam --engage-model RKNN --engage-actuator DUMMY --engage-model-path model.rknn --no-show
+
+# 双目相机采集（带标定）
+./dynamic_algo_cam --stereo-config stereo_calib.yaml --stereo-compute-depth --no-show
 ```
 
 ### CLI 参数

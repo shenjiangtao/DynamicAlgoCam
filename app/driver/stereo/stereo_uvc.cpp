@@ -64,13 +64,39 @@ public:
             return false;
         }
 
+        // Initialize stereo rectifier if calibration file provided and OpenCV available
+#ifdef DYNALOGO_HAVE_OPENCV
+        if (!cfg.calibrationFile.empty()) {
+            rectifier_ = std::make_unique<StereoRectifier>();
+            if (!rectifier_->loadCalibration(cfg.calibrationFile)) {
+                DYNALGO_LOG_ERROR_S("UvcStereoCamera: failed to load calibration from " << cfg.calibrationFile);
+                close();
+                return false;
+            }
+        }
+#endif
+
         // Initialize camera info
         info_.serialNumber = cfg.devicePath;
         info_.modelName = "Generic UVC Stereo";
-        info_.leftIntrinsic = DynalgoIntrinsic{}; // TODO: load from calibration file
+#ifdef DYNALOGO_HAVE_OPENCV
+        if (rectifier_ && rectifier_->isValid()) {
+            info_.leftIntrinsic = rectifier_->getLeftIntrinsic();
+            info_.rightIntrinsic = rectifier_->getRightIntrinsic();
+            info_.leftToRight = rectifier_->getLeftToRight();
+            info_.baselineMeters = rectifier_->getBaseline();
+        } else {
+            info_.leftIntrinsic = DynalgoIntrinsic{};
+            info_.rightIntrinsic = DynalgoIntrinsic{};
+            info_.leftToRight = DynalgoExtrinsic{};
+            info_.baselineMeters = 0.12f;
+        }
+#else
+        info_.leftIntrinsic = DynalgoIntrinsic{};
         info_.rightIntrinsic = DynalgoIntrinsic{};
         info_.leftToRight = DynalgoExtrinsic{};
         info_.baselineMeters = 0.12f;
+#endif
 
         isOpen_ = true;
         DYNALGO_LOG_INFO_S("UvcStereoCamera opened: " << cfg.devicePath
@@ -108,21 +134,48 @@ public:
             return false;
         }
 
-        // Rectify (placeholder - real impl uses calibration maps)
+        // Rectify using calibration if available and OpenCV available
+#ifdef DYNALOGO_HAVE_OPENCV
+        if (rectifier_ && rectifier_->isValid()) {
+            if (!rectifier_->rectify(leftRaw, rightRaw, outFrame.leftRect, outFrame.rightRect)) {
+                DYNALGO_LOG_WARN_S("UvcStereoCamera: rectification failed, using raw frames");
+                outFrame.leftRect = leftRaw;
+                outFrame.rightRect = rightRaw;
+            }
+            outFrame.leftIntrinsic = rectifier_->getLeftIntrinsic();
+            outFrame.rightIntrinsic = rectifier_->getRightIntrinsic();
+            outFrame.leftToRight = rectifier_->getLeftToRight();
+        } else {
+            // Fallback: use raw frames without rectification
+            outFrame.leftRect = leftRaw;
+            outFrame.rightRect = rightRaw;
+            outFrame.leftIntrinsic = info_.leftIntrinsic;
+            outFrame.rightIntrinsic = info_.rightIntrinsic;
+            outFrame.leftToRight = info_.leftToRight;
+        }
+#else
+        // OpenCV not available - use raw frames
         outFrame.leftRect = leftRaw;
         outFrame.rightRect = rightRaw;
+        outFrame.leftIntrinsic = info_.leftIntrinsic;
+        outFrame.rightIntrinsic = info_.rightIntrinsic;
+        outFrame.leftToRight = info_.leftToRight;
+#endif
+
         outFrame.leftRaw = std::move(leftRaw);
         outFrame.rightRaw = std::move(rightRaw);
         outFrame.timestampUs = dynalgo::getTimestampMsInt() * 1000;
         outFrame.frameId = frameId_++;
-        outFrame.leftIntrinsic = info_.leftIntrinsic;
-        outFrame.rightIntrinsic = info_.rightIntrinsic;
-        outFrame.leftToRight = info_.leftToRight;
 
-        // Compute depth if enabled (placeholder)
-        if (cfg_.computeDepth) {
-            computeDepth(outFrame);
+        // Compute depth if enabled and OpenCV available
+#ifdef DYNALOGO_HAVE_OPENCV
+        if (cfg_.computeDepth && rectifier_ && rectifier_->isValid()) {
+            if (!rectifier_->computeDepth(outFrame.leftRect, outFrame.rightRect,
+                                          outFrame.disparity, outFrame.depth)) {
+                DYNALGO_LOG_WARN_S("UvcStereoCamera: depth computation failed");
+            }
         }
+#endif
 
         return true;
     }
@@ -323,6 +376,9 @@ private:
     bool streaming_ = false;
     std::function<void(const StereoFrameSet&)> callback_;
     std::thread streamThread_;
+#ifdef DYNALOGO_HAVE_OPENCV
+    std::unique_ptr<StereoRectifier> rectifier_;
+#endif
 };
 
 std::unique_ptr<IStereoCamera> StereoCameraFactory::create(Vendor vendor) {

@@ -31,20 +31,43 @@ if(ENABLE_DEPTHAI)
     add_subdirectory(depthai)
 endif()
 
+# StereoRectifier requires OpenCV
+find_package(OpenCV QUIET COMPONENTS core imgproc calib3d)
+
 # Meta-library
 if(ENABLE_STEREO_UVC OR ENABLE_ZED OR ENABLE_MYNT_EYE OR ENABLE_DEPTHAI)
-    add_library(dynalgo_driver_stereo STATIC
-        driver_stereo_dummy.cpp
-    )
+    if(OpenCV_FOUND)
+        add_library(dynalgo_driver_stereo STATIC
+            driver_stereo_dummy.cpp
+            stereo_rectifier.cpp
+        )
 
-    target_include_directories(dynalgo_driver_stereo PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../core
-    )
+        target_include_directories(dynalgo_driver_stereo PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../core
+            ${OpenCV_INCLUDE_DIRS}
+        )
 
-    target_link_libraries(dynalgo_driver_stereo PUBLIC
-        dynalgo::core
-    )
+        target_compile_definitions(dynalgo_driver_stereo PUBLIC DYNALOGO_HAVE_OPENCV)
+        target_link_libraries(dynalgo_driver_stereo PUBLIC
+            dynalgo::core
+            ${OpenCV_LIBS}
+        )
+    else()
+        # OpenCV not found - build without stereo_rectifier
+        add_library(dynalgo_driver_stereo STATIC
+            driver_stereo_dummy.cpp
+        )
+
+        target_include_directories(dynalgo_driver_stereo PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../core
+        )
+
+        target_link_libraries(dynalgo_driver_stereo PUBLIC
+            dynalgo::core
+        )
+    endif()
 
     if(ENABLE_STEREO_UVC)
         target_link_libraries(dynalgo_driver_stereo PUBLIC dynalgo::driver_stereo_uvc)

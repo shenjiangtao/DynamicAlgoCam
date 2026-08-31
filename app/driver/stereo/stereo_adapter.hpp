@@ -14,6 +14,10 @@
 #include <vector>
 #include <functional>
 
+#ifdef DYNALOGO_HAVE_OPENCV
+#include <opencv2/opencv.hpp>
+#endif
+
 namespace dynalgo {
 
 // Stereo camera configuration
@@ -28,6 +32,9 @@ struct StereoConfig {
     int depthMaxDisparity = 128;
     int depthBlockSize = 5;
     float depthScale = 0.001f;     // disparity to meters
+
+    // Calibration file (OpenCV YAML/XML)
+    std::string calibrationFile;   // Path to stereo calibration YAML/XML
 };
 
 // Stereo frame set (left + right + optional depth/disparity)
@@ -112,7 +119,7 @@ public:
     enum class Vendor {
         GENERIC_UVC,     // Generic UVC stereo (e.g. Dual UVC cameras)
         ZED,             // Stereolabs ZED
-        MYNT_EYE,        // MYNT EYE (SLAMTEC)
+        MYNT_EYE,        // MYNT_EYE (SLAMTEC)
         DEPTHAI,         // Luxonis DepthAI/OAK
         ORBBEC_STEREO,   // Orbbec stereo (if available)
         CUSTOM           // Custom implementation
@@ -123,3 +130,64 @@ public:
 };
 
 } // namespace dynalgo
+
+#ifdef DYNALOGO_HAVE_OPENCV
+
+namespace dynalgo {
+
+// StereoRectifier — handles stereo rectification using OpenCV calibration data
+// Loads calibration from OpenCV YAML/XML and provides rectification maps
+// for undistort + rectify of stereo image pairs.
+class StereoRectifier {
+public:
+    StereoRectifier() = default;
+    ~StereoRectifier() = default;
+
+    // Load calibration from OpenCV YAML/XML file
+    // Expected format (OpenCV stereoRectify output):
+    //   M1, D1, M2, D2, R, T, R1, R2, P1, P2, Q
+    bool loadCalibration(const std::string& calibrationFile);
+
+    // Check if calibration is loaded
+    bool isValid() const { return valid_; }
+
+    // Rectify a pair of stereo images (BGR24 input -> BGR24 output)
+    // Returns false if calibration not loaded or rectification failed
+    bool rectify(const DynalgoFrame& leftRaw, const DynalgoFrame& rightRaw,
+                 DynalgoFrame& leftRect, DynalgoFrame& rightRect) const;
+
+    // Get rectification maps (for manual remap if needed)
+    // Returns false if calibration not loaded
+    bool getMaps(
+        std::vector<float>& leftMapX, std::vector<float>& leftMapY,
+        std::vector<float>& rightMapX, std::vector<float>& rightMapY) const;
+
+    // Get rectified intrinsics (P1/P2 from calibration)
+    DynalgoIntrinsic getLeftIntrinsic() const { return leftIntrinsic_; }
+    DynalgoIntrinsic getRightIntrinsic() const { return rightIntrinsic_; }
+    DynalgoExtrinsic getLeftToRight() const { return leftToRight_; }
+
+    // Compute depth from rectified stereo pair using SGBM
+    // Returns disparity map (Y16) and depth map (float32)
+    bool computeDepth(const DynalgoFrame& leftRect, const DynalgoFrame& rightRect,
+                      DynalgoFrame& disparity, DynalgoFrame& depth) const;
+
+    // Get baseline in meters
+    float getBaseline() const { return baseline_; }
+
+private:
+    bool valid_ = false;
+    cv::Mat leftMap1_, leftMap2_, rightMap1_, rightMap2_;
+    cv::Mat leftCameraMatrix_, rightCameraMatrix_;
+    cv::Mat leftDistCoeffs_, rightDistCoeffs_;
+    cv::Mat R_, T_, R1_, R2_, P1_, P2_, Q_;
+    cv::Size imageSize_;
+
+    DynalgoIntrinsic leftIntrinsic_, rightIntrinsic_;
+    DynalgoExtrinsic leftToRight_;
+    float baseline_ = 0.0f;
+};
+
+} // namespace dynalgo
+
+#endif // DYNALOGO_HAVE_OPENCV

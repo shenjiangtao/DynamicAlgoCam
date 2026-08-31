@@ -408,6 +408,24 @@ When `ENABLE_CUDA=ON`, the following operations are accelerated on GPU:
 - **Preprocessing**: Letterbox resize + BGR→RGB conversion + normalization + HWC→CHW layout conversion
 - **NMS (Non-Maximum Suppression)**: Parallel IoU computation with shared memory optimization
 
+### Stereo Camera Options
+
+Options are declared in `app/driver/stereo/CMakeLists.txt`. These enable stereo camera support.
+
+| CMake Option | Default | Effect |
+|---|---|---|
+| `ENABLE_STEREO` | OFF | Enable stereo camera support (includes ENABLE_STEREO_UVC) |
+| `ENABLE_STEREO_UVC` | ON | Enable generic UVC stereo camera driver |
+| `ENABLE_ZED` | OFF | Enable Stereolabs ZED SDK support |
+| `ENABLE_MYNT_EYE` | OFF | Enable MYNT EYE SDK support |
+| `ENABLE_DEPTHAI` | OFF | Enable Luxonis DepthAI/OAK support |
+
+When `ENABLE_STEREO=ON`, the stereo driver layer is built with support for:
+- Generic UVC stereo cameras (dual UVC devices)
+- Calibration loading from OpenCV YAML/XML
+- Stereo rectification (undistort + rectify)
+- SGBM stereo matching for disparity/depth
+
 ### Build Steps
 
 ```bash
@@ -439,6 +457,12 @@ cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
 
 # All backends with CUDA acceleration
 cmake .. -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON -DENABLE_ONNXRUNTIME=ON -DENABLE_RKNN=ON
+
+# With stereo camera support
+cmake .. -DENABLE_STEREO=ON
+
+# With stereo + CUDA + TensorRT
+cmake .. -DENABLE_STEREO=ON -DENABLE_CUDA=ON -DENABLE_MODEL_BACKENDS=ON -DENABLE_TENSORRT=ON
 
 cmake --build . -j$(nproc)
 ```
@@ -491,6 +515,9 @@ RS-AC1 dependencies are statically linked — no runtime `.so` needed for rs_dri
 
 # Engagement loop with RKNN backend
 ./dynamic_algo_cam --engage-model RKNN --engage-actuator DUMMY --engage-model-path model.rknn --no-show
+
+# Stereo camera capture with calibration
+./dynamic_algo_cam --stereo-config stereo_calib.yaml --stereo-compute-depth --no-show
 ```
 
 ### CLI Parameters
