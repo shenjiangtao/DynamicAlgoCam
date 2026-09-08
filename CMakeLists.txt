@@ -7,37 +7,103 @@
 #   vendors/OrbbecSDK/   — Orbbec depth camera SDK (vendored copy)
 #   vendors/RoboSense/   — RoboSense LiDAR driver (vendored copy)
 #   app/                  — DynamicAlgoCam application layer (core / driver / capture / ...)
+#   hal/                  — Hardware Abstraction Layer (platform/vendor specific)
+#   bsp/                  — Board Support Packages (configs)
 #   docs/                 — DynamicAlgoCam documentation
 #   scripts/              — DynamicAlgoCam scripts
 
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
-project(DynalgoCapture VERSION 1.0.0 LANGUAGES CXX C)
+project(DynalgoCapture VERSION 2.0.0 LANGUAGES CXX C)
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
-set(CMAKE_C_STANDARD 99)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 set(DYNALGO_PROJECT_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(DYNALGO_VERSION ${PROJECT_VERSION})
 
-option(ENABLE_ORBBEC "Enable Orbbec device support" ON)
-option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support" ON)
-option(ENABLE_EVENT_SIM "Enable synthetic event simulator for testing" OFF)
-option(ENABLE_CUDA "Enable CUDA acceleration for preprocessing/NMS" OFF)
+# === PLATFORM DETECTION ===
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "amd64")
+    set(DYNALGO_PLATFORM "x86_64" CACHE STRING "Target platform" FORCE)
+    set(DYNALGO_DEFAULT_CAMERA_VENDOR "uvc" CACHE STRING "Camera vendor")
+    set(DYNALGO_DEFAULT_ENCODER_VENDOR "ffmpeg" CACHE STRING "Encoder vendor")
+    set(DYNALGO_DEFAULT_INFERENCE_VENDOR "tensorrt" CACHE STRING "Inference vendor")
+    set(DYNALGO_DEFAULT_DISPLAY_VENDOR "sdl2" CACHE STRING "Display vendor")
+    set(DYNALGO_DEFAULT_ACTUATOR_VENDOR "generic_serial" CACHE STRING "Actuator vendor")
+    set(DYNALGO_DEFAULT_SENSOR_VENDOR "generic" CACHE STRING "Sensor vendor")
+    set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
+    set(DYNALGO_DEFAULT_TIME_VENDOR "chrono" CACHE STRING "Time vendor")
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    if(EXISTS "/etc/nv_tegra_release" OR EXISTS "/proc/device-tree/compatible")
+        set(DYNALGO_PLATFORM "aarch64_nvidia" CACHE STRING "Target platform" FORCE)
+        set(DYNALGO_DEFAULT_CAMERA_VENDOR "nvsipl" CACHE STRING "Camera vendor")
+        set(DYNALGO_DEFAULT_ENCODER_VENDOR "nvmedia" CACHE STRING "Encoder vendor")
+        set(DYNALGO_DEFAULT_INFERENCE_VENDOR "tensorrt" CACHE STRING "Inference vendor")
+        set(DYNALGO_DEFAULT_DISPLAY_VENDOR "nvdisplay" CACHE STRING "Display vendor")
+        set(DYNALGO_DEFAULT_ACTUATOR_VENDOR "gpio" CACHE STRING "Actuator vendor")
+        set(DYNALGO_DEFAULT_SENSOR_VENDOR "iio" CACHE STRING "Sensor vendor")
+        set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
+        set(DYNALGO_DEFAULT_TIME_VENDOR "ptp" CACHE STRING "Time vendor")
+    else()
+        set(DYNALGO_PLATFORM "aarch64_generic" CACHE STRING "Target platform" FORCE)
+        set(DYNALGO_DEFAULT_CAMERA_VENDOR "v4l2" CACHE STRING "Camera vendor")
+        set(DYNALGO_DEFAULT_ENCODER_VENDOR "ffmpeg" CACHE STRING "Encoder vendor")
+        set(DYNALGO_DEFAULT_INFERENCE_VENDOR "onnxruntime" CACHE STRING "Inference vendor")
+        set(DYNALGO_DEFAULT_DISPLAY_VENDOR "wayland" CACHE STRING "Display vendor")
+        set(DYNALGO_DEFAULT_ACTUATOR_VENDOR "gpio" CACHE STRING "Actuator vendor")
+        set(DYNALGO_DEFAULT_SENSOR_VENDOR "iio" CACHE STRING "Sensor vendor")
+        set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
+        set(DYNALGO_DEFAULT_TIME_VENDOR "chrono" CACHE STRING "Time vendor")
+    endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "mips")
+    set(DYNALGO_PLATFORM "mips64_loongson" CACHE STRING "Target platform" FORCE)
+    set(DYNALGO_DEFAULT_CAMERA_VENDOR "v4l2" CACHE STRING "Camera vendor")
+    set(DYNALGO_DEFAULT_ENCODER_VENDOR "loongson_venc" CACHE STRING "Encoder vendor")
+    set(DYNALGO_DEFAULT_INFERENCE_VENDOR "loongson_npu" CACHE STRING "Inference vendor")
+    set(DYNALGO_DEFAULT_DISPLAY_VENDOR "drm" CACHE STRING "Display vendor")
+    set(DYNALGO_DEFAULT_ACTUATOR_VENDOR "gpio" CACHE STRING "Actuator vendor")
+    set(DYNALGO_DEFAULT_SENSOR_VENDOR "iio" CACHE STRING "Sensor vendor")
+    set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
+    set(DYNALGO_DEFAULT_TIME_VENDOR "chrono" CACHE STRING "Time vendor")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+    set(DYNALGO_PLATFORM "riscv64_starfive" CACHE STRING "Target platform" FORCE)
+    set(DYNALGO_DEFAULT_CAMERA_VENDOR "v4l2" CACHE STRING "Camera vendor")
+    set(DYNALGO_DEFAULT_ENCODER_VENDOR "starfive_venc" CACHE STRING "Encoder vendor")
+    set(DYNALGO_DEFAULT_INFERENCE_VENDOR "thead_npu" CACHE STRING "Inference vendor")
+    set(DYNALGO_DEFAULT_DISPLAY_VENDOR "drm" CACHE STRING "Display vendor")
+    set(DYNALGO_DEFAULT_ACTUATOR_VENDOR "gpio" CACHE STRING "Actuator vendor")
+    set(DYNALGO_DEFAULT_SENSOR_VENDOR "iio" CACHE STRING "Sensor vendor")
+    set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
+    set(DYNALGO_DEFAULT_TIME_VENDOR "chrono" CACHE STRING "Time vendor")
+else()
+    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 
-# Default to Release if user didn't specify — capture tool should ship
-# optimized. Developers wanting debug symbols pass -DCMAKE_BUILD_TYPE=Debug.
+message(STATUS "DYNALGO: Platform = ${DYNALGO_PLATFORM}")
+
+# Vendor overrides (can be set via command line)
+set(DYNALGO_CAMERA_VENDOR "${DYNALGO_DEFAULT_CAMERA_VENDOR}" CACHE STRING "Camera vendor")
+set(DYNALGO_ENCODER_VENDOR "${DYNALGO_DEFAULT_ENCODER_VENDOR}" CACHE STRING "Encoder vendor")
+set(DYNALGO_INFERENCE_VENDOR "${DYNALGO_DEFAULT_INFERENCE_VENDOR}" CACHE STRING "Inference vendor")
+set(DYNALGO_DISPLAY_VENDOR "${DYNALGO_DEFAULT_DISPLAY_VENDOR}" CACHE STRING "Display vendor")
+set(DYNALGO_ACTUATOR_VENDOR "${DYNALGO_DEFAULT_ACTUATOR_VENDOR}" CACHE STRING "Actuator vendor")
+set(DYNALGO_SENSOR_VENDOR "${DYNALGO_DEFAULT_SENSOR_VENDOR}" CACHE STRING "Sensor vendor")
+set(DYNALGO_LOGGER_VENDOR "${DYNALGO_DEFAULT_LOGGER_VENDOR}" CACHE STRING "Logger vendor")
+set(DYNALGO_TIME_VENDOR "${DYNALGO_DEFAULT_TIME_VENDOR}" CACHE STRING "Time vendor")
+
+message(STATUS "DYNALGO: Vendors: camera=${DYNALGO_CAMERA_VENDOR} encoder=${DYNALGO_ENCODER_VENDOR} inference=${DYNALGO_INFERENCE_VENDOR}")
+
+# Default to Release if user didn't specify
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     message(STATUS "DYNALGO: CMAKE_BUILD_TYPE not set — defaulting to Release")
 endif()
 
-# Release/RelWithDebInfo: replace CMake's default -O2 with -O3, fold in
-# -march=native + -DNDEBUG (the latter is already added by CMake for
-# Release, but explicit is better when overriding -O level). Bounded to
-# GCC/Clang — MSVC uses /O2 by default and is left alone.
+# Release flags
 set(DYNALGO_RELEASE_FLAGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(DYNALGO_RELEASE_FLAGS "-O3;-march=native;-DNDEBUG")
@@ -52,6 +118,13 @@ endforeach()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_DEFAULT_SOURCE")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_DEFAULT_SOURCE")
+
+# === HAL LAYER ===
+add_subdirectory(hal)
+
+# === VENDOR SDKS (Legacy) ===
+option(ENABLE_ORBBEC "Enable Orbbec device support (legacy)" ON)
+option(ENABLE_RS_AC1 "Enable RoboSense RS-AC1 support (legacy)" ON)
 
 if(ENABLE_ORBBEC)
     set(OB_BUILD_MAIN_PROJECT ON CACHE BOOL "OrbbecSDK is the main SDK project" FORCE)
@@ -79,11 +152,7 @@ else()
     message(STATUS "RS-AC1 support disabled — skipping RoboSense")
 endif()
 
-if(NOT ENABLE_ORBBEC AND NOT ENABLE_RS_AC1)
-    message(FATAL_ERROR "Both ENABLE_ORBBEC and ENABLE_RS_AC1 are OFF — no vendor SDK selected, aborting")
-endif()
-
-# Conditional inclusion of the capture application (requires FFmpeg & SDL)
+# === APP LAYER ===
 option(ENABLE_CAPTURE "Build capture application (requires FFmpeg/SDL)" ON)
 if(ENABLE_CAPTURE)
     find_package(PkgConfig QUIET)
@@ -104,7 +173,6 @@ else()
     message(STATUS "Capture application disabled by ENABLE_CAPTURE=OFF")
 endif()
 
-
 option(BUILD_TESTS "Build unit tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
@@ -116,3 +184,7 @@ if(BUILD_TESTS)
     endif()
 endif()
 
+# Install HAL headers
+install(DIRECTORY include/dynalgo/hal/
+        DESTINATION include/dynalgo/hal
+        FILES_MATCHING PATTERN "*.hpp")
