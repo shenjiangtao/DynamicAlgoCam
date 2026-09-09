@@ -1,14 +1,15 @@
 #include <dynalgo/hal/encoder_hal.hpp>
 
 namespace dynalgo {
-class NVENCEncoderHAL : public hal::IEncoderHAL {
+class NvencEncoderHAL : public hal::IEncoderHAL {
 public:
-    NVENCEncoderHAL() = default;
-    ~NVENCEncoderHAL() override = default;
+    NvencEncoderHAL() = default;
+    ~NvencEncoderHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 
 extern "C" {
-dynalgo::hal::IEncoderHAL* dynalgo_hal_encoder_create() { return new dynalgo::NVENCEncoderHAL(); }
+dynalgo::hal::IEncoderHAL* dynalgo_hal_encoder_create() { return new dynalgo::NvencEncoderHAL(); }
 void dynalgo_hal_encoder_destroy(dynalgo::hal::IEncoderHAL* ptr) { delete ptr; }
 }

@@ -5,6 +5,7 @@ class GPIOActuatorHAL : public hal::IActuatorHAL {
 public:
     GPIOActuatorHAL() = default;
     ~GPIOActuatorHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 

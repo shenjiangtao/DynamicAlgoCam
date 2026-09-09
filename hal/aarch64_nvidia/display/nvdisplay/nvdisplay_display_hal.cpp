@@ -5,6 +5,7 @@ class NvDisplayHAL : public hal::IDisplayHAL {
 public:
     NvDisplayHAL() = default;
     ~NvDisplayHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 

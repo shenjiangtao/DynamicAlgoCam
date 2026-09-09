@@ -5,6 +5,7 @@ class IIOSensorHAL : public hal::ISensorHAL {
 public:
     IIOSensorHAL() = default;
     ~IIOSensorHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 

@@ -1,0 +1,55 @@
+# IMX728 Sensor Configuration for NvSIPL
+# Sensor: Sony IMX728 8.3MP CMOS Image Sensor
+# Interface: MIPI CSI-2 4-lane
+# Resolution: 3840x2160 @ 30fps
+# HDR: DOL 3-exposure
+
+vendor:
+  name: "nvsipl"
+  platform: "aarch64_nvidia"
+  library: "libdynalgo_hal_camera_nvsipl.so"
+
+sensor:
+  name: "IMX728"
+  resolution: "3840x2160"
+  fps: 30
+  interface: "MIPI CSI-2 4-lane"
+  pixel_format: "RAW12"
+  hdr: "DOL 3-exposure"
+  lanes: 4
+  data_rate_mbps: 2400
+  pixel_size_um: 2.74
+  color_filter: "RGGB"
+  active_width: 3840
+  active_height: 2160
+  optical_black: 16
+
+isp:
+  mode: "auto"
+  ae_target: 18
+  awb_mode: "auto"
+  ccm: "standard"
+  noise_reduction: "adaptive"
+  demosaic: "adaptive"
+
+sync:
+  master: true
+  gpio_pin: 12
+  trigger_mode: "hardware"
+  frame_sync_tolerance_us: 100
+
+buffers:
+  count: 6
+  layout: "block_linear"
+  cuda_compatible: true
+  nvscibuf: true
+
+calibration:
+  intrinsics_file: "calibration/imx728_front.yml"
+  extrinsics_file: "calibration/extrinsics_front.yml"
+  distortion_model: "fisheye"
+  k1: -0.25
+  k2: 0.08
+  p1: 0.0001
+  p2: -0.0001
+  k3: 0.0

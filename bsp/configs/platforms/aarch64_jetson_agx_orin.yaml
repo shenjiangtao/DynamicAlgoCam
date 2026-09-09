@@ -1,0 +1,74 @@
+# NVIDIA Jetson AGX Orin Platform Configuration
+# Platform: aarch64_nvidia
+# SOC: Orin (T234)
+# Revision: A02
+
+platform:
+  name: "aarch64_nvidia"
+  arch: "aarch64"
+  vendor: "nvidia"
+  soc: "orin"
+  soc_revision: "A02"
+
+  # Default vendors for this platform
+  defaults:
+    camera: "nvsipl"
+    encoder: "nvmedia"
+    inference: "tensorrt"
+    display: "nvdisplay"
+    actuator: "gpio"
+    sensor: "iio"
+    logger: "spdlog"
+    time: "ptp"
+
+  # Resource limits
+  resources:
+    max_camera_channels: 16
+    max_encode_channels: 8
+    max_inference_streams: 4
+    gpu_memory_mb: 3072
+    dla_cores: 2
+
+  # Features
+  features:
+    hardware_isp: true
+    hardware_encoder: true
+    hardware_decoder: true
+    dla: true
+    ptp: true
+    gpio: true
+    can: true
+
+  # Camera configuration
+  camera:
+    max_channels: 16
+    default_fps: 30
+    buffer_count: 4
+    hardware_sync: true
+    nvsci_stream: true
+
+  # Encoder configuration
+  encoder:
+    max_channels: 8
+    default_codec: "h264"
+    default_bitrate: 8000000
+    hardware_encode: true
+
+  # Inference configuration
+  inference:
+    max_streams: 4
+    default_precision: "FP16"
+    dla_enabled: true
+    tensorrt_version: "8.6"
+
+  # Display configuration
+  display:
+    max_layers: 4
+    hardware_overlay: true
+    hdr: false
+
+  # Time synchronization
+  time:
+    ptp_enabled: true
+    ptp_domain: 0
+    gps_fallback: true

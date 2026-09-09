@@ -1,0 +1,108 @@
+# NVIDIA Jetson AGX Orin DevKit Board Configuration
+# Board: NVIDIA Jetson AGX Orin Developer Kit
+# Platform: aarch64_nvidia
+# Revision: A01
+
+board:
+  name: "nvidia_jetson_agx_orin_devkit"
+  platform: "aarch64_nvidia"
+  revision: "A01"
+
+  # Camera connectors (CSI ports)
+  cameras:
+    - id: "cam0"
+      connector: "J13 (CSI-A)"
+      vendor: "nvsipl"
+      sensor_config: "imx728"
+      position: "front_center"
+      orientation: 0
+      intrinsics: "calibration/imx728_front.yml"
+      extrinsics: "calibration/extrinsics_front.yml"
+      gpio_power: 7
+      gpio_reset: 8
+      gpio_sync: 12
+
+    - id: "cam1"
+      connector: "J14 (CSI-B)"
+      vendor: "nvsipl"
+      sensor_config: "imx623"
+      position: "rear_center"
+      orientation: 180
+      intrinsics: "calibration/imx623_rear.yml"
+      extrinsics: "calibration/extrinsics_rear.yml"
+      gpio_power: 9
+      gpio_reset: 10
+      gpio_sync: 12
+
+    - id: "cam2"
+      connector: "J15 (CSI-C)"
+      vendor: "nvsipl"
+      sensor_config: "ar0820"
+      position: "left_side"
+      orientation: 90
+      intrinsics: "calibration/ar0820_left.yml"
+      extrinsics: "calibration/extrinsics_left.yml"
+      gpio_power: 11
+      gpio_reset: 13
+      gpio_sync: 12
+
+    - id: "cam3"
+      connector: "J16 (CSI-D)"
+      vendor: "nvsipl"
+      sensor_config: "ar0820"
+      position: "right_side"
+      orientation: 270
+      intrinsics: "calibration/ar0820_right.yml"
+      extrinsics: "calibration/extrinsics_right.yml"
+      gpio_power: 14
+      gpio_reset: 15
+      gpio_sync: 12
+
+  # Actuators
+  actuators:
+    - id: "actuator0"
+      type: "gimbal"
+      interface: "gpio_pwm"
+      gpio_pan: 18
+      gpio_tilt: 19
+      vendor: "gpio"
+      pwm_freq_hz: 50
+      pan_range_deg: 180
+      tilt_range_deg: 90
+
+    - id: "actuator1"
+      type: "trigger"
+      interface: "gpio"
+      gpio_pin: 20
+      vendor: "gpio"
+      active_low: true
+
+  # Synchronization
+  sync:
+    ptp_enabled: true
+    ptp_interface: "eth0"
+    ptp_domain: 0
+    gpio_sync_pin: 12
+    gpio_sync_polarity: "rising"
+    hardware_trigger: true
+
+  # Power/thermal
+  power:
+    mode: "MAXN"
+    thermal_zone: "cpu-gpu"
+    max_temp_c: 85
+    gpu_freq_max: 1300
+    cpu_freq_max: 2200
+
+  # Storage
+  storage:
+    data_path: "/data/dynalgo"
+    cache_path: "/tmp/dynalgo"
+    log_path: "/var/log/dynalgo"
+    calibration_path: "/opt/dynalgo/calibration"
+
+  # Network
+  network:
+    ptp_interface: "eth0"
+    multicast_group: "239.255.0.1"
+    multicast_port: 5000

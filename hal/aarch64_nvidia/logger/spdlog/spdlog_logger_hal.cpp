@@ -5,6 +5,7 @@ class SpdlogLoggerHAL : public hal::ILoggerHAL {
 public:
     SpdlogLoggerHAL() = default;
     ~SpdlogLoggerHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 

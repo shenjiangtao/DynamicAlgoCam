@@ -5,6 +5,7 @@ class PTPTimeHAL : public hal::ITimeHAL {
 public:
     PTPTimeHAL() = default;
     ~PTPTimeHAL() override = default;
+    // TODO: Implement all pure virtual methods
 };
 } // namespace dynalgo
 
