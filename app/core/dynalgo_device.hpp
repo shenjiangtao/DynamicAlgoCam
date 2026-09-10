@@ -20,14 +20,14 @@
 
 #pragma once
 
-#include "dynalgo_frame.hpp"
-#include "dynalgo_types.hpp"
-
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "dynalgo_frame.hpp"
+#include "dynalgo_types.hpp"
 
 namespace dynalgo {
 

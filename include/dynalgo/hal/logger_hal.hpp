@@ -154,22 +154,22 @@ public:
     static void setDefaultLogger(ILoggerHAL* logger);
 };
 
-#define DYNALGO_LOG_TRACE(logger, msg) \
+#define DYNALGO_HAL_LOG_TRACE(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->trace(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
-#define DYNALGO_LOG_DEBUG(logger, msg) \
+#define DYNALGO_HAL_LOG_DEBUG(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->debug(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
-#define DYNALGO_LOG_INFO(logger, msg) \
+#define DYNALGO_HAL_LOG_INFO(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->info(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
-#define DYNALGO_LOG_WARN(logger, msg) \
+#define DYNALGO_HAL_LOG_WARN(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->warn(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
-#define DYNALGO_LOG_ERROR(logger, msg) \
+#define DYNALGO_HAL_LOG_ERROR(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->error(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
-#define DYNALGO_LOG_FATAL(logger, msg) \
+#define DYNALGO_HAL_LOG_FATAL(logger, msg) \
     dynalgo::hal::LoggerHALFactory::getDefaultLogger()->fatal(logger, msg, __FILE__, __LINE__, __FUNCTION__)
 
 } // namespace dynalgo::hal

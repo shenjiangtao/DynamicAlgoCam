@@ -40,9 +40,9 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME}
+    dynalgo::capture
     dynalgo::core
     dynalgo::drivers
-    dynalgo::capture
     dynalgo::algo
 )
 

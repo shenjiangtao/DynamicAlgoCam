@@ -5,6 +5,7 @@
 # No external SDK dependencies (no OrbbecSDK, no rs_driver).
 # Provides: DynalgoFormat, DynalgoFrameType, DynalgoFrame, DynalgoDevice/Pipeline/Context,
 #           logging, timestamps, thread utilities, signal handling.
+#           HAL-based capture session, HAL factory, config manager.
 
 cmake_minimum_required(VERSION 3.10)
 project(dynalgo_core)
@@ -32,13 +33,31 @@ add_library(dynalgo_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_actuator.hpp
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_actuator_factory.hpp
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_actuator_factory.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_hal_factory.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_hal_factory.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_config_manager.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_config_manager.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_capture_session.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynalgo_capture_session.cpp
 )
 
 find_package(Threads REQUIRED)
-target_link_libraries(dynalgo_core PUBLIC Threads::Threads)
+find_package(yaml-cpp QUIET)
+
+target_link_libraries(dynalgo_core PUBLIC
+    Threads::Threads
+    dynalgo_hal_common
+    ${CMAKE_DL_LIBS}
+)
+
+if(yaml-cpp_FOUND)
+    target_link_libraries(dynalgo_core PUBLIC yaml-cpp)
+    target_compile_definitions(dynalgo_core PRIVATE DYNALGO_HAVE_YAML=1)
+endif()
 
 target_include_directories(dynalgo_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
 add_library(dynalgo::core ALIAS dynalgo_core)
