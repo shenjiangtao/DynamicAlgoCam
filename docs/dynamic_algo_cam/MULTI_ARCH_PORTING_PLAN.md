@@ -334,6 +334,246 @@ DynamicAlgoCam/
 
 ---
 
+## 10. UPEP: Unified Perception & Execution Platform Extensions / UPEP 统一感知执行平台扩展
+
+The UPEP extensions transform DynamicAlgoCam from a camera-centric platform into a **unified multi-modal perception and execution platform** supporting stereo cameras, LiDAR, sensor fusion, dynamic algorithm loading, and heterogeneous compute scheduling.
+
+### 10.1 UPEP Architecture Overview / UPEP 架构概览
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        APPLICATION LAYER (App)                              │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │  Capture    │ │  Perception │ │  Planning   │ │  Control    │           │
+│  │  Session    │ │  (Detection,│ │  (Tracking, │ │  Control    │           │
+│  │  Manager    │ │   Tracking) │ │   Fusion)   │ │  (Actuator, │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+          │               │               │               │
+          ▼               ▼               ▼               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    UPEP EXTENSION LAYER (New)                               │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │ Multi-Modal │ │ Hetero      │ │ Plugin      │ │ Task        │           │
+│  │ Fusion HAL  │ │ Compute HAL │ │ Manager HAL │ │ Scheduler   │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+          │               │               │               │
+          ▼               ▼               ▼               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HAL INTERFACE LAYER (Stable ABI)                    │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │ ICameraHAL  │ │ IEncoderHAL │ │ IInferHAL   │ │ IDisplayHAL │           │
+│  │ IActuatorHAL│ │ ISensorHAL  │ │ ILoggerHAL  │ │ ITimeHAL    │           │
+│  │ IFusionHAL  │ │ ISyncHAL    │ │ IComputeHAL │ │ IPluginHAL  │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+```
+
+### 10.2 New HAL Interfaces / 新增 HAL 接口
+
+| HAL Interface | Purpose | Key Types |
+|---|---|---|
+| **IFusionEngine** | Vision-LiDAR fusion (early/late/deep) | `FusionConfig`, `FusedDetection`, `FusedPointCloud`, `SynchronizedFrameSet` |
+| **ISyncEngine** | Multi-sensor temporal synchronization | `SyncConfig`, `SynchronizedFrameSet`, `SyncMethod` |
+| **IOperatorRegistry** | Heterogeneous operator registry | `OperatorImplementation`, `Tensor`, `ComputeBackendType` |
+| **IComputeContext** | Per-task compute resource isolation | `ComputeResourceLimits`, `Tensor`, `MemoryType` |
+| **IPlugin** | Dynamic algorithm plugin interface | `PluginManifest`, `PluginPort`, `PluginType` |
+| **IPluginManager** | Plugin lifecycle management | `loadPlugin`, `unloadPlugin`, `hotSwapPlugin` |
+| **ITaskScheduler** | DAG-based task scheduling | `TaskGraph`, `TaskNode`, `TaskEdge`, `TaskExecutionContext` |
+
+### 10.3 Unified FrameBuffer / 统一帧缓冲
+
+The UPEP `FrameBuffer` unifies image and point cloud data with zero-copy semantics:
+
+```cpp
+struct FrameBuffer {
+    FrameMetadata metadata;           // Timestamp, frame_id, sensor_id, frame_type
+    
+    // Image data (IMAGE, DEPTH_MAP)
+    std::vector<uint8_t> image_data;
+    bool image_owns_data = true;
+    
+    // Point cloud data (POINT_CLOUD)
+    PointCloudLayout pc_layout;       // Fields: x,y,z,intensity,ring,timestamp
+    std::vector<uint8_t> point_data;
+    bool pc_owns_data = true;
+    
+    // Synchronization
+    FenceHandle acquire_fence;
+    FenceHandle release_fence;
+    
+    // Multi-sensor sync
+    uint64_t sync_group_id = 0;
+    uint64_t reference_timestamp_ns = 0;
+    
+    // Ref-counting for zero-copy sharing
+    std::atomic<uint32_t> ref_count{1};
+};
+```
+
+### 10.4 Multi-Sensor Synchronization / 多传感器同步
+
+The `ISyncEngine` provides hardware-triggered, PTP, and software timestamp synchronization:
+
+```cpp
+struct SynchronizedFrameSet {
+    uint64_t sync_timestamp_ns;       // Reference timestamp (PTP master)
+    uint64_t sync_group_id;
+    
+    FrameBufferPtr camera_frame;      // Main camera
+    FrameBufferPtr depth_frame;       // Depth/stereo
+    FrameBufferPtr lidar_frame;       // LiDAR point cloud
+    FrameBufferPtr imu_frame;         // IMU data
+    
+    std::map<std::string, CalibrationData> calibrations;
+    
+    bool hasCamera() const { return camera_frame && camera_frame->isImage(); }
+    bool hasDepth() const { return depth_frame && depth_frame->isImage(); }
+    bool hasLidar() const { return lidar_frame && lidar_frame->isPointCloud(); }
+    bool hasImu() const { return imu_frame && imu_frame->isImage(); }
+};
+```
+
+### 10.5 Heterogeneous Compute Abstraction / 异构计算抽象
+
+The `IOperatorRegistry` and `IComputeContext` provide backend-agnostic operator execution:
+
+```cpp
+enum class ComputeBackendType { CPU, CUDA, OPENCL, VULKAN, TENSORRT, DLA, CUDLA, RKNN, NPU_GENERIC };
+
+struct Tensor {
+    TensorDesc desc;                  // dtype, layout, shape
+    BufferHandle buffer;              // Opaque buffer handle
+    MemoryType mem_type = MemoryType::HOST;
+    void* host_ptr = nullptr;
+};
+
+struct OperatorImplementation {
+    OperatorSignature signature;      // Inputs, outputs, attributes
+    ComputeBackendType backend;
+    int priority;                     // Higher = preferred
+    OperatorImplFunc impl;            // std::function(inputs, outputs, attrs, stream)
+};
+
+// Auto backend selection
+OperatorRegistry::execute("add", inputs, outputs, attrs, ComputeBackendType::CPU, stream);
+```
+
+### 10.6 Dynamic Plugin Manager / 动态插件管理器
+
+The `IPluginManager` enables runtime algorithm loading/unloading/hot-swap:
+
+```cpp
+// Load plugin at runtime
+auto instance = plugin_mgr->loadPlugin("libdynalgo_algo_stereo_match.so", "stereo_match");
+
+// Hot-swap running plugin without stopping pipeline
+plugin_mgr->hotSwapPlugin("stereo_match", "libdynalgo_algo_stereo_match_v2.so");
+
+// Unload when done
+plugin_mgr->unloadPlugin("stereo_match");
+```
+
+Plugin manifest defines I/O contracts and resource requirements:
+
+```cpp
+struct PluginManifest {
+    std::string name, version, vendor;
+    PluginType type;  // STEREO_MATCH, LIDAR_SEGMENTATION, IMAGE_DETECTION, etc.
+    
+    std::vector<PluginPort> inputs, outputs;  // Tensor specifications
+    ResourceRequirements resources;            // Memory, GPU, NPU needs
+    std::vector<std::string> required_operators;  // Operator registry deps
+};
+```
+
+### 10.8 DAG Task Scheduler / DAG 任务调度器
+
+The `ITaskScheduler` executes perception pipelines as DAGs with resource-aware scheduling:
+
+```cpp
+struct TaskGraph {
+    std::map<std::string, TaskNode> nodes;  // Plugin instances + deps
+    std::vector<TaskEdge> edges;            // Data flow between tasks
+    
+    // Validation
+    bool validate(std::string& error_msg) const;  // Cycle detection
+    std::vector<std::string> topologicalSort() const;
+};
+
+struct TaskNode {
+    std::string plugin_instance;    // Plugin instance name
+    std::vector<std::string> dependencies;  // Upstream task IDs
+    ResourceRequirements resources;
+    ComputeBackendType preferred_backend;
+    int priority = 0;
+    uint32_t timeout_ms = 5000;
+};
+
+// Execute perception pipeline
+auto graph_id = scheduler->submitGraph(graph);
+scheduler->setTaskCallback([](graph_id, task_id, status, result) {
+    // Handle completion
+});
+scheduler->start();
+```
+
+### 10.8 Multi-Modal Fusion Strategies / 多模态融合策略
+
+| Strategy | Description | Use Case |
+|---|---|---|
+| **Early Fusion** | Project LiDAR points to image plane, fuse at pixel level | Dense depth completion |
+| **Late Fusion** | Separate detections → associate → fuse at object level | 3D object detection |
+| **Deep Fusion** | Feature-level fusion via neural network | End-to-end perception |
+| **Hybrid** | Combination of above | Complex scenarios |
+
+### 10.9 Directory Structure Updates / 目录结构更新
+
+```
+DynamicAlgoCam/
+├── include/dynalgo/hal/
+│   ├── multimodal_fusion_hal.hpp    # NEW: IFusionEngine, ISyncEngine
+│   ├── heterogeneous_compute_hal.hpp # NEW: IOperatorRegistry, IComputeContext
+│   ├── plugin_manager_hal.hpp       # NEW: IPlugin, IPluginManager, ITaskScheduler
+│   └── ... (existing HALs)
+├── app/core/
+│   ├── multimodal_fusion_hal.cpp    # CPU implementations
+│   ├── heterogeneous_compute_hal.cpp
+│   ├── plugin_manager_hal.cpp
+│   └── ... (existing core)
+```
+
+### 10.10 Configuration Extensions / 配置扩展
+
+Board config now supports LiDAR and fusion:
+
+```yaml
+board:
+  name: "nvidia_jetson_agx_orin_devkit"
+  platform: "aarch64_nvidia"
+  
+  cameras:
+    - id: "cam0"
+      connector: "J13 (CSI-A)"
+      vendor: "nvsipl"
+      sensor_config: "imx728"
+      
+  lidars:
+    - id: "lidar0"
+      connector: "J14 (CSI-B)"
+      vendor: "robosense"
+      sensor_config: "rs_helios"
+      coordinate_frame: "sensor"
+      
+  fusion:
+    enabled: true
+    fusion_type: "late"
+    lidar_to_camera_extrinsics: [0.1, 0.0, 0.05, 0.0, 0.0, 0.0]
+```
+
+---
+
 ## 4. HAL Interface Specification / HAL 接口规范
 
 ### 4.1 Design Rules / 设计规则

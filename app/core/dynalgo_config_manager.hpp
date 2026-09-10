@@ -1,5 +1,6 @@
 /*
  * dynalgo_config_manager.hpp - Configuration manager for platform/vendor/board
+ * UPEP: 3-level hierarchy - Platform (SoC arch) → Vendor (Silicon vendor) → Board (Carrier board)
  */
 #pragma once
 
@@ -31,6 +32,21 @@ struct CameraConfigYAML {
     int gpio_sync = -1;
 };
 
+struct LidarConfigYAML {
+    std::string id;
+    std::string connector;
+    std::string vendor;
+    std::string sensor_config;
+    std::string position;
+    int orientation = 0;
+    std::string intrinsics;
+    std::string extrinsics;
+    int gpio_power = -1;
+    int gpio_reset = -1;
+    int gpio_sync = -1;
+    std::string coordinate_frame = "sensor";
+};
+
 struct ActuatorConfigYAML {
     std::string id;
     std::string type;
@@ -46,6 +62,12 @@ struct SyncConfigYAML {
     int gpio_sync_pin = -1;
     std::string gpio_sync_polarity = "rising";
     bool hardware_trigger = false;
+    
+    // UPEP: Multi-sensor sync config
+    std::string sync_method = "hardware_trigger";  // hardware_trigger, ptp, software_timestamp, ntp, gps_pps
+    uint32_t sync_group_id = 0;
+    uint64_t max_time_diff_ns = 1000000;
+    bool enable_interpolation = true;
 };
 
 struct PowerConfigYAML {
@@ -67,6 +89,21 @@ struct NetworkConfigYAML {
     int multicast_port = 5000;
 };
 
+// UPEP: Fusion configuration
+struct FusionConfigYAML {
+    bool enabled = false;
+    std::string fusion_type = "early";  // early, late, deep
+    float lidar_to_camera_extrinsics_x = 0.0f;
+    float lidar_to_camera_extrinsics_y = 0.0f;
+    float lidar_to_camera_extrinsics_z = 0.0f;
+    float lidar_to_camera_roll = 0.0f;
+    float lidar_to_camera_pitch = 0.0f;
+    float lidar_to_camera_yaw = 0.0f;
+    float min_depth_m = 0.1f;
+    float max_depth_m = 100.0f;
+    std::string depth_interpolation = "bilinear";
+};
+
 class BoardConfig {
 public:
     static std::unique_ptr<BoardConfig> loadFromFile(const std::string& filepath);
@@ -76,11 +113,13 @@ public:
     std::string revision() const { return m_revision; }
 
     const std::vector<CameraConfigYAML>& cameras() const { return m_cameras; }
+    const std::vector<LidarConfigYAML>& lidars() const { return m_lidars; }
     const std::vector<ActuatorConfigYAML>& actuators() const { return m_actuators; }
     const SyncConfigYAML& sync() const { return m_sync; }
     const PowerConfigYAML& power() const { return m_power; }
     const StorageConfigYAML& storage() const { return m_storage; }
     const NetworkConfigYAML& network() const { return m_network; }
+    const FusionConfigYAML& fusion() const { return m_fusion; }
 
     std::optional<CameraConfigYAML> getCameraConfig(size_t index) const {
         if (index < m_cameras.size()) return m_cameras[index];
@@ -93,17 +132,31 @@ public:
         }
         return std::nullopt;
     }
+    
+    std::optional<LidarConfigYAML> getLidarConfig(size_t index) const {
+        if (index < m_lidars.size()) return m_lidars[index];
+        return std::nullopt;
+    }
+    
+    std::optional<LidarConfigYAML> getLidarById(const std::string& id) const {
+        for (const auto& lidar : m_lidars) {
+            if (lidar.id == id) return lidar;
+        }
+        return std::nullopt;
+    }
 
 private:
     std::string m_name;
     std::string m_platform;
     std::string m_revision;
     std::vector<CameraConfigYAML> m_cameras;
+    std::vector<LidarConfigYAML> m_lidars;
     std::vector<ActuatorConfigYAML> m_actuators;
     SyncConfigYAML m_sync;
     PowerConfigYAML m_power;
     StorageConfigYAML m_storage;
     NetworkConfigYAML m_network;
+    FusionConfigYAML m_fusion;
 };
 
 class PlatformConfig {
@@ -129,6 +182,14 @@ public:
     const std::map<std::string, std::string>& defaults() const { return m_defaults; }
     const std::map<std::string, bool>& features() const { return m_features; }
     const std::map<std::string, int>& resources() const { return m_resources; }
+    
+    // UPEP: Heterogeneous compute resources
+    int getGpuMemoryMB() const { return m_gpu_memory_mb; }
+    int getDlaCores() const { return m_dla_cores; }
+    bool hasDla() const { return m_has_dla; }
+    bool hasPtp() const { return m_has_ptp; }
+    bool hasGpio() const { return m_has_gpio; }
+    bool hasCan() const { return m_has_can; }
 
 private:
     std::string m_name;
@@ -139,6 +200,14 @@ private:
     std::map<std::string, std::string> m_defaults;
     std::map<std::string, bool> m_features;
     std::map<std::string, int> m_resources;
+    
+    // UPEP: Hardware resources
+    int m_gpu_memory_mb = 0;
+    int m_dla_cores = 0;
+    bool m_has_dla = false;
+    bool m_has_ptp = false;
+    bool m_has_gpio = false;
+    bool m_has_can = false;
 };
 
 class VendorConfig {

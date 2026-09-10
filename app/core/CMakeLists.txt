@@ -39,6 +39,9 @@ add_library(dynalgo_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_config_manager.cpp
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_capture_session.hpp
     ${CMAKE_CURRENT_LIST_DIR}/dynalgo_capture_session.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/heterogeneous_compute_hal.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/multimodal_fusion_hal.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/plugin_manager_hal.cpp
 )
 
 find_package(Threads REQUIRED)
@@ -58,6 +61,7 @@ endif()
 target_include_directories(dynalgo_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
 
 add_library(dynalgo::core ALIAS dynalgo_core)

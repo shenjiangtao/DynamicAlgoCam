@@ -326,6 +326,245 @@ DynamicAlgoCam/
 
 ---
 
+## 10. UPEP: 统一感知执行平台扩展 / UPEP: Unified Perception & Execution Platform Extensions
+
+UPEP 扩展将 DynamicAlgoCam 从以相机为中心的平台转变为 **统一的多模态感知执行平台**，支持双目相机、激光雷达、传感器融合、动态算法加载和异构计算调度。
+
+### 10.1 UPEP 架构概览 / UPEP Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        应用层                                               │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │  捕获会话   │ │  感知       │ │  规划       │ │  控制       │           │
+│  │  Manager    │ │  (检测,     │ │  (跟踪,     │ │  (执行器,   │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+          │               │               │               │
+          ▼               ▼               ▼               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    UPEP 扩展层 (新增)                                        │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │ 多模态融合  │ │ 异构计算    │ │ 插件管理    │ │ 任务调度    │           │
+│  │  Fusion HAL │ │ Compute HAL │ │ Manager HAL │ │ Scheduler   │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+          │               │               │               │
+          ▼               ▼               ▼               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         HAL 接口层 (稳定 ABI)                               │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │
+│  │ ICameraHAL  │ │ IEncoderHAL │ │ IInferHAL   │ │ IDisplayHAL │           │
+│  │ IActuatorHAL│ │ ISensorHAL  │ │ ILoggerHAL  │ │ ITimeHAL    │           │
+│  │ IFusionHAL  │ │ ISyncHAL    │ │ IComputeHAL │ │ IPluginHAL  │           │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘           │
+└─────────┼───────────────┼───────────────┼───────────────┼──────────────────┘
+```
+
+### 10.2 新增 HAL 接口 / New HAL Interfaces
+
+| HAL 接口 | 用途 | 关键类型 |
+|---|---|---|
+| **IFusionEngine** | 视觉-激光雷达融合 (早/晚/深度融合) | `FusionConfig`, `FusedDetection`, `FusedPointCloud`, `SynchronizedFrameSet` |
+| **ISyncEngine** | 多传感器时间同步 | `SyncConfig`, `SynchronizedFrameSet`, `SyncMethod` |
+| **IOperatorRegistry** | 异构算子注册表 | `OperatorImplementation`, `Tensor`, `ComputeBackendType` |
+| **IComputeContext** | 任务级计算资源隔离 | `ComputeResourceLimits`, `Tensor`, `MemoryType` |
+| **IPlugin** | 动态算法插件接口 | `PluginManifest`, `PluginPort`, `PluginType` |
+| **IPluginManager** | 插件生命周期管理 | `loadPlugin`, `unloadPlugin`, `hotSwapPlugin` |
+| **ITaskScheduler** | 基于 DAG 的任务调度 | `TaskGraph`, `TaskNode`, `TaskEdge`, `TaskExecutionContext` |
+
+### 10.3 统一帧缓冲 / Unified FrameBuffer
+
+UPEP `FrameBuffer` 统一图像和点云数据，支持零拷贝语义：
+
+```cpp
+struct FrameBuffer {
+    FrameMetadata metadata;           // 时间戳, frame_id, sensor_id, frame_type
+    
+    // 图像数据 (IMAGE, DEPTH_MAP)
+    std::vector<uint8_t> image_data;
+    bool image_owns_data = true;
+    
+    // 点云数据 (POINT_CLOUD)
+    PointCloudLayout pc_layout;       // 字段: x,y,z,intensity,ring,timestamp
+    std::vector<uint8_t> point_data;
+    bool pc_owns_data = true;
+    
+    // 同步
+    FenceHandle acquire_fence;
+    FenceHandle release_fence;
+    
+    // 多传感器同步
+    uint64_t sync_group_id = 0;
+    uint64_t reference_timestamp_ns = 0;
+    
+    // 引用计数用于零拷贝共享
+    std::atomic<uint32_t> ref_count{1};
+};
+```
+
+### 10.4 多传感器同步 / Multi-Sensor Synchronization
+
+`ISyncEngine` 提供硬件触发、PTP 和软件时间戳同步：
+
+```cpp
+struct SynchronizedFrameSet {
+    uint64_t sync_timestamp_ns;       // 参考时间戳 (PTP 主时钟)
+    uint64_t sync_group_id;
+    
+    FrameBufferPtr camera_frame;      // 主相机
+    FrameBufferPtr depth_frame;       // 深度/双目
+    FrameBufferPtr lidar_frame;       // 激光雷达点云
+    FrameBufferPtr imu_frame;         // IMU 数据
+    
+    std::map<std::string, CalibrationData> calibrations;
+    
+    bool hasCamera() const { return camera_frame && camera_frame->isImage(); }
+    bool hasDepth() const { return depth_frame && depth_frame->isImage(); }
+    bool hasLidar() const { return lidar_frame && lidar_frame->isPointCloud(); }
+    bool hasImu() const { return imu_frame && imu_frame->isImage(); }
+};
+```
+
+### 10.5 异构计算抽象 / Heterogeneous Compute Abstraction
+
+`IOperatorRegistry` 和 `IComputeContext` 提供后端无关的算子执行：
+
+```cpp
+enum class ComputeBackendType { CPU, CUDA, OPENCL, VULKAN, TENSORRT, DLA, CUDLA, RKNN, NPU_GENERIC };
+
+struct Tensor {
+    TensorDesc desc;                  // dtype, layout, shape
+    BufferHandle buffer;              // 不透明缓冲句柄
+    MemoryType mem_type = MemoryType::HOST;
+    void* host_ptr = nullptr;
+};
+
+struct OperatorImplementation {
+    OperatorSignature signature;      // 输入, 输出, 属性
+    ComputeBackendType backend;
+    int priority;                     // 越高 = 优先
+    OperatorImplFunc impl;            // std::function(inputs, outputs, attrs, stream)
+};
+
+// 自动后端选择
+OperatorRegistry::execute("add", inputs, outputs, attrs, ComputeBackendType::CPU, stream);
+```
+
+### 10.6 动态插件管理器 / Dynamic Plugin Manager
+
+`IPluginManager` 支持运行时算法加载/卸载/热切换：
+
+```cpp
+// 运行时加载插件
+auto instance = plugin_mgr->loadPlugin("libdynalgo_algo_stereo_match.so", "stereo_match");
+
+// 热切换运行中插件，无需停止管道
+plugin_mgr->hotSwapPlugin("stereo_match", "libdynalgo_algo_stereo_match_v2.so");
+
+// 完成后卸载
+plugin_mgr->unloadPlugin("stereo_match");
+```
+
+插件清单定义 I/O 契约和资源需求：
+
+```cpp
+struct PluginManifest {
+    std::string name, version, vendor;
+    PluginType type;  // STEREO_MATCH, LIDAR_SEGMENTATION, IMAGE_DETECTION, 等
+    
+    std::vector<PluginPort> inputs, outputs;  // 张量规格
+    ResourceRequirements resources;            // 内存, GPU, NPU 需求
+    std::vector<std::string> required_operators;  // 算子注册表依赖
+};
+```
+
+### 10.8 DAG 任务调度器 / DAG Task Scheduler
+
+`ITaskScheduler` 以 DAG 形式执行感知管道，支持资源感知调度：
+
+```cpp
+struct TaskGraph {
+    std::map<std::string, TaskNode> nodes;  // 插件实例 + 依赖
+    std::vector<TaskEdge> edges;            // 任务间数据流
+    
+    // 验证
+    bool validate(std::string& error_msg) const;  // 环检测
+    std::vector<std::string> topologicalSort() const;
+};
+
+struct TaskNode {
+    std::string plugin_instance;    // 插件实例名
+    std::vector<std::string> dependencies;  // 上游任务 ID
+    ResourceRequirements resources;
+    ComputeBackendType preferred_backend;
+    int priority = 0;
+    uint32_t timeout_ms = 5000;
+};
+
+// 执行感知管道
+auto graph_id = scheduler->submitGraph(graph);
+scheduler->setTaskCallback([](graph_id, task_id, status, result) {
+    // 处理完成
+});
+scheduler->start();
+```
+
+### 10.9 多模态融合策略 / Multi-Modal Fusion Strategies
+
+| 策略 | 说明 | 适用场景 |
+|---|---|---|
+| **早期融合** | 将激光雷达点投影到图像平面，像素级融合 | 稠密深度补全 |
+| **后期融合** | 分别检测 → 关联 → 目标级融合 | 3D 目标检测 |
+| **深度融合** | 通过神经网络进行特征级融合 | 端到端感知 |
+| **混合融合** | 上述策略组合 | 复杂场景 |
+
+### 10.10 目录结构更新 / Directory Structure Updates
+
+```
+DynamicAlgoCam/
+├── include/dynalgo/hal/
+│   ├── multimodal_fusion_hal.hpp    # 新增: IFusionEngine, ISyncEngine
+│   ├── heterogeneous_compute_hal.hpp # 新增: IOperatorRegistry, IComputeContext
+│   ├── plugin_manager_hal.hpp       # 新增: IPlugin, IPluginManager, ITaskScheduler
+│   └── ... (现有 HAL)
+├── app/core/
+│   ├── multimodal_fusion_hal.cpp    # CPU 实现
+│   ├── heterogeneous_compute_hal.cpp
+│   ├── plugin_manager_hal.cpp
+│   └── ... (现有 core)
+```
+
+### 10.10 配置扩展 / Configuration Extensions
+
+板卡配置现支持激光雷达和融合：
+
+```yaml
+board:
+  name: "nvidia_jetson_agx_orin_devkit"
+  platform: "aarch64_nvidia"
+  
+  cameras:
+    - id: "cam0"
+      connector: "J13 (CSI-A)"
+      vendor: "nvsipl"
+      sensor_config: "imx728"
+      
+  lidars:
+    - id: "lidar0"
+      connector: "J14 (CSI-B)"
+      vendor: "robosense"
+      sensor_config: "rs_helios"
+      coordinate_frame: "sensor"
+      
+  fusion:
+    enabled: true
+    fusion_type: "late"
+    lidar_to_camera_extrinsics: [0.1, 0.0, 0.05, 0.0, 0.0, 0.0]
+```
+
+---
+
 ## 4. HAL 接口规范 / HAL Interface Specification
 
 ### 4.1 设计规则 / Design Rules

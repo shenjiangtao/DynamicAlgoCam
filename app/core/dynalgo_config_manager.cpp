@@ -1,5 +1,6 @@
 /*
  * dynalgo_config_manager.cpp - Configuration manager implementation
+ * UPEP: 3-level hierarchy - Platform (SoC arch) -> Vendor (Silicon vendor) -> Board (Carrier board)
  */
 #include "dynalgo_config_manager.hpp"
 
@@ -49,6 +50,14 @@ std::unique_ptr<PlatformConfig> PlatformConfig::loadFromFile(const std::string& 
             }
         }
         
+        // UPEP: Hardware resources
+        if (p["gpu_memory_mb"]) cfg->m_gpu_memory_mb = p["gpu_memory_mb"].as<int>();
+        if (p["dla_cores"]) cfg->m_dla_cores = p["dla_cores"].as<int>();
+        if (p["has_dla"]) cfg->m_has_dla = p["has_dla"].as<bool>();
+        if (p["has_ptp"]) cfg->m_has_ptp = p["has_ptp"].as<bool>();
+        if (p["has_gpio"]) cfg->m_has_gpio = p["has_gpio"].as<bool>();
+        if (p["has_can"]) cfg->m_has_can = p["has_can"].as<bool>();
+        
         return cfg;
     } catch (const std::exception& e) {
         std::cerr << "Failed to load platform config: " << e.what() << std::endl;
@@ -94,6 +103,27 @@ std::unique_ptr<BoardConfig> BoardConfig::loadFromFile(const std::string& filepa
             }
         }
         
+        // UPEP: LiDAR sensors
+        if (b["lidars"]) {
+            for (const auto& lidar : b["lidars"]) {
+                LidarConfigYAML lidar_cfg;
+                lidar_cfg.id = lidar["id"].as<std::string>();
+                lidar_cfg.connector = lidar["connector"].as<std::string>();
+                lidar_cfg.vendor = lidar["vendor"].as<std::string>();
+                lidar_cfg.sensor_config = lidar["sensor_config"].as<std::string>();
+                lidar_cfg.position = lidar["position"].as<std::string>();
+                lidar_cfg.orientation = lidar["orientation"].as<int>();
+                lidar_cfg.intrinsics = lidar["intrinsics"].as<std::string>();
+                lidar_cfg.extrinsics = lidar["extrinsics"].as<std::string>();
+                lidar_cfg.gpio_power = lidar["gpio_power"].as<int>();
+                lidar_cfg.gpio_reset = lidar["gpio_reset"].as<int>();
+                lidar_cfg.gpio_sync = lidar["gpio_sync"].as<int>();
+                if (lidar["coordinate_frame"])
+                    lidar_cfg.coordinate_frame = lidar["coordinate_frame"].as<std::string>();
+                cfg->m_lidars.push_back(lidar_cfg);
+            }
+        }
+        
         if (b["actuators"]) {
             for (const auto& act : b["actuators"]) {
                 ActuatorConfigYAML act_cfg;
@@ -118,6 +148,12 @@ std::unique_ptr<BoardConfig> BoardConfig::loadFromFile(const std::string& filepa
             cfg->m_sync.gpio_sync_pin = s["gpio_sync_pin"].as<int>();
             cfg->m_sync.gpio_sync_polarity = s["gpio_sync_polarity"].as<std::string>();
             cfg->m_sync.hardware_trigger = s["hardware_trigger"].as<bool>();
+            
+            // UPEP: Multi-sensor sync config
+            if (s["sync_method"]) cfg->m_sync.sync_method = s["sync_method"].as<std::string>();
+            if (s["sync_group_id"]) cfg->m_sync.sync_group_id = s["sync_group_id"].as<uint32_t>();
+            if (s["max_time_diff_ns"]) cfg->m_sync.max_time_diff_ns = s["max_time_diff_ns"].as<uint64_t>();
+            if (s["enable_interpolation"]) cfg->m_sync.enable_interpolation = s["enable_interpolation"].as<bool>();
         }
         
         if (b["power"]) {
@@ -140,6 +176,22 @@ std::unique_ptr<BoardConfig> BoardConfig::loadFromFile(const std::string& filepa
             cfg->m_network.ptp_interface = n["ptp_interface"].as<std::string>();
             cfg->m_network.multicast_group = n["multicast_group"].as<std::string>();
             cfg->m_network.multicast_port = n["multicast_port"].as<int>();
+        }
+        
+        // UPEP: Fusion config
+        if (b["fusion"]) {
+            auto& f = b["fusion"];
+            cfg->m_fusion.enabled = f["enabled"].as<bool>();
+            if (f["fusion_type"]) cfg->m_fusion.fusion_type = f["fusion_type"].as<std::string>();
+            if (f["lidar_to_camera_extrinsics_x"]) cfg->m_fusion.lidar_to_camera_extrinsics_x = f["lidar_to_camera_extrinsics_x"].as<float>();
+            if (f["lidar_to_camera_extrinsics_y"]) cfg->m_fusion.lidar_to_camera_extrinsics_y = f["lidar_to_camera_extrinsics_y"].as<float>();
+            if (f["lidar_to_camera_extrinsics_z"]) cfg->m_fusion.lidar_to_camera_extrinsics_z = f["lidar_to_camera_extrinsics_z"].as<float>();
+            if (f["lidar_to_camera_roll"]) cfg->m_fusion.lidar_to_camera_roll = f["lidar_to_camera_roll"].as<float>();
+            if (f["lidar_to_camera_pitch"]) cfg->m_fusion.lidar_to_camera_pitch = f["lidar_to_camera_pitch"].as<float>();
+            if (f["lidar_to_camera_yaw"]) cfg->m_fusion.lidar_to_camera_yaw = f["lidar_to_camera_yaw"].as<float>();
+            if (f["min_depth_m"]) cfg->m_fusion.min_depth_m = f["min_depth_m"].as<float>();
+            if (f["max_depth_m"]) cfg->m_fusion.max_depth_m = f["max_depth_m"].as<float>();
+            if (f["depth_interpolation"]) cfg->m_fusion.depth_interpolation = f["depth_interpolation"].as<std::string>();
         }
         
         return cfg;

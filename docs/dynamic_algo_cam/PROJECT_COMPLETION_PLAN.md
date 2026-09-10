@@ -166,6 +166,72 @@ cmake --build build -j$(nproc)
 - Implement 3D Kalman (constant velocity in camera coords)
 - Add `SerialActuator` / `CanActuator` backends
 
+### Sprint 5: UPEP Multi-Modal Fusion (Week 5-6) ✅ COMPLETED
+```bash
+# Enable LiDAR and fusion support
+cmake -B build -DENABLE_LIDAR=ON -DENABLE_FUSION=ON
+cmake --build build -j$(nproc)
+```
+
+**Code work completed:**
+- Implemented `IFusionEngine` in `multimodal_fusion_hal.hpp/.cpp`
+  - Early/Late/Deep/Hybrid fusion strategies
+  - `SynchronizedFrameSet` with camera, depth, LiDAR, IMU frames
+  - `FusedDetection` with 2D bbox + 3D position + fusion metadata
+  - `FusedPointCloud` for dense depth + sparse LiDAR fusion
+- Implemented `ISyncEngine` in `multimodal_fusion_hal.hpp/.cpp`
+  - Hardware trigger, PTP, software timestamp sync methods
+  - `SynchronizedFrameSet` with per-sensor calibration data
+  - Time offset calibration and interpolation
+- Added `FrameBuffer` unification for images and point clouds
+  - `FrameType` enum: IMAGE, POINT_CLOUD, DEPTH_MAP, DISPARITY, IMU, FUSED
+  - `PointCloudLayout` with field descriptors (x,y,z,intensity,ring,timestamp)
+  - Reference counting for zero-copy sharing
+
+### Sprint 6: UPEP Heterogeneous Compute (Week 6-7) ✅ COMPLETED
+```bash
+# Enable heterogeneous compute
+cmake -B build -DENABLE_HETERO_COMPUTE=ON
+cmake --build build -j$(nproc)
+```
+
+**Code work completed:**
+- Implemented `IOperatorRegistry` in `heterogeneous_compute_hal.hpp/.cpp`
+  - `ComputeBackendType`: CPU, CUDA, OPENCL, VULKAN, TENSORRT, DLA, CUDLA, RKNN, NPU_GENERIC
+  - `Tensor` with `TensorDesc` (dtype, layout, shape) and `BufferHandle`
+  - `OperatorImplementation` with signature, backend, priority, impl function
+- Implemented `IComputeContext` for per-task resource isolation
+  - `ComputeResourceLimits` (memory, compute units, power, DLA core)
+  - Tensor allocation/copy/sync with explicit memory types (HOST, DEVICE, UNIFIED, DMA_BUF)
+- Built-in CPU operators: add, relu, pointcloud_downsample
+- Auto backend selection via `OperatorRegistry::execute()`
+
+### Sprint 7: UPEP Plugin Manager + Task Scheduler (Week 7-8) ✅ COMPLETED
+```bash
+# Enable dynamic plugins
+cmake -B build -DENABLE_PLUGIN_MANAGER=ON
+cmake --build build -j$(nproc)
+```
+
+**Code work completed:**
+- Implemented `IPlugin` and `IPluginManager` in `plugin_manager_hal.hpp/.cpp`
+  - `PluginManifest` with I/O ports, resource requirements, operator dependencies
+  - Dynamic loading via `dlopen` with manifest extraction
+  - Hot-swap support: `hotSwapPlugin(old_instance, new_path)`
+  - Plugin security: signature verification framework
+- Implemented `ITaskScheduler` in `plugin_manager_hal.hpp/.cpp`
+  - `TaskGraph` with `TaskNode` (plugin instance, deps, resources, backend) and `TaskEdge`
+  - Graph validation (cycle detection via Kahn's algorithm) and topological sort
+  - `TaskScheduler` with worker thread, ready task scheduling, callbacks
+  - Resource-aware scheduling with `ComputeResourceLimits`
+
+### Sprint 8: UPEP Integration & Configuration (Week 8-9)
+- Board config extensions for LiDAR and fusion (YAML schema)
+- Platform config extensions for heterogeneous compute resources (GPU memory, DLA cores, PTP, GPIO, CAN)
+- Vendor config extensions for sensor-specific params (coordinate frame, FOV, angular resolution)
+- CMake options: `ENABLE_LIDAR`, `ENABLE_FUSION`, `ENABLE_HETERO_COMPUTE`, `ENABLE_PLUGIN_MANAGER`
+- Build verification: all new targets compile and link successfully
+
 ---
 
 ## 7. Verification Checklist per Component
