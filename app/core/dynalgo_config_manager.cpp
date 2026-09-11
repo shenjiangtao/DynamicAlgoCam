@@ -92,13 +92,35 @@ std::unique_ptr<BoardConfig> BoardConfig::loadFromFile(const std::string& filepa
                 cam_cfg.connector = cam["connector"].as<std::string>();
                 cam_cfg.vendor = cam["vendor"].as<std::string>();
                 cam_cfg.sensor_config = cam["sensor_config"].as<std::string>();
+                cam_cfg.connection_type = cam["connection_type"].as<std::string>("usb3");
+                cam_cfg.role = cam["role"].as<std::string>("main");
                 cam_cfg.position = cam["position"].as<std::string>();
-                cam_cfg.orientation = cam["orientation"].as<int>();
-                cam_cfg.intrinsics = cam["intrinsics"].as<std::string>();
-                cam_cfg.extrinsics = cam["extrinsics"].as<std::string>();
-                cam_cfg.gpio_power = cam["gpio_power"].as<int>();
-                cam_cfg.gpio_reset = cam["gpio_reset"].as<int>();
-                cam_cfg.gpio_sync = cam["gpio_sync"].as<int>();
+                cam_cfg.orientation = cam["orientation"].as<int>(0);
+                
+                if (cam["streams"]) {
+                    for (const auto& stream : cam["streams"]) {
+                        StreamConfigYAML stream_cfg;
+                        stream_cfg.type = stream["type"].as<std::string>();
+                        stream_cfg.width = stream["width"].as<int>(1280);
+                        stream_cfg.height = stream["height"].as<int>(720);
+                        stream_cfg.fps = stream["fps"].as<int>(30);
+                        stream_cfg.format = stream["format"].as<std::string>("NV12");
+                        stream_cfg.enabled = stream["enabled"].as<bool>(true);
+                        stream_cfg.hw_d2c = stream["hw_d2c"].as<bool>(false);
+                        cam_cfg.streams.push_back(stream_cfg);
+                    }
+                }
+                
+                cam_cfg.intrinsics = cam["intrinsics"].as<std::string>("");
+                cam_cfg.extrinsics = cam["extrinsics"].as<std::string>("");
+                cam_cfg.gpio_power = cam["gpio_power"].as<int>(-1);
+                cam_cfg.gpio_reset = cam["gpio_reset"].as<int>(-1);
+                cam_cfg.gpio_sync = cam["gpio_sync"].as<int>(-1);
+                
+                // Orbbec-specific
+                cam_cfg.orbbec_mode = cam["orbbec_mode"].as<std::string>("standard");
+                cam_cfg.disable_ir_left = cam["disable_ir_left"].as<bool>(false);
+                
                 cfg->m_cameras.push_back(cam_cfg);
             }
         }
@@ -111,13 +133,29 @@ std::unique_ptr<BoardConfig> BoardConfig::loadFromFile(const std::string& filepa
                 lidar_cfg.connector = lidar["connector"].as<std::string>();
                 lidar_cfg.vendor = lidar["vendor"].as<std::string>();
                 lidar_cfg.sensor_config = lidar["sensor_config"].as<std::string>();
+                lidar_cfg.connection_type = lidar["connection_type"].as<std::string>("usb3");
                 lidar_cfg.position = lidar["position"].as<std::string>();
-                lidar_cfg.orientation = lidar["orientation"].as<int>();
-                lidar_cfg.intrinsics = lidar["intrinsics"].as<std::string>();
-                lidar_cfg.extrinsics = lidar["extrinsics"].as<std::string>();
-                lidar_cfg.gpio_power = lidar["gpio_power"].as<int>();
-                lidar_cfg.gpio_reset = lidar["gpio_reset"].as<int>();
-                lidar_cfg.gpio_sync = lidar["gpio_sync"].as<int>();
+                lidar_cfg.orientation = lidar["orientation"].as<int>(0);
+                
+                if (lidar["streams"]) {
+                    for (const auto& stream : lidar["streams"]) {
+                        StreamConfigYAML stream_cfg;
+                        stream_cfg.type = stream["type"].as<std::string>();
+                        stream_cfg.width = stream["width"].as<int>(1280);
+                        stream_cfg.height = stream["height"].as<int>(720);
+                        stream_cfg.fps = stream["fps"].as<int>(30);
+                        stream_cfg.format = stream["format"].as<std::string>("POINT");
+                        stream_cfg.enabled = stream["enabled"].as<bool>(true);
+                        stream_cfg.hw_d2c = stream["hw_d2c"].as<bool>(false);
+                        lidar_cfg.streams.push_back(stream_cfg);
+                    }
+                }
+                
+                lidar_cfg.intrinsics = lidar["intrinsics"].as<std::string>("");
+                lidar_cfg.extrinsics = lidar["extrinsics"].as<std::string>("");
+                lidar_cfg.gpio_power = lidar["gpio_power"].as<int>(-1);
+                lidar_cfg.gpio_reset = lidar["gpio_reset"].as<int>(-1);
+                lidar_cfg.gpio_sync = lidar["gpio_sync"].as<int>(-1);
                 if (lidar["coordinate_frame"])
                     lidar_cfg.coordinate_frame = lidar["coordinate_frame"].as<std::string>();
                 cfg->m_lidars.push_back(lidar_cfg);

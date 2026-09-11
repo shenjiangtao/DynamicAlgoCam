@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # ${platform} ${type} ${vendor} HAL
-project(dynalgo_hal_camera_robosense LANGUAGES CXX)
+project(dynalgo_hal_sensor_robosense_lidar LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,27 +32,27 @@ else()
     )
 endif()
 
-add_library(dynalgo_hal_camera_robosense SHARED
-    robosense_camera_hal.cpp
+add_library(dynalgo_hal_sensor_robosense_lidar SHARED
+    robosense_lidar_hal.cpp
 )
 
-target_include_directories(dynalgo_hal_camera_robosense PRIVATE
+target_include_directories(dynalgo_hal_sensor_robosense_lidar PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ../../../../include
 )
 
-target_link_libraries(dynalgo_hal_camera_robosense PRIVATE
+target_link_libraries(dynalgo_hal_sensor_robosense_lidar PRIVATE
     dynalgo_hal_common
     ${CMAKE_DL_LIBS}
     RoboSense::rs_driver
 )
 
-target_compile_definitions(dynalgo_hal_camera_robosense PRIVATE
+target_compile_definitions(dynalgo_hal_sensor_robosense_lidar PRIVATE
     DYNALGO_HAL_VERSION_MAJOR=1
     DYNALGO_HAL_VERSION_MINOR=0
 )
 
-set_target_properties(dynalgo_hal_camera_robosense PROPERTIES
+set_target_properties(dynalgo_hal_sensor_robosense_lidar PROPERTIES
     VERSION ${DYNALGO_VERSION}
     SOVERSION 1
     CXX_STANDARD 17
@@ -62,6 +62,6 @@ set_target_properties(dynalgo_hal_camera_robosense PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
-install(TARGETS dynalgo_hal_camera_robosense
+install(TARGETS dynalgo_hal_sensor_robosense_lidar
         LIBRARY DESTINATION lib/dynalgo/hal
         RUNTIME DESTINATION bin)

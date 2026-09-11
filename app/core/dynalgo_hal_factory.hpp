@@ -78,6 +78,9 @@ public:
     static hal::Result<std::shared_ptr<hal::ITimeHAL>> loadTimeHAL(
         const std::string& vendor, const hal::TimeConfig& config);
 
+    // Register x86_64 vendors for dynamic loading
+    static void registerX86_64Vendors();
+
 private:
     // Plugin handle with custom deleter
     struct PluginHandle {

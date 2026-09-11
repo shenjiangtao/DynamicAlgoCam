@@ -41,6 +41,13 @@ if(DYNALGO_PLATFORM STREQUAL "x86_64")
     set(DYNALGO_DEFAULT_SENSOR_VENDOR "generic" CACHE STRING "Sensor vendor")
     set(DYNALGO_DEFAULT_LOGGER_VENDOR "spdlog" CACHE STRING "Logger vendor")
     set(DYNALGO_DEFAULT_TIME_VENDOR "chrono" CACHE STRING "Time vendor")
+    
+    # Multi-camera HAL options for x86_64
+    option(ENABLE_ORBBEC_HAL "Build Orbbec Camera HAL (305/305g/335L/336L)" ON)
+    option(ENABLE_ROBOSENSE_HAL "Build RoboSense AC1 Camera HAL" ON)
+    option(ENABLE_STEREO_HAL "Build Generic UVC Stereo Camera HAL" ON)
+    option(ENABLE_ROBOSENSE_LIDAR_HAL "Build RoboSense AC1 LiDAR Sensor HAL" ON)
+    
 elseif(DYNALGO_PLATFORM STREQUAL "aarch64_nvidia")
     set(DYNALGO_DEFAULT_CAMERA_VENDOR "nvsipl" CACHE STRING "Camera vendor")
     set(DYNALGO_DEFAULT_ENCODER_VENDOR "nvmedia" CACHE STRING "Encoder vendor")
@@ -113,11 +120,38 @@ message(STATUS "HAL: Inference vendor = ${DYNALGO_INFERENCE_VENDOR}")
 message(STATUS "HAL: Display vendor = ${DYNALGO_DISPLAY_VENDOR}")
 message(STATUS "HAL: Actuator vendor = ${DYNALGO_ACTUATOR_VENDOR}")
 
-# Camera HAL
+# Camera HAL - Build default vendor
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DYNALGO_PLATFORM}/camera/${DYNALGO_CAMERA_VENDOR}/CMakeLists.txt")
     add_subdirectory(${DYNALGO_PLATFORM}/camera/${DYNALGO_CAMERA_VENDOR})
 else()
     message(WARNING "Camera HAL not found: ${DYNALGO_PLATFORM}/camera/${DYNALGO_CAMERA_VENDOR}")
+endif()
+
+# Additional Camera HALs for x86_64
+if(DYNALGO_PLATFORM STREQUAL "x86_64")
+    if(ENABLE_ORBBEC_HAL AND NOT "${DYNALGO_CAMERA_VENDOR}" STREQUAL "orbbec")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/camera/orbbec/CMakeLists.txt")
+            add_subdirectory(x86_64/camera/orbbec)
+        else()
+            message(WARNING "Orbbec Camera HAL not found")
+        endif()
+    endif()
+    
+    if(ENABLE_ROBOSENSE_HAL AND NOT "${DYNALGO_CAMERA_VENDOR}" STREQUAL "robosense")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/camera/robosense/CMakeLists.txt")
+            add_subdirectory(x86_64/camera/robosense)
+        else()
+            message(WARNING "RoboSense Camera HAL not found")
+        endif()
+    endif()
+    
+    if(ENABLE_STEREO_HAL AND NOT "${DYNALGO_CAMERA_VENDOR}" STREQUAL "stereo")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/camera/stereo/CMakeLists.txt")
+            add_subdirectory(x86_64/camera/stereo)
+        else()
+            message(WARNING "Stereo Camera HAL not found")
+        endif()
+    endif()
 endif()
 
 # Encoder HAL
@@ -153,6 +187,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${DYNALGO_PLATFORM}/sensor/${DYNALGO_SENS
     add_subdirectory(${DYNALGO_PLATFORM}/sensor/${DYNALGO_SENSOR_VENDOR})
 else()
     message(WARNING "Sensor HAL not found: ${DYNALGO_PLATFORM}/sensor/${DYNALGO_SENSOR_VENDOR}")
+endif()
+
+# Additional Sensor HALs for x86_64
+if(DYNALGO_PLATFORM STREQUAL "x86_64")
+    if(ENABLE_ROBOSENSE_LIDAR_HAL AND NOT "${DYNALGO_SENSOR_VENDOR}" STREQUAL "robosense_lidar")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/sensor/robosense/CMakeLists.txt")
+            add_subdirectory(x86_64/sensor/robosense)
+        else()
+            message(WARNING "RoboSense LiDAR Sensor HAL not found")
+        endif()
+    endif()
 endif()
 
 # Logger HAL

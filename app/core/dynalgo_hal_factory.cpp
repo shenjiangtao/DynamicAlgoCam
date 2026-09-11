@@ -179,4 +179,12 @@ hal::Result<HALBundle> HALFactory::createFromConfig(
     return hal::Result<HALBundle>::ok(std::move(bundle));
 }
 
+void HALFactory::registerX86_64Vendors() {
+    // The vendors are registered via the plugin system - each HAL is a shared library
+    // that gets loaded dynamically by the CameraHALFactory/SensorHALFactory.
+    // The libraries are: libdynalgo_hal_camera_orbbec.so, libdynalgo_hal_camera_robosense.so,
+    // libdynalgo_hal_camera_stereo.so, libdynalgo_hal_sensor_robosense_lidar.so
+    // They should be placed in ./lib/dynalgo/hal/ or the build output directory.
+}
+
 } // namespace dynalgo

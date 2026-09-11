@@ -1,6 +1,6 @@
 /*
  * dynalgo_config_manager.hpp - Configuration manager for platform/vendor/board
- * UPEP: 3-level hierarchy - Platform (SoC arch) → Vendor (Silicon vendor) → Board (Carrier board)
+ * UPEP: 3-level hierarchy - Platform (SoC arch) -> Vendor (Silicon vendor) -> Board (Carrier board)
  */
 #pragma once
 
@@ -18,18 +18,37 @@
 
 namespace dynalgo {
 
+struct StreamConfigYAML {
+    std::string type;              // "color", "depth", "ir", "ir_left", "ir_right", "points"
+    int width = 1280;
+    int height = 720;
+    int fps = 30;
+    std::string format;            // "NV12", "Y16", "YUYV", "POINT", "Y8"
+    bool enabled = true;
+    bool hw_d2c = false;           // Hardware D2C alignment
+};
+
 struct CameraConfigYAML {
-    std::string id;
-    std::string connector;
-    std::string vendor;
-    std::string sensor_config;
-    std::string position;
+    std::string id;                    // "cam0", "cam0_ir_left"
+    std::string connector;             // "J13", "/dev/video0"
+    std::string vendor;                // "orbbec", "robosense"
+    std::string sensor_config;         // "gemini_305", "gemini_335l", "robosense_ac1"
+    std::string connection_type;       // "usb3", "gmsl2", "ethernet", "pcie"
+    std::string role;                  // "main", "stereo_left", "stereo_right", "depth", "ir"
+    std::string position;              // "front", "rear", "left", "right"
     int orientation = 0;
+    
+    std::vector<StreamConfigYAML> streams;  // Multiple streams per camera
+    
     std::string intrinsics;
     std::string extrinsics;
     int gpio_power = -1;
     int gpio_reset = -1;
     int gpio_sync = -1;
+    
+    // Orbbec-specific
+    std::string orbbec_mode;           // "standard", "305g_gmsl2"
+    bool disable_ir_left = false;      // For 305g
 };
 
 struct LidarConfigYAML {
@@ -37,8 +56,12 @@ struct LidarConfigYAML {
     std::string connector;
     std::string vendor;
     std::string sensor_config;
+    std::string connection_type;       // "usb3", "ethernet", "pcie"
     std::string position;
     int orientation = 0;
+    
+    std::vector<StreamConfigYAML> streams;  // LiDAR streams (points, intensity, etc.)
+    
     std::string intrinsics;
     std::string extrinsics;
     int gpio_power = -1;

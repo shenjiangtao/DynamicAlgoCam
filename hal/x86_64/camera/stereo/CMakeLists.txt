@@ -13,6 +13,7 @@ add_library(dynalgo_hal_camera_stereo SHARED
 target_include_directories(dynalgo_hal_camera_stereo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ../../../../include
+    ../../../../app/core
 )
 
 target_link_libraries(dynalgo_hal_camera_stereo PRIVATE

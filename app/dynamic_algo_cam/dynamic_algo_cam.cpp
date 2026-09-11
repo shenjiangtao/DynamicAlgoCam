@@ -20,6 +20,7 @@
 #include "dynalgo_device.hpp"
 #include "dynalgo_driver_factory.hpp"
 #include "dynalgo_log.hpp"
+#include "dynalgo_hal_factory.hpp"
 #include "dynalgo_model_factory.hpp"
 #include "dynalgo_actuator_factory.hpp"
 #include "dynalgo_sdl_viewer.hpp"
@@ -116,6 +117,10 @@ int main(int argc, char** argv) try {
     // Initialize logger now that we have the final output directory.
     DYNALGO_LOG_INIT("dynamic_algo_cam", outputRootDir);
     DYNALGO_LOG_INFO_S("Logger initialized to directory: " << outputRootDir);
+    
+    // Register x86_64 HAL vendors for dynamic loading
+    dynalgo::HALFactory::registerX86_64Vendors();
+    
     // Log build and run information now that logger is ready.
     DYNALGO_LOG_INFO_S("Git commit: " << GIT_COMMIT_HASH);
     DYNALGO_LOG_INFO_S("Process started, camera_filter_count=" << cfg.cameraFilter.size()
