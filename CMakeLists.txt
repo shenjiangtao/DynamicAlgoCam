@@ -154,6 +154,12 @@ endif()
 
 # === APP LAYER ===
 option(ENABLE_CAPTURE "Build capture application (requires FFmpeg/SDL)" ON)
+
+# UPEP Feature Options
+option(ENABLE_LIDAR "Enable LiDAR support (point cloud, fusion)" ON)
+option(ENABLE_FUSION "Enable multi-modal fusion (vision-LiDAR)" ON)
+option(ENABLE_HETERO_COMPUTE "Enable heterogeneous compute abstraction (GPU/NPU)" ON)
+option(ENABLE_PLUGIN_MANAGER "Enable dynamic plugin manager and task scheduler" ON)
 if(ENABLE_CAPTURE)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)

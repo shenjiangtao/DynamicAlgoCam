@@ -47,6 +47,12 @@ if(DYNALGO_PLATFORM STREQUAL "x86_64")
     option(ENABLE_ROBOSENSE_HAL "Build RoboSense AC1 Camera HAL" ON)
     option(ENABLE_STEREO_HAL "Build Generic UVC Stereo Camera HAL" ON)
     option(ENABLE_ROBOSENSE_LIDAR_HAL "Build RoboSense AC1 LiDAR Sensor HAL" ON)
+
+    # UPEP Feature Options for x86_64
+    option(ENABLE_LIDAR "Enable LiDAR support (point cloud, fusion)" ON)
+    option(ENABLE_FUSION "Enable multi-modal fusion (vision-LiDAR)" ON)
+    option(ENABLE_HETERO_COMPUTE "Enable heterogeneous compute abstraction (GPU/NPU)" ON)
+    option(ENABLE_PLUGIN_MANAGER "Enable dynamic plugin manager and task scheduler" ON)
     
 elseif(DYNALGO_PLATFORM STREQUAL "aarch64_nvidia")
     set(DYNALGO_DEFAULT_CAMERA_VENDOR "nvsipl" CACHE STRING "Camera vendor")

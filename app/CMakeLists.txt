@@ -34,4 +34,11 @@ endif()
 
 find_package(OpenCV QUIET)
 add_subdirectory(plugins/opencv)
+
+# UPEP Feature Options for App Layer
+option(ENABLE_LIDAR "Enable LiDAR support (point cloud, fusion)" ON)
+option(ENABLE_FUSION "Enable multi-modal fusion (vision-LiDAR)" ON)
+option(ENABLE_HETERO_COMPUTE "Enable heterogeneous compute abstraction (GPU/NPU)" ON)
+option(ENABLE_PLUGIN_MANAGER "Enable dynamic plugin manager and task scheduler" ON)
+
 add_subdirectory(dynamic_algo_cam)
