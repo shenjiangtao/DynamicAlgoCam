@@ -161,10 +161,43 @@ cmake --build build -j$(nproc)
 - Updated engagement loop to use `filterHalf=2` (5×5 median filter) for robust depth estimation
 - Added `calibrationFile` field to `StereoConfig`
 
-### Sprint 4: 3D Tracking + Actuators (Week 4-5)
-- Extend `ByteTrack::Track` with `z, vz` state
-- Implement 3D Kalman (constant velocity in camera coords)
-- Add `SerialActuator` / `CanActuator` backends
+### Sprint 4: x86 HAL Implementations (Week 4-5) ✅ COMPLETED
+```bash
+# Build all x86 HALs
+cmake -B build -DENABLE_ORBBEC_HAL=ON -DENABLE_ROBOSENSE_HAL=ON -DENABLE_STEREO_HAL=ON -DENABLE_ROBOSENSE_LIDAR_HAL=ON
+cmake --build build -j$(nproc)
+```
+
+**Code work completed:**
+- **Orbbec Camera HAL** (`hal/x86_64/camera/orbbec/orbbec_camera_hal.cpp`)
+  - Supports Gemini 305, 305g (GMSL2), 335L, 336L
+  - Multi-camera: IR stereo pairs (IR_LEFT + IR_RIGHT)
+  - HW D2C alignment for 335L/336L
+  - Dynamic SDK loading via dlopen
+  - GMSL2 connection support
+  - Calibration loading (intrinsic/extrinsic)
+- **RoboSense AC1 Camera HAL** (`hal/x86_64/camera/robosense/robosense_camera_hal.cpp`)
+  - RoboSense RoboX AC1 (Camera + LiDAR integration)
+  - Color (1920x1080@30), Depth (640x480@30), LiDAR point cloud, IMU
+  - HW sync support (GPIO/PTP)
+  - Fixed stream specifications per AC1 spec
+- **RoboSense LiDAR Sensor HAL** (`hal/x86_64/sensor/robosense/robosense_lidar_hal.cpp`)
+  - Implements `ISensorHAL` for AC1 LiDAR
+  - Outputs `FrameBuffer` with `FrameType::POINT_CLOUD` for fusion bundle
+  - `SyncConfig` support for HW/PTP/software sync
+  - LiDAR point cloud + IMU callbacks
+- **Stereo Camera HAL** (`hal/x86_64/camera/stereo/stereo_camera_hal.cpp`)
+  - Bridges `UvcStereoCamera` driver to `ICameraHAL`
+  - Dual UVC cameras with hardware sync
+  - OpenCV-based rectification (`cv::initUndistortRectifyMap`, `cv::remap`)
+  - SGBM stereo matching for depth/disparity
+  - Calibration loading from OpenCV YAML/XML
+- **CMake Configuration** (`hal/CMakeLists.txt`)
+  - Options: `ENABLE_ORBBEC_HAL`, `ENABLE_ROBOSENSE_HAL`, `ENABLE_STEREO_HAL`, `ENABLE_ROBOSENSE_LIDAR_HAL` (all default ON)
+  - Local library output: `./lib/dynalgo/hal/`
+- **HAL Factory Registration** (`app/core/dynalgo_hal_factory.cpp`)
+  - `registerX86_64Vendors()` for dynamic plugin loading
+  - Libraries loaded from `./lib/dynalgo/hal/` via `dlopen`/`dlsym`
 
 ### Sprint 5: UPEP Multi-Modal Fusion (Week 5-6) ✅ COMPLETED
 ```bash
@@ -238,6 +271,18 @@ cmake --build build -j$(nproc)
 
 | Component | Unit Test | Integration Test | Hardware Test |
 |-----------|-----------|------------------|---------------|
+| `detectionCenterToCamera3D` | ✅ `tests/detection_to_3d_test.cpp` | ✅ Called from engagement loop | ❌ |
+| Orbbec Camera HAL | ❌ | ✅ Build verified | ❌ |
+| RoboSense AC1 Camera HAL | ❌ | ✅ Build verified | ❌ |
+| RoboSense LiDAR Sensor HAL | ❌ | ✅ Build verified | ❌ |
+| Stereo Camera HAL | ❌ | ✅ Build verified | ❌ |
+| Orbbec 305/305g/335L/336L support | ❌ | ✅ Build verified | ❌ |
+| GMSL2 connection (Orbbec 305g) | ❌ | ❌ | ❌ |
+| HW D2C (Orbbec 335L/336L) | ❌ | ❌ | ❌ |
+| AC1 LiDAR point cloud output | ❌ | ❌ | ❌ |
+| Stereo rectification (OpenCV) | ❌ | ❌ | ❌ |
+| SGBM depth computation | ❌ | ❌ | ❌ |
+
 | `detectionCenterToCamera3D` | ✅ `tests/detection_to_3d_test.cpp` | ✅ Called from engagement loop | ❌ |
 | TargetSelector | ❌ | ❌ | ❌ |
 | KalmanTracker | ❌ | ❌ | ❌ |

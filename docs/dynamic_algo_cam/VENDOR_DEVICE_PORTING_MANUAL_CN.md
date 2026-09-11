@@ -1021,6 +1021,265 @@ if (model) {
 
 ---
 
+## 10. HAL 厂商移植指南 / HAL Vendor Porting Guide
+
+本节说明如何为 x86_64（及其他平台）实现新的 HAL 厂商插件。
+
+### 10.1 目录结构 / Directory Structure
+
+```
+hal/
+├── x86_64/
+│   ├── camera/
+│   │   └── <vendor>/           # 如 orbbec/, robosense/, stereo/
+│   │       ├── CMakeLists.txt
+│   │       └── <vendor>_camera_hal.cpp
+│   ├── sensor/
+│   │   └── <vendor>/           # 如 robosense/
+│   │       ├── CMakeLists.txt
+│   │       └── <vendor>_lidar_hal.cpp
+│   └── ... (encoder, display 等)
+```
+
+### 10.2 Camera HAL 实现 / Camera HAL Implementation
+
+创建 `<vendor>_camera_hal.cpp` 实现 `hal::ICameraHAL`：
+
+```cpp
+#include <dynalgo/hal/camera_hal.hpp>
+#include <dynalgo/hal/hal_types.hpp>
+
+namespace dynalgo {
+class <Vendor>CameraHAL : public hal::ICameraHAL {
+public:
+    // 枚举设备
+    hal::Result<std::vector<hal::CameraDeviceInfo>> enumerateDevices() override;
+    
+    // 获取支持的流配置
+    hal::Result<std::vector<hal::StreamConfig>> getSupportedStreams(const std::string& device_id) override;
+    
+    // 单相机初始化
+    hal::ResultVoid initialize(const hal::CameraConfig& config) override;
+    
+    // 多相机初始化（立体视觉）
+    hal::ResultVoid initializeMulti(const hal::MultiCameraConfig& config) override;
+    
+    // 启动/停止流
+    hal::ResultVoid start() override;
+    hal::ResultVoid stop() override;
+    
+    // 帧获取
+    hal::Result<hal::FrameMetadata> acquireFrame(uint32_t timeout_ms = 1000) override;
+    hal::Result<std::vector<hal::FrameMetadata>> acquireFrames(uint32_t timeout_ms = 1000) override;
+    
+    // 回调
+    hal::ResultVoid registerCallback(hal::FrameCallback cb) override;
+    hal::ResultVoid unregisterCallback() override;
+    
+    // 控制（曝光、增益等）
+    hal::ResultVoid setControl(const std::string& device_id, hal::CameraControl control, int64_t value) override;
+    hal::Result<int64_t> getControl(const std::string& device_id, hal::CameraControl control) override;
+    
+    // 插件入口
+    hal::Result<std::string> getName() const override;
+    hal::Result<std::string> getVendor() const override;
+    hal::Result<std::string> getVersion() const override;
+};
+
+extern "C" {
+hal::ICameraHAL* dynalgo_hal_camera_create() { return new <Vendor>CameraHAL(); }
+void dynalgo_hal_camera_destroy(hal::ICameraHAL* ptr) { delete ptr; }
+}
+```
+
+**关键点：**
+- 仅导出两个 C 符号：`dynalgo_hal_camera_create` 和 `dynalgo_hal_camera_destroy`
+- 使用 `dlopen`/`dlsym` 动态加载 —— 无编译时对厂商 SDK 依赖
+- 使用 `hal::FrameBuffer` 实现零拷贝帧输出
+- 实现 `initializeMulti()` 用于立体/多相机
+- 使用 `hal::FrameType::POINT_CLOUD` 输出 LiDAR 数据
+
+### 10.3 Sensor HAL 实现 (LiDAR, IMU 等) / Sensor HAL Implementation
+
+创建 `<vendor>_lidar_hal.cpp` 实现 `hal::ISensorHAL`：
+
+```cpp
+#include <dynalgo/hal/sensor_hal.hpp>
+#include <dynalgo/hal/hal_types.hpp>
+
+namespace dynalgo {
+class <Vendor>LidarHAL : public hal::ISensorHAL {
+public:
+    hal::ResultVoid initialize(const hal::SensorConfig& config) override;
+    hal::ResultVoid deinitialize() override;
+    hal::ResultVoid start() override;
+    hal::ResultVoid stop() override;
+    
+    // 传统 API
+    hal::Result<hal::SensorData> read(uint32_t timeout_ms = 100) override;
+    hal::Result<std::vector<hal::SensorData>> readBatch(uint32_t count, uint32_t timeout_ms = 100) override;
+    
+    // 零拷贝 FrameBuffer API
+    hal::Result<hal::FrameBufferPtr> acquireFrameBuffer(uint32_t timeout_ms = 100) override;
+    hal::Result<std::vector<hal::FrameBufferPtr>> acquireFrameBuffers(uint32_t count, uint32_t timeout_ms = 100) override;
+    hal::ResultVoid releaseFrameBuffer(const hal::FrameBufferPtr& frame) override;
+    
+    // 同步支持
+    hal::ResultVoid setSyncConfig(const hal::SyncConfig& config) override;
+    hal::Result<hal::SyncConfig> getSyncConfig() const override;
+    
+    // 插件入口
+    hal::Result<std::string> getName() const override;
+    hal::Result<std::string> getVendor() const override;
+    hal::Result<std::string> getVersion() const override;
+    hal::Result<hal::SensorType> getType() const override { return hal::SensorType::LIDAR; }
+};
+
+extern "C" {
+hal::ISensorHAL* dynalgo_hal_sensor_create() { return new <Vendor>LidarHAL(); }
+void dynalgo_hal_sensor_destroy(hal::ISensorHAL* ptr) { delete ptr; }
+}
+```
+
+**关键点：**
+- 使用 `hal::FrameBuffer` with `FrameType::POINT_CLOUD` 输出 LiDAR 点云
+- 填充 `PointCloudLayout` 字段描述符 (x,y,z,intensity,ring,timestamp)
+- 实现 `setSyncConfig()` 支持硬件/PTP/软件时间同步
+- 通过 `registerFrameBufferCallback()` 注册异步回调
+
+### 10.4 CMake 配置 / CMake Configuration
+
+```cmake
+# hal/x86_64/camera/<vendor>/CMakeLists.txt
+cmake_minimum_required(VERSION 3.16)
+project(dynalgo_hal_camera_<vendor> LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 查找厂商 SDK（如需要）
+find_library(<VENDOR>_SDK_LIB <sdk_name>
+    PATHS ${CMAKE_SOURCE_DIR}/../../../../vendors/<Vendor>
+          /usr/local/lib
+          /opt/<Vendor>/lib
+    NO_DEFAULT_PATH
+)
+
+if(NOT <VENDOR>_SDK_LIB)
+    message(WARNING "<Vendor> SDK not found, HAL will use dynamic loading only")
+    add_library(<Vendor>::<sdk> INTERFACE IMPORTED)
+    set_target_properties(<Vendor>::<sdk> PROPERTIES
+        INTERFACE_LINK_LIBRARIES "${CMAKE_DL_LIBS}"
+    )
+else()
+    add_library(<Vendor>::<sdk> UNKNOWN IMPORTED)
+    set_target_properties(<Vendor>::<sdk> PROPERTIES IMPORTED_LOCATION ${<VENDOR>_SDK_LIB})
+endif()
+
+add_library(dynalgo_hal_camera_<vendor> SHARED
+    <vendor>_camera_hal.cpp
+)
+
+target_include_directories(dynalgo_hal_camera_<vendor> PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ../../../../include
+)
+
+target_link_libraries(dynalgo_hal_camera_<vendor> PRIVATE
+    dynalgo_hal_common
+    ${CMAKE_DL_LIBS}
+    <Vendor>::<sdk>
+)
+
+set_target_properties(dynalgo_hal_camera_<vendor> PROPERTIES
+    VERSION ${DYNALGO_VERSION}
+    SOVERSION 1
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+
+install(TARGETS dynalgo_hal_camera_<vendor>
+        LIBRARY DESTINATION lib/dynalgo/hal
+        RUNTIME DESTINATION bin)
+```
+
+### 10.5 工厂注册 / Factory Registration
+
+在 `app/core/dynalgo_hal_factory.cpp` 中添加注册：
+
+```cpp
+void HALFactory::registerX86_64Vendors() {
+    hal::CameraHALFactory::registerVendor("x86_64", "<vendor>",
+        []() -> hal::ICameraHAL* { return new dynalgo::<Vendor>CameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    hal::SensorHALFactory::registerVendor("x86_64", "<vendor>_lidar",
+        []() -> hal::ISensorHAL* { return new dynalgo::<Vendor>LidarHAL(); },
+        [](hal::ISensorHAL* p) { delete p; });
+}
+```
+
+在应用启动时调用 `HALFactory::registerX86_64Vendors()`（在 `dynamic_algo_cam.cpp` 中）。
+
+### 10.6 配置 Schema / Configuration Schema
+
+扩展板卡配置 YAML 以支持新厂商：
+
+```yaml
+board:
+  cameras:
+    - id: "cam0"
+      connector: "/dev/video0"
+      vendor: "<vendor>"
+      sensor_config: "<model>"
+      connection_type: "usb3"        # usb3, gmsl2, ethernet, pcie
+      role: "main"                   # main, stereo_left, stereo_right, depth, ir
+      streams:
+        - type: "color"
+          width: 1920
+          height: 1080
+          fps: 30
+          format: "NV12"
+        - type: "depth"
+          width: 1280
+          height: 800
+          fps: 30
+          format: "Y16"
+          hw_d2c: true
+      # 厂商特定
+      <vendor>_mode: "standard"
+  
+  lidars:
+    - id: "lidar0"
+      connector: "/dev/ttyUSB0"
+      vendor: "<vendor>"
+      sensor_config: "<model>"
+      connection_type: "usb3"
+      coordinate_frame: "sensor"
+      streams:
+        - type: "points"
+          fps: 10
+          format: "POINT"
+```
+
+### 10.7 构建与测试 / Build & Test
+
+```bash
+# 构建新 HAL
+cmake -B build -DENABLE_<VENDOR>_HAL=ON
+cmake --build build --target dynalgo_hal_camera_<vendor>
+
+# 验证库
+ls build/lib/dynalgo/hal/
+# libdynalgo_hal_camera_<vendor>.so
+
+# 使用 dynamic_algo_cam 测试
+./build/bin/dynamic_algo_cam --help | grep <vendor>
+```
+
+---
+
 ## 11. 待解决 / 开放项
 
 1. **`DynalgoFrameSet::nativeFrameSet`** 是过渡性设计。目标：当所有 D2C 对齐可基于 `DynalgoFrame::data` 工作时移除。

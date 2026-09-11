@@ -249,6 +249,76 @@
 
 ---
 
+## Phase E — x86 HAL 实现 (Orbbec, RoboSense, Stereo)
+
+**目标**：为 x86_64 平台实现完整的厂商 HAL 插件，支持 Orbbec (305/305g/335L/336L)、RoboSense AC1、通用 UVC 双目相机，以及 LiDAR Sensor HAL。
+
+**预计代码量**：4 个新 HAL 实现文件 + CMakeLists.txt 更新 + 配置扩展 + 文档同步。
+
+**对应设计文档**：MULTI_ARCH_PORTING_PLAN.md §x86_64 Vendor HAL Implementations, §x86_64 CMake Configuration, §HAL Factory Registration, §Configuration Schema, §Build Verification。
+
+### E1. Orbbec Camera HAL (Orbbec 305/305g/335L/336L)
+- [x] E1.1 实现 `hal/x86_64/camera/orbbec/orbbec_camera_hal.cpp`：完整 `ICameraHAL` 接口
+- [x] E1.2 支持 Gemini 305, 305g (GMSL2), 335L, 336L 型号识别
+- [x] E1.3 多相机支持：IR stereo pairs (IR_LEFT + IR_RIGHT)
+- [x] E1.4 硬件 D2C 对齐 (335L/336L)
+- [x] E1.5 通过 dlopen 动态加载 OrbbecSDK
+- [x] E1.6 GMSL2 连接类型支持
+- [x] E1.7 标定加载 (内参/外参/深度标度)
+- [x] E1.8 更新 `hal/x86_64/camera/orbbec/CMakeLists.txt`：查找 OrbbecSDK，链接 dl 库
+- [x] E1.9 构建验证：`cmake --build build --target dynalgo_hal_camera_orbbec` 通过
+
+### E2. RoboSense AC1 Camera HAL
+- [x] E2.1 实现 `hal/x86_64/camera/robosense/robosense_camera_hal.cpp`：完整 `ICameraHAL` 接口
+- [x] E2.2 支持 RoboSense RoboX AC1 (相机 + LiDAR 一体化)
+- [x] E2.3 颜色/深度/LiDAR/IMU 多流支持
+- [x] E2.4 硬件同步支持 (GPIO/PTP)
+- [x] E2.4 更新 `hal/x86_64/camera/robosense/CMakeLists.txt`：查找 RoboSense SDK
+- [x] E2.5 构建验证：`cmake --build build --target dynalgo_hal_camera_robosense` 通过
+
+### E3. RoboSense LiDAR Sensor HAL
+- [x] E3.1 实现 `hal/x86_64/sensor/robosense/robosense_lidar_hal.cpp`：完整 `ISensorHAL` 接口
+- [x] E3.2 输出 `FrameBuffer` with `FrameType::POINT_CLOUD` 用于融合 bundle
+- [x] E3.3 `SyncConfig` 支持 (HW/PTP/软件同步)
+- [x] E3.3 LiDAR 点云 + IMU 回调
+- [x] E3.4 更新 `hal/x86_64/sensor/robosense/CMakeLists.txt`
+- [x] E3.4 构建验证：`cmake --build build --target dynalgo_hal_sensor_robosense_lidar` 通过
+
+### E4. Stereo Camera HAL (通用 UVC)
+- [x] E4.1 实现 `hal/x86_64/camera/stereo/stereo_camera_hal.cpp`：桥接 `UvcStereoCamera` 到 `ICameraHAL`
+- [x] E4.2 双 UVC 相机硬件同步
+- [x] E4.3 OpenCV 标定矫正 (`cv::initUndistortRectifyMap`, `cv::remap`)
+- [x] E4.4 SGBM 立体匹配深度/视差计算
+- [x] E4.4 从 OpenCV YAML/XML 加载标定
+- [x] E4.5 更新 `hal/x86_64/camera/stereo/CMakeLists.txt`：OpenCV 依赖
+- [x] E4.5 构建验证：`cmake --build build --target dynalgo_hal_camera_stereo` 通过
+
+### E5. CMake 配置与工厂注册
+- [x] E5.1 更新 `hal/CMakeLists.txt`：添加 x86_64 选项 (ENABLE_ORBBEC_HAL, ENABLE_ROBOSENSE_HAL, ENABLE_STEREO_HAL, ENABLE_ROBOSENSE_LIDAR_HAL)
+- [x] E5.2 本地库输出目录：`./lib/dynalgo/hal/`
+- [x] E5.2 `app/core/dynalgo_hal_factory.cpp`：实现 `registerX86_64Vendors()`
+- [x] E5.3 `app/dynamic_algo_cam/dynamic_algo_cam.cpp`：启动时调用 `HALFactory::registerX86_64Vendors()`
+
+### E6. 配置 Schema 扩展
+- [x] E6.1 `StreamConfigYAML`：per-stream 配置 (type, width, height, fps, format, hw_d2c, enabled)
+- [x] E6.2 `CameraConfigYAML`：connection_type, role, streams, orbbec_mode, disable_ir_left
+- [x] E6.3 `LidarConfigYAML`：streams, coordinate_frame
+- [x] E6.4 更新 `app/core/dynalgo_config_manager.hpp/.cpp`：YAML 加载支持
+
+### E7. 文档同步
+- [x] E7.1 更新 `MULTI_ARCH_PORTING_PLAN.md`：x86_64 Vendor HAL Implementations 章节
+- [x] E7.2 更新 `MULTI_ARCH_PORTING_PLAN_CN.md`：中文版同步
+- [x] E7.3 更新 `PROJECT_COMPLETION_PLAN.md`：Sprint 4 (x86 HAL Implementations) + 验证清单
+- [x] E7.4 更新 `VENDOR_DEVICE_PORTING_MANUAL.md` / `_CN.md`：HAL 厂商移植指南
+
+### E8. 验收验证
+- [x] E8.1 `cmake --build build --target dynalgo_core dynamic_algo_cam` 全量构建通过
+- [x] E8.2 所有 4 个 HAL 目标独立构建通过
+- [x] E8.3 `ls build/lib/dynalgo/hal/` 验证 4 个 .so 文件存在
+- [x] E8.4 Git commit: `208fe8a` "feat: x86 HAL implementations for Orbbec, RoboSense, and Stereo cameras + LiDAR sensor"
+
+---
+
 ## 范围外事项追踪（不在本清单执行，仅登记备查）
 
 | 编号 | 事项 | 立项条件 | 登记日 |

@@ -1249,6 +1249,146 @@ dynalgo-cam-2.0.0-linux-aarch64/
 
 ---
 
+## x86_64 厂商 HAL 实现 (已完成) / x86_64 Vendor HAL Implementations (Completed)
+
+以下厂商特定 HAL 实现已在 x86_64 平台完成：
+
+| HAL / 厂商 | 实现文件 | 功能 | 构建状态 |
+|---|---|---|---|
+| **Orbbec Camera HAL** | `hal/x86_64/camera/orbbec/orbbec_camera_hal.cpp` | • Gemini 305, 305g (GMSL2), 335L, 336L<br>• 多相机: IR 立体对 (IR_LEFT + IR_RIGHT)<br>• 335L/336L 硬件 D2C 对齐<br>• 通过 dlopen 动态加载 SDK<br>• GMSL2 连接支持<br>• 标定加载 (内参/外参) | ✅ **已构建** |
+| **RoboSense AC1 Camera HAL** | `hal/x86_64/camera/robosense/robosense_camera_hal.cpp` | • RoboSense RoboX AC1 (相机 + LiDAR 一体化)<br>• 彩色 (1920x1080@30), 深度 (640x480@30), LiDAR 点云, IMU<br>• 硬件同步支持 (GPIO/PTP)<br>• 固定流规格符合 AC1 规格 | ✅ **已构建** |
+| **RoboSense LiDAR Sensor HAL** | `hal/x86_64/sensor/robosense/robosense_lidar_hal.cpp` | • 实现 `ISensorHAL` 用于 AC1 LiDAR<br>• 输出 `FrameBuffer` with `FrameType::POINT_CLOUD`<br>• `SyncConfig` 支持 HW/PTP/软件同步<br>• LiDAR 点云 + IMU 回调 | ✅ **已构建** |
+| **Stereo Camera HAL** | `hal/x86_64/camera/stereo/stereo_camera_hal.cpp` | • 桥接 `UvcStereoCamera` 驱动到 `ICameraHAL`<br>• 双 UVC 相机硬件同步<br>• OpenCV 标定矫正 (`cv::initUndistortRectifyMap`, `cv::remap`)<br>• SGBM 立体匹配深度/视差计算<br>• 从 OpenCV YAML/XML 加载标定 | ✅ **已构建** |
+
+---
+
+## x86_64 CMake 配置 / x86_64 CMake Configuration
+
+以下 CMake 选项控制 x86_64 HAL 构建 (x86_64 平台默认 ON)：
+
+```cmake
+option(ENABLE_ORBBEC_HAL "Build Orbbec Camera HAL (305/305g/335L/336L)" ON)
+option(ENABLE_ROBOSENSE_HAL "Build RoboSense AC1 Camera HAL" ON)
+option(ENABLE_STEREO_HAL "Build Generic UVC Stereo Camera HAL" ON)
+option(ENABLE_ROBOSENSE_LIDAR_HAL "Build RoboSense AC1 LiDAR Sensor HAL" ON)
+```
+
+**库输出**: 所有 HAL 共享库构建到 `./lib/dynalgo/hal/` (构建目录本地)。
+
+---
+
+## HAL 工厂注册 / HAL Factory Registration
+
+厂商插件在应用启动时通过 `HALFactory::registerX86_64Vendors()` 注册：
+
+```cpp
+// app/core/dynalgo_hal_factory.cpp
+void HALFactory::registerX86_64Vendors() {
+    // Camera HALs
+    hal::CameraHALFactory::registerVendor("x86_64", "orbbec",
+        []() -> hal::ICameraHAL* { return new dynalgo::OrbbecCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    hal::CameraHALFactory::registerVendor("x86_64", "robosense",
+        []() -> hal::ICameraHAL* { return new dynalgo::RobosenseCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    hal::CameraHALFactory::registerVendor("x86_64", "stereo",
+        []() -> hal::ICameraHAL* { return new dynalgo::StereoCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    // Sensor HALs
+    hal::SensorHALFactory::registerVendor("x86_64", "robosense_lidar",
+        []() -> hal::ISensorHAL* { return new dynalgo::RobosenseLidarHAL(); },
+        [](hal::ISensorHAL* p) { delete p; });
+}
+```
+
+库通过 `dlopen`/`dlsym` 从 `./lib/dynalgo/hal/` 动态加载。
+
+---
+
+## 配置 Schema / Configuration Schema
+
+板卡配置 schema 已扩展以支持多传感器：
+
+```yaml
+board:
+  name: "x86_devkit"
+  platform: "x86_64"
+  
+  cameras:
+    - id: "cam0"
+      connector: "/dev/video0"
+      vendor: "orbbec"
+      sensor_config: "gemini_305"
+      connection_type: "usb3"           # usb3, gmsl2, ethernet, pcie
+      role: "main"                      # main, stereo_left, stereo_right, depth, ir
+      streams:
+        - type: "color"
+          width: 1920
+          height: 1080
+          fps: 30
+          format: "NV12"
+        - type: "depth"
+          width: 1280
+          height: 800
+          fps: 30
+          format: "Y16"
+          hw_d2c: true
+        - type: "ir_left"
+          width: 640
+          height: 400
+          fps: 30
+          format: "Y8"
+        - type: "ir_right"
+          width: 640
+          height: 400
+          fps: 30
+          format: "Y8"
+      orbbec_mode: "standard"           # standard, 305g_gmsl2
+      disable_ir_left: false
+      
+  lidars:
+    - id: "lidar0"
+      connector: "/dev/ttyUSB0"
+      vendor: "robosense"
+      sensor_config: "rs_ac1"
+      connection_type: "usb3"
+      coordinate_frame: "sensor"
+      streams:
+        - type: "points"
+          fps: 10
+          format: "POINT"
+          
+  sync:
+    sync_method: "hardware_trigger"     # hardware_trigger, ptp, software_timestamp
+    sync_group_id: 1
+    max_time_diff_ns: 1000000
+    enable_interpolation: true
+```
+
+---
+
+## 构建验证 / Build Verification
+
+所有 x86_64 HAL 目标构建成功：
+
+```bash
+# Build all x86 HALs
+cmake -B build -DENABLE_ORBBEC_HAL=ON -DENABLE_ROBOSENSE_HAL=ON -DENABLE_STEREO_HAL=ON -DENABLE_ROBOSENSE_LIDAR_HAL=ON
+cmake --build build --target dynalgo_hal_camera_orbbec dynalgo_hal_camera_robosense dynalgo_hal_camera_stereo dynalgo_hal_sensor_robosense_lidar
+
+# Verify libraries
+ls build/lib/dynalgo/hal/
+# libdynalgo_hal_camera_orbbec.so
+# libdynalgo_hal_camera_robosense.so
+# libdynalgo_hal_camera_stereo.so
+# libdynalgo_hal_sensor_robosense_lidar.so
+```
+
+---
+
 ## 11. 附录：厂商插件接口 / Appendix: Vendor Plugin Interface
 
 每个 HAL 厂商插件仅导出 **两个 C 符号**：

@@ -1663,6 +1663,146 @@ echo "Installation complete. Run: systemctl start dynalgo-cam"
 
 ---
 
+## x86_64 Vendor HAL Implementations (Completed) / x86_64 厂商 HAL 实现 (已完成)
+
+The following vendor-specific HAL implementations have been completed for x86_64 platform:
+
+| HAL / 厂商 | Implementation / 实现文件 | Features / 功能 | Build Status / 构建状态 |
+|---|---|---|---|
+| **Orbbec Camera HAL** | `hal/x86_64/camera/orbbec/orbbec_camera_hal.cpp` | • Gemini 305, 305g (GMSL2), 335L, 336L<br>• Multi-camera: IR stereo pairs (IR_LEFT + IR_RIGHT)<br>• HW D2C alignment for 335L/336L<br>• Dynamic SDK loading via dlopen<br>• GMSL2 connection support<br>• Calibration loading (intrinsic/extrinsic) | ✅ **BUILT** |
+| **RoboSense AC1 Camera HAL** | `hal/x86_64/camera/robosense/robosense_camera_hal.cpp` | • RoboSense RoboX AC1 (Camera + LiDAR integration)<br>• Color (1920x1080@30), Depth (640x480@30), LiDAR point cloud, IMU<br>• HW sync support (GPIO/PTP)<br>• Fixed stream specifications per AC1 spec | ✅ **BUILT** |
+| **RoboSense LiDAR Sensor HAL** | `hal/x86_64/sensor/robosense/robosense_lidar_hal.cpp` | • Implements `ISensorHAL` for AC1 LiDAR<br>• Outputs `FrameBuffer` with `FrameType::POINT_CLOUD`<br>• `SyncConfig` support for HW/PTP/software sync<br>• LiDAR point cloud + IMU callbacks | ✅ **BUILT** |
+| **Stereo Camera HAL** | `hal/x86_64/camera/stereo/stereo_camera_hal.cpp` | • Bridges `UvcStereoCamera` driver to `ICameraHAL`<br>• Dual UVC cameras with hardware sync<br>• OpenCV-based rectification (`cv::initUndistortRectifyMap`, `cv::remap`)<br>• SGBM stereo matching for depth/disparity<br>• Calibration loading from OpenCV YAML/XML | ✅ **BUILT** |
+
+---
+
+## x86_64 CMake Configuration / x86_64 CMake 配置
+
+The following CMake options control x86_64 HAL builds (all default ON for x86_64):
+
+```cmake
+option(ENABLE_ORBBEC_HAL "Build Orbbec Camera HAL (305/305g/335L/336L)" ON)
+option(ENABLE_ROBOSENSE_HAL "Build RoboSense AC1 Camera HAL" ON)
+option(ENABLE_STEREO_HAL "Build Generic UVC Stereo Camera HAL" ON)
+option(ENABLE_ROBOSENSE_LIDAR_HAL "Build RoboSense AC1 LiDAR Sensor HAL" ON)
+```
+
+**Library Output**: All HAL shared libraries are built to `./lib/dynalgo/hal/` (local to build directory).
+
+---
+
+## HAL Factory Registration / HAL 工厂注册
+
+Vendor plugins are registered at application startup via `HALFactory::registerX86_64Vendors()`:
+
+```cpp
+// app/core/dynalgo_hal_factory.cpp
+void HALFactory::registerX86_64Vendors() {
+    // Camera HALs
+    hal::CameraHALFactory::registerVendor("x86_64", "orbbec",
+        []() -> hal::ICameraHAL* { return new dynalgo::OrbbecCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    hal::CameraHALFactory::registerVendor("x86_64", "robosense",
+        []() -> hal::ICameraHAL* { return new dynalgo::RobosenseCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    hal::CameraHALFactory::registerVendor("x86_64", "stereo",
+        []() -> hal::ICameraHAL* { return new dynalgo::StereoCameraHAL(); },
+        [](hal::ICameraHAL* p) { delete p; });
+    
+    // Sensor HALs
+    hal::SensorHALFactory::registerVendor("x86_64", "robosense_lidar",
+        []() -> hal::ISensorHAL* { return new dynalgo::RobosenseLidarHAL(); },
+        [](hal::ISensorHAL* p) { delete p; });
+}
+```
+
+Libraries are dynamically loaded from `./lib/dynalgo/hal/` via `dlopen`/`dlsym`.
+
+---
+
+## Configuration Schema / 配置 Schema
+
+The board configuration schema has been extended for multi-sensor support:
+
+```yaml
+board:
+  name: "x86_devkit"
+  platform: "x86_64"
+  
+  cameras:
+    - id: "cam0"
+      connector: "/dev/video0"
+      vendor: "orbbec"
+      sensor_config: "gemini_305"
+      connection_type: "usb3"           # usb3, gmsl2, ethernet, pcie
+      role: "main"                      # main, stereo_left, stereo_right, depth, ir
+      streams:
+        - type: "color"
+          width: 1920
+          height: 1080
+          fps: 30
+          format: "NV12"
+        - type: "depth"
+          width: 1280
+          height: 800
+          fps: 30
+          format: "Y16"
+          hw_d2c: true
+        - type: "ir_left"
+          width: 640
+          height: 400
+          fps: 30
+          format: "Y8"
+        - type: "ir_right"
+          width: 640
+          height: 400
+          fps: 30
+          format: "Y8"
+      orbbec_mode: "standard"           # standard, 305g_gmsl2
+      disable_ir_left: false
+      
+  lidars:
+    - id: "lidar0"
+      connector: "/dev/ttyUSB0"
+      vendor: "robosense"
+      sensor_config: "rs_ac1"
+      connection_type: "usb3"
+      coordinate_frame: "sensor"
+      streams:
+        - type: "points"
+          fps: 10
+          format: "POINT"
+          
+  sync:
+    sync_method: "hardware_trigger"     # hardware_trigger, ptp, software_timestamp
+    sync_group_id: 1
+    max_time_diff_ns: 1000000
+    enable_interpolation: true
+```
+
+---
+
+## Build Verification / 构建验证
+
+All x86_64 HAL targets build successfully:
+
+```bash
+# Build all x86 HALs
+cmake -B build -DENABLE_ORBBEC_HAL=ON -DENABLE_ROBOSENSE_HAL=ON -DENABLE_STEREO_HAL=ON -DENABLE_ROBOSENSE_LIDAR_HAL=ON
+cmake --build build --target dynalgo_hal_camera_orbbec dynalgo_hal_camera_robosense dynalgo_hal_camera_stereo dynalgo_hal_sensor_robosense_lidar
+
+# Verify libraries
+ls build/lib/dynalgo/hal/
+# libdynalgo_hal_camera_orbbec.so
+# libdynalgo_hal_camera_robosense.so
+# libdynalgo_hal_camera_stereo.so
+# libdynalgo_hal_sensor_robosense_lidar.so
+```
+
+---
+
 ## 11. Appendix: Vendor Plugin Interface / 附录：厂商插件接口
 
 Each HAL vendor plugin exports **exactly two C symbols**:
