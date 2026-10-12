@@ -6,6 +6,9 @@ project(dynalgo_hal_camera_nvsipl LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Find nlohmann_json for JSON config parsing
+find_package(nlohmann_json REQUIRED)
+
 add_library(dynalgo_hal_camera_nvsipl SHARED
     nvsipl_camera_hal.cpp
     nvsipl_platform_cfg.cpp
@@ -32,6 +35,7 @@ target_link_libraries(dynalgo_hal_camera_nvsipl PRIVATE
     ${NVMEDIA_2D_LIB}
     ${TEGRA_WFD_LIB}
     ${CUDLA_LIB}
+    nlohmann_json::nlohmann_json
 )
 
 target_compile_definitions(dynalgo_hal_camera_nvsipl PRIVATE
