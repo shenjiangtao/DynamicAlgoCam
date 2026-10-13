@@ -1,24 +1,27 @@
 cmake_minimum_required(VERSION 3.16)
 
 # aarch64_nvidia NvSIPL Camera HAL
-project(dynalgo_hal_camera_nvsipl LANGUAGES CXX)
+project(dynalgo_hal_camera_nvsipl LANGUAGES CXX VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find nlohmann_json for JSON config parsing
-find_package(nlohmann_json REQUIRED)
+# Use nlohmann/json.hpp from local third_party directory (vendored single-header)
+# This avoids external dependencies and works offline
 
 add_library(dynalgo_hal_camera_nvsipl SHARED
     nvsipl_camera_hal.cpp
     nvsipl_platform_cfg.cpp
+    nvsipl_enc_consumer.cpp
 )
 
 target_include_directories(dynalgo_hal_camera_nvsipl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
     ../../../../include
     ${NVSIPL_INCLUDE_DIRS}
     ${NVMEDIA_INCLUDE_DIRS}
+    /drive/drive-linux/include/nvmedia_6x
     ${NVSCIBUF_INCLUDE_DIRS}
     ${NVSCISYNC_INCLUDE_DIRS}
     ${NVSCISTREAM_INCLUDE_DIRS}
@@ -35,7 +38,6 @@ target_link_libraries(dynalgo_hal_camera_nvsipl PRIVATE
     ${NVMEDIA_2D_LIB}
     ${TEGRA_WFD_LIB}
     ${CUDLA_LIB}
-    nlohmann_json::nlohmann_json
 )
 
 target_compile_definitions(dynalgo_hal_camera_nvsipl PRIVATE
@@ -49,7 +51,7 @@ target_compile_definitions(dynalgo_hal_camera_nvsipl PRIVATE
 )
 
 set_target_properties(dynalgo_hal_camera_nvsipl PROPERTIES
-    VERSION ${DYNALGO_VERSION}
+    VERSION ${PROJECT_VERSION}
     SOVERSION 1
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON

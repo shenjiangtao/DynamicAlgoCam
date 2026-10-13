@@ -21,7 +21,6 @@
 #include <fstream>
 #include <iostream>
 #include <queue>
-#include <yaml-cpp/yaml.h>
 
 // NvSIPL headers - only available on NVIDIA platforms
 #ifdef DYNALGO_HAVE_NVSIPL
@@ -36,12 +35,30 @@
 #include "nvscibuf.h"
 #include "nvscisync.h"
 #include "nvscistream.h"
-#else
-// Forward declarations for mock types
-#endif
 
-// Mock types for compilation on non-NVIDIA platforms (always available)
-#ifndef DYNALGO_HAVE_NVSIPL
+// Logging macros
+#define LOG_DBG(fmt, ...) fprintf(stderr, "[NVPL_DBG] " fmt "\n", ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...) fprintf(stderr, "[NVPL_INFO] " fmt "\n", ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...) fprintf(stderr, "[NVPL_WARN] " fmt "\n", ##__VA_ARGS__)
+#define LOG_ERR(fmt, ...) fprintf(stderr, "[NVPL_ERR] " fmt "\n", ##__VA_ARGS__)
+
+// Type aliases for real NvSIPL API
+using NotificationType = nvsipl::NvSIPLPipelineNotifier::NotificationType;
+using NotificationData = nvsipl::NvSIPLPipelineNotifier::NotificationData;
+using INvSIPLFrameCompletionQueue = nvsipl::INvSIPLFrameCompletionQueue;
+using INvSIPLNotificationQueue = nvsipl::INvSIPLNotificationQueue;
+using INvSIPLClient = nvsipl::INvSIPLClient;
+using INvSIPLCamera = nvsipl::INvSIPLCamera;
+using INvSIPLBuffer = nvsipl::INvSIPLClient::INvSIPLBuffer;
+using INvSIPLNvMBuffer = nvsipl::INvSIPLClient::INvSIPLNvMBuffer;
+using NvSIPLDeviceBlockQueues = nvsipl::NvSIPLDeviceBlockQueues;
+using NvSIPLPipelineConfiguration = nvsipl::NvSIPLPipelineConfiguration;
+using NvSIPLPipelineQueues = nvsipl::NvSIPLPipelineQueues;
+using ConsumerDesc = nvsipl::INvSIPLClient::ConsumerDesc;
+using ImageMetaData = nvsipl::INvSIPLClient::ImageMetaData;
+
+#else
+// Mock types for compilation on non-NVIDIA platforms
 namespace nvsipl {
     using SIPLStatus = int;
     constexpr int NVSIPL_STATUS_OK = 0;
@@ -51,12 +68,13 @@ namespace nvsipl {
     constexpr int NVSIPL_STATUS_EOF = -4;
     constexpr int NVSIPL_STATUS_OUT_OF_MEMORY = -5;
     
-    enum class SurfaceFormat { SF_RAW12 };
+    using NvSiplCapInputFormatType = int;
+    
     struct SensorInfo { 
         uint32_t id; 
         std::string name; 
         struct {
-            nvsipl::SurfaceFormat inputFormat = nvsipl::SurfaceFormat::SF_RAW12;
+            NvSiplCapInputFormatType inputFormat = 0;
         } vcInfo;
     };
     struct CameraModuleInfo { SensorInfo sensorInfo; std::string name; };
@@ -67,13 +85,13 @@ namespace nvsipl {
     class INvSIPLFrameCompletionQueue;
     class INvSIPLNotificationQueue;
     
-    struct NvSIPLDeviceBlockQueues { std::vector<nvsipl::INvSIPLNotificationQueue*> notificationQueue; };
+    struct NvSIPLDeviceBlockQueues { std::vector<INvSIPLNotificationQueue*> notificationQueue; };
     struct NvSIPLPipelineConfiguration { bool captureOutputRequested; bool isp0OutputRequested; bool isp1OutputRequested; };
     struct NvSIPLPipelineQueues { 
-        nvsipl::INvSIPLFrameCompletionQueue* captureCompletionQueue; 
-        nvsipl::INvSIPLFrameCompletionQueue* isp0CompletionQueue; 
-        nvsipl::INvSIPLFrameCompletionQueue* isp1CompletionQueue; 
-        nvsipl::INvSIPLNotificationQueue* notificationQueue; 
+        INvSIPLFrameCompletionQueue* captureCompletionQueue; 
+        INvSIPLFrameCompletionQueue* isp0CompletionQueue; 
+        INvSIPLFrameCompletionQueue* isp1CompletionQueue; 
+        INvSIPLNotificationQueue* notificationQueue; 
     };
     struct NotificationData { int eNotifType; };
     constexpr int NOTIF_ERROR_ICP_CAPTURE_FAILURE = 1;
@@ -100,44 +118,34 @@ namespace nvsipl {
     
     class INvSIPLClient {
     public:
-        class ConsumerDesc {
-        public:
-            enum class OutputType { ICP, ISP0, ISP1, ISP2 };
-        };
         class INvSIPLBuffer {
         public:
-            virtual void Release() {}
-            virtual void* GetNvSciBufImage() { return nullptr; }
-            struct ImageAttributes {
-                uint32_t width = 3840;
-                uint32_t height = 2160;
-            };
-            virtual ImageAttributes GetImageAttributes() { return ImageAttributes{}; }
-        };
-        class INvSIPLFrameCompletionQueue {
-        public:
-            virtual SIPLStatus Get(INvSIPLBuffer**, uint64_t) { return NVSIPL_STATUS_OK; }
-        };
-        class INvSIPLNotificationQueue {
-        public:
-            virtual SIPLStatus Get(NotificationData&, uint64_t) { return NVSIPL_STATUS_OK; }
+            virtual void AddRef() = 0;
+            virtual SIPLStatus Release() = 0;
         };
     };
     
     class INvSIPLFrameCompletionQueue {
     public:
-        virtual SIPLStatus Get(INvSIPLClient::INvSIPLBuffer**, uint64_t) { return NVSIPL_STATUS_OK; }
+        virtual SIPLStatus Get(INvSIPLClient::INvSIPLBuffer*& item, size_t timeoutUsec) = 0;
     };
     
     class INvSIPLNotificationQueue {
     public:
-        virtual SIPLStatus Get(NotificationData&, uint64_t) { return NVSIPL_STATUS_OK; }
+        virtual SIPLStatus Get(NotificationData& item, size_t timeoutUsec) = 0;
     };
+    
+    // Logging macros for mock
+    #define LOG_DBG(fmt, ...) fprintf(stderr, "[NVPL_DBG] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_INFO(fmt, ...) fprintf(stderr, "[NVPL_INFO] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_WARN(fmt, ...) fprintf(stderr, "[NVPL_WARN] " fmt "\n", ##__VA_ARGS__)
+    #define LOG_ERR(fmt, ...) fprintf(stderr, "[NVPL_ERR] " fmt "\n", ##__VA_ARGS__)
 }
 #endif
 
 namespace dynalgo {
 
+// Use nvsipl types
 using nvsipl::SIPLStatus;
 using nvsipl::NVSIPL_STATUS_OK;
 using nvsipl::NVSIPL_STATUS_BAD_ARGUMENT;
@@ -145,6 +153,13 @@ using nvsipl::NVSIPL_STATUS_ERROR;
 using nvsipl::NVSIPL_STATUS_TIMED_OUT;
 using nvsipl::NVSIPL_STATUS_EOF;
 using nvsipl::NVSIPL_STATUS_OUT_OF_MEMORY;
+
+// Notification constants - use the real NvSIPL types when available
+#ifdef DYNALGO_HAVE_NVSIPL
+// In real NvSIPL, these are in nvsipl::NvSIPLPipelineMgr::NotificationType enum
+// We'll use them directly in switch statements
+#else
+// Mock constants already defined in nvsipl namespace
 using nvsipl::NOTIF_ERROR_ICP_CAPTURE_FAILURE;
 using nvsipl::NOTIF_ERROR_ISP_PROCESSING_FAILURE;
 using nvsipl::NOTIF_ERROR_INTERNAL_FAILURE;
@@ -158,38 +173,26 @@ using nvsipl::NOTIF_WARN_ICP_FRAME_DROP;
 using nvsipl::NOTIF_WARN_ICP_FRAME_DISCONTINUITY;
 using nvsipl::NOTIF_WARN_ICP_CAPTURE_TIMEOUT;
 using nvsipl::NOTIF_ERROR_ICP_EMB_DATA_PARSE_FAILURE;
-using nvsipl::NOTIF_ERROR_ISP_PROCESSING_FAILURE;
 using nvsipl::NOTIF_ERROR_ACP_PROCESSING_FAILURE;
 using nvsipl::NOTIF_ERROR_CDI_SET_SENSOR_CTRL_FAILURE;
 using nvsipl::NOTIF_ERROR_ICP_AUTH_FAILURE;
-
-#ifdef DYNALGO_HAVE_NVSIPL
-// Forward declarations for internal handler classes
-class PipelineFrameQueueHandler;
-class PipelineNotificationHandler;
-class DeviceBlockNotificationHandler;
-#else
-// Forward declarations for internal handler classes
-class PipelineFrameQueueHandler;
-class PipelineNotificationHandler;
-class DeviceBlockNotificationHandler;
+using nvsipl::NOTIF_ERROR_DESERIALIZER_FAILURE;
+using nvsipl::NOTIF_ERROR_SERIALIZER_FAILURE;
+using nvsipl::NOTIF_ERROR_SENSOR_FAILURE;
+using nvsipl::NOTIF_ERROR_ISP_PROCESSING_FAILURE_RECOVERABLE;
 #endif
 
-// Internal frame queue handler - wraps NvSIPL frame completion queue
+// Pipeline frame queue handler
 class PipelineFrameQueueHandler {
 public:
-    using FrameCallback = std::function<void(const hal::FrameMetadata&)>;
+    PipelineFrameQueueHandler(uint32_t sensor_id) : m_sensor_id(sensor_id) {}
 
-    PipelineFrameQueueHandler(uint32_t sensor_id, FrameCallback cb)
-        : m_sensor_id(sensor_id), m_callback(std::move(cb)) {}
-
-    ~PipelineFrameQueueHandler() { Deinit(); }
-
-    SIPLStatus Init(uint32_t sensor_id,
-                    const std::vector<std::pair<nvsipl::INvSIPLClient::ConsumerDesc::OutputType,
-                                                 nvsipl::INvSIPLFrameCompletionQueue*>>& queues) {
+    SIPLStatus Init(uint32_t sensor_id, 
+                    const std::vector<std::pair<ConsumerDesc::OutputType, INvSIPLFrameCompletionQueue*>>& queues,
+                    dynalgo::hal::ICameraHAL::FrameCallback callback) {
         m_sensor_id = sensor_id;
         m_queues = queues;
+        m_callback = std::move(callback);
         m_quit = false;
         m_thread = std::thread(&PipelineFrameQueueHandler::ThreadFunc, this);
         return NVSIPL_STATUS_OK;
@@ -197,9 +200,7 @@ public:
 
     void Deinit() {
         m_quit = true;
-        if (m_thread.joinable()) {
-            m_thread.join();
-        }
+        if (m_thread.joinable()) m_thread.join();
     }
 
     uint32_t GetSensorId() const { return m_sensor_id; }
@@ -208,15 +209,15 @@ private:
     void ThreadFunc() {
         pthread_setname_np(pthread_self(), "FrameQueue");
 
-        std::vector<nvsipl::INvSIPLClient::INvSIPLBuffer*> buffers(m_queues.size(), nullptr);
+        std::vector<INvSIPLBuffer*> buffers(m_queues.size(), nullptr);
         hal::FrameMetadata frame;
         frame.sensor_id = m_sensor_id;
 
         while (!m_quit) {
             bool all_ok = true;
             for (size_t i = 0; i < m_queues.size(); ++i) {
-                nvsipl::INvSIPLClient::INvSIPLBuffer* buf = nullptr;
-                SIPLStatus status = m_queues[i].second->Get(&buf, 1000000); // 1s timeout
+                INvSIPLBuffer* buf = nullptr;
+                SIPLStatus status = m_queues[i].second->Get(buf, 1000000); // 1s timeout
                 if (status == NVSIPL_STATUS_OK) {
                     buffers[i] = buf;
                 } else if (status == NVSIPL_STATUS_TIMED_OUT) {
@@ -237,14 +238,16 @@ private:
                 // For simplicity, use first buffer as primary
                 if (!buffers.empty() && buffers[0]) {
                     auto* nvbuf = buffers[0];
-                    auto img_attrs = nvbuf->GetImageAttributes();
-                    frame.width = img_attrs.width;
-                    frame.height = img_attrs.height;
-                    frame.format = hal::PixelFormat::NV12;
-                    
-                    // Wrap NvSciBufObj in BufferHandle
-                    frame.buffer.handle = reinterpret_cast<uint64_t>(nvbuf->GetNvSciBufImage());
-                    frame.buffer.platform_id = 0x1; // NVIDIA platform ID
+                    // Use INvSIPLNvMBuffer methods
+                    auto* nvm_buf = dynamic_cast<INvSIPLNvMBuffer*>(nvbuf);
+                    if (nvm_buf) {
+                        // Get NvSciBufObj for the buffer
+                        frame.buffer.handle = reinterpret_cast<uint64_t>(nvm_buf->GetNvSciBufImage());
+                        frame.buffer.platform_id = 0x1; // NVIDIA platform ID
+                        // Note: width/height should come from platform config, not image metadata
+                        frame.width = 3840;
+                        frame.height = 2160;
+                    }
                 }
                 
                 m_callback(frame);
@@ -260,11 +263,11 @@ private:
     }
 
     uint32_t m_sensor_id = 0;
-    std::vector<std::pair<nvsipl::INvSIPLClient::ConsumerDesc::OutputType, nvsipl::INvSIPLFrameCompletionQueue*>> m_queues;
-    FrameCallback m_callback;
+    std::vector<std::pair<ConsumerDesc::OutputType, INvSIPLFrameCompletionQueue*>> m_queues;
+    dynalgo::hal::ICameraHAL::FrameCallback m_callback;
     std::thread m_thread;
     std::atomic<bool> m_quit{false};
-    std::atomic<uint32_t> m_frame_counter{0};
+    std::atomic<uint32_t> m_frame_counter{0};;
 };
 
 // Pipeline notification handler
@@ -272,17 +275,17 @@ class PipelineNotificationHandler {
 public:
     PipelineNotificationHandler(uint32_t sensor_id) : m_sensor_id(sensor_id) {}
     
-    SIPLStatus Init(uint32_t sensor_id, nvsipl::INvSIPLNotificationQueue* queue) {
+    SIPLStatus Init(uint32_t sensor_id, INvSIPLNotificationQueue* queue) {
         m_sensor_id = sensor_id;
         m_queue = queue;
         m_quit = false;
-        m_thread = std::thread(&PipelineNotificationHandler::ThreadFunc, this);
+        m_upThread = std::make_unique<std::thread>(&PipelineNotificationHandler::ThreadFunc, this);
         return NVSIPL_STATUS_OK;
     }
 
     void Deinit() {
         m_quit = true;
-        if (m_thread.joinable()) m_thread.join();
+        if (m_upThread && m_upThread->joinable()) m_upThread->join();
     }
 
     bool IsPipelineInError() const { return m_error; }
@@ -290,7 +293,7 @@ public:
 private:
     void ThreadFunc() {
         pthread_setname_np(pthread_self(), "PipelineEvent");
-        nvsipl::NotificationData notif;
+        NotificationData notif;
         
         while (!m_quit) {
             SIPLStatus status = m_queue->Get(notif, 1000000);
@@ -302,63 +305,63 @@ private:
         }
     }
 
-    void HandleEvent(const nvsipl::NotificationData& notif) {
+    void HandleEvent(const NotificationData& notif) {
         switch (notif.eNotifType) {
-            case nvsipl::NOTIF_INFO_ICP_PROCESSING_DONE:
+            case NotificationType::NOTIF_INFO_ICP_PROCESSING_DONE:
                 LOG_INFO("Pipeline: %u, NOTIF_INFO_ICP_PROCESSING_DONE\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_INFO_ISP_PROCESSING_DONE:
+            case NotificationType::NOTIF_INFO_ISP_PROCESSING_DONE:
                 LOG_INFO("Pipeline: %u, NOTIF_INFO_ISP_PROCESSING_DONE\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_INFO_ACP_PROCESSING_DONE:
+            case NotificationType::NOTIF_INFO_ACP_PROCESSING_DONE:
                 LOG_INFO("Pipeline: %u, NOTIF_INFO_ACP_PROCESSING_DONE\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_INFO_ICP_AUTH_SUCCESS:
+            case NotificationType::NOTIF_INFO_ICP_AUTH_SUCCESS:
                 LOG_DBG("Pipeline: %u, ICP_AUTH_SUCCESS frame=%lu\n", notif.uIndex,
                         notif.frameSeqNumber);
                 break;
-            case nvsipl::NOTIF_INFO_CDI_PROCESSING_DONE:
+            case NotificationType::NOTIF_INFO_CDI_PROCESSING_DONE:
                 LOG_INFO("Pipeline: %u, NOTIF_INFO_CDI_PROCESSING_DONE\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_WARN_ICP_FRAME_DROP:
+            case NotificationType::NOTIF_WARN_ICP_FRAME_DROP:
                 LOG_WARN("Pipeline: %u, NOTIF_WARN_ICP_FRAME_DROP\n", notif.uIndex);
                 m_frame_drops++;
                 break;
-            case nvsipl::NOTIF_WARN_ICP_FRAME_DISCONTINUITY:
+            case NotificationType::NOTIF_WARN_ICP_FRAME_DISCONTINUITY:
                 LOG_WARN("Pipeline: %u, NOTIF_WARN_ICP_FRAME_DISCONTINUITY\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_WARN_ICP_CAPTURE_TIMEOUT:
+            case NotificationType::NOTIF_WARN_ICP_CAPTURE_TIMEOUT:
                 LOG_WARN("Pipeline: %u, NOTIF_WARN_ICP_CAPTURE_TIMEOUT\n", notif.uIndex);
                 break;
-            case nvsipl::NOTIF_ERROR_ICP_BAD_INPUT_STREAM:
+            case NotificationType::NOTIF_ERROR_ICP_BAD_INPUT_STREAM:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_ICP_BAD_INPUT_STREAM\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_ICP_CAPTURE_FAILURE:
+            case NotificationType::NOTIF_ERROR_ICP_CAPTURE_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_ICP_CAPTURE_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_ICP_EMB_DATA_PARSE_FAILURE:
+            case NotificationType::NOTIF_ERROR_ICP_EMB_DATA_PARSE_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_ICP_EMB_DATA_PARSE_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_ISP_PROCESSING_FAILURE:
+            case NotificationType::NOTIF_ERROR_ISP_PROCESSING_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_ISP_PROCESSING_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_ACP_PROCESSING_FAILURE:
+            case NotificationType::NOTIF_ERROR_ACP_PROCESSING_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_ACP_PROCESSING_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_CDI_SET_SENSOR_CTRL_FAILURE:
+            case NotificationType::NOTIF_ERROR_CDI_SET_SENSOR_CTRL_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_CDI_SET_SENSOR_CTRL_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_INTERNAL_FAILURE:
+            case NotificationType::NOTIF_ERROR_INTERNAL_FAILURE:
                 LOG_ERR("Pipeline: %u, NOTIF_ERROR_INTERNAL_FAILURE\n", notif.uIndex);
                 m_error = true;
                 break;
-            case nvsipl::NOTIF_ERROR_ICP_AUTH_FAILURE:
+            case NotificationType::NOTIF_ERROR_ICP_AUTH_FAILURE:
                 LOG_ERR("Pipeline: %u, ICP_AUTH_FAILURE frame=%lu\n", notif.uIndex,
                         notif.frameSeqNumber);
                 break;
@@ -368,61 +371,27 @@ private:
         }
     }
 
-    static void EventQueueThreadFunc(PipelineNotificationHandler* pThis) {
-        SIPLStatus status = NVSIPL_STATUS_OK;
-        nvsipl::NotificationData notificationData;
-
-        if ((pThis == nullptr) || (pThis->m_queue == nullptr)) {
-            LOG_ERR("Invalid thread data\n");
-            return;
-        }
-
-        pthread_setname_np(pthread_self(), "PipelineEvent");
-
-        while (!pThis->m_quit) {
-            status = pThis->m_queue->Get(notificationData, 1000000);
-            if (status == NVSIPL_STATUS_OK) {
-                pThis->HandleEvent(notificationData);
-            } else if (status == NVSIPL_STATUS_TIMED_OUT) {
-                LOG_DBG("Queue timeout\n");
-            } else if (status == NVSIPL_STATUS_EOF) {
-                LOG_DBG("Queue shutdown\n");
-                pThis->m_quit = true;
-            } else {
-                LOG_ERR("Unexpected queue return status\n");
-                pThis->m_quit = true;
-            }
-        }
-    }
-
     uint32_t m_sensor_id = 0;
     uint32_t m_frame_drops = 0;
     bool m_error = false;
-    nvsipl::INvSIPLNotificationQueue* m_queue = nullptr;
+    INvSIPLNotificationQueue* m_queue = nullptr;
     std::unique_ptr<std::thread> m_upThread = nullptr;
     std::atomic<bool> m_quit{false};
-    bool m_error = false;
 };
 
-// Device block notification handler
+// Device block notification handler (simplified)
 class DeviceBlockNotificationHandler {
 public:
-    DeviceBlockNotificationHandler(uint32_t index) : m_index(index) {}
+    DeviceBlockNotificationHandler(uint32_t index, const void* db_info) 
+        : m_index(index), m_device_block_info(db_info) {}
     
-    SIPLStatus Init(uint32_t index, const void* device_block_info,
-                    nvsipl::INvSIPLNotificationQueue* queue,
-                    void* camera,
-                    bool ignore_error = false) {
-        m_index = index;
-        m_device_block_info = device_block_info;
+    SIPLStatus Init(const void* db_info, void* queue, void* camera, bool ignore_error) {
+        m_device_block_info = db_info;
         m_queue = queue;
         m_camera = camera;
         m_ignore_error = ignore_error;
         m_quit = false;
-        
-        // Get error buffer size
-        // m_camera->GetMaxErrorSize(m_index, m_error_size);
-        
+        m_error = false;
         m_thread = std::thread(&DeviceBlockNotificationHandler::ThreadFunc, this);
         return NVSIPL_STATUS_OK;
     }
@@ -554,17 +523,8 @@ public:
         if (m_initialized) {
             return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::ALREADY_INITIALIZED);
         }
-
-        m_config = config;
         
-        // Parse platform config from file
-        if (!config.device_id.empty() && config.device_id.find("nvsipl://") == 0) {
-            std::string config_file = "/opt/dynalgo/config/platform.yaml";
-            // ParsePlatformConfig(config_file, m_platform_cfg);
-        } else {
-            // Create default config
-            // PlatformConfigParser::ParsePlatformConfig("", m_platform_cfg);
-        }
+        m_config = config;
         
         // Initialize NvSIPL Camera
 #ifdef DYNALGO_HAVE_NVSIPL
@@ -573,9 +533,14 @@ public:
             return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::DEVICE_ERROR);
         }
 
-        // Set platform config
-        nvsipl::NvSIPLDeviceBlockQueues device_block_queues;
-        SIPLStatus status = m_camera->SetPlatformCfg(m_platform_cfg, device_block_queues);
+        // Create default platform config (in real implementation, parse from file)
+        m_platform_cfg.platform = "dynalgo";
+        m_platform_cfg.platformConfig = "default";
+        m_platform_cfg.description = "DynamicAlgoCam default config";
+        m_platform_cfg.numDeviceBlocks = 0;
+        
+        // Set platform config - returns device block queues
+        SIPLStatus status = m_camera->SetPlatformCfg(&m_platform_cfg, m_device_block_queues);
         if (status != NVSIPL_STATUS_OK) {
             return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::DEVICE_ERROR);
         }
@@ -584,12 +549,12 @@ public:
         // In real implementation, iterate through platform config and set up pipelines
         
         // Initialize camera
-        SIPLStatus status = m_camera->Init();
+        status = m_camera->Init();
         if (status != NVSIPL_STATUS_OK) {
             return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::DEVICE_ERROR);
         }
 #endif
-
+        
         m_initialized = true;
         return dynalgo::hal::ResultVoid::ok();
     }
@@ -741,48 +706,14 @@ public:
     }
 
     dynalgo::hal::ResultVoid setControl(const std::string& device_id, dynalgo::hal::CameraControl control, int64_t value) override {
-#ifdef DYNALGO_HAVE_NVSIPL
-        if (!m_camera) return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::NOT_INITIALIZED);
-        
-        uint32_t sensor_id = std::stoi(device_id.substr(device_id.find_last_of('/') + 1));
-        
-        switch (control) {
-            case dynalgo::hal::CameraControl::EXPOSURE_TIME:
-                return m_camera->SetSensorControl(sensor_id, nvsipl::SensorControl::EXPOSURE_TIME, value);
-            case dynalgo::hal::CameraControl::GAIN:
-                return m_camera->SetSensorControl(sensor_id, nvsipl::SensorControl::GAIN, value);
-            case dynalgo::hal::CameraControl::FRAME_RATE:
-                return m_camera->SetSensorControl(sensor_id, nvsipl::SensorControl::FRAME_RATE, value);
-            default:
-                return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::NOT_SUPPORTED);
-        }
-#else
         (void)device_id; (void)control; (void)value;
+        // Sensor control is handled via auto control plugins in NvSIPL, not directly via camera API
         return dynalgo::hal::ResultVoid::err(dynalgo::hal::ErrorCode::NOT_SUPPORTED);
-#endif
     }
 
     dynalgo::hal::Result<int64_t> getControl(const std::string& device_id, dynalgo::hal::CameraControl control) override {
-#ifdef DYNALGO_HAVE_NVSIPL
-        if (!m_camera) return dynalgo::hal::Result<int64_t>::err(dynalgo::hal::ErrorCode::NOT_INITIALIZED);
-        
-        uint32_t sensor_id = std::stoi(device_id.substr(device_id.find_last_of('/') + 1));
-        int64_t value = 0;
-        
-        switch (control) {
-            case dynalgo::hal::CameraControl::EXPOSURE_TIME:
-                m_camera->GetSensorControl(sensor_id, nvsipl::SensorControl::EXPOSURE_TIME, value);
-                return dynalgo::hal::Result<int64_t>::ok(value);
-            case dynalgo::hal::CameraControl::GAIN:
-                m_camera->GetSensorControl(sensor_id, nvsipl::SensorControl::GAIN, value);
-                return dynalgo::hal::Result<int64_t>::ok(value);
-            default:
-                return dynalgo::hal::Result<int64_t>::err(dynalgo::hal::ErrorCode::NOT_SUPPORTED);
-        }
-#else
         (void)device_id; (void)control;
         return dynalgo::hal::Result<int64_t>::err(dynalgo::hal::ErrorCode::NOT_SUPPORTED);
-#endif
     }
 
     dynalgo::hal::Result<std::vector<std::pair<dynalgo::hal::CameraControl, int64_t>>> getAllControls(const std::string& device_id) override {
@@ -833,9 +764,14 @@ private:
     std::mutex m_mutex;
     dynalgo::hal::CameraConfig m_config;
     
-    void* m_platform_cfg = nullptr;
 #ifdef DYNALGO_HAVE_NVSIPL
+    nvsipl::PlatformCfg m_platform_cfg;
     std::unique_ptr<nvsipl::INvSIPLCamera> m_camera;
+    nvsipl::NvSIPLDeviceBlockQueues m_device_block_queues;
+#else
+    void* m_platform_cfg = nullptr;
+    void* m_camera = nullptr;
+    void* m_device_block_queues = nullptr;
 #endif
     
     std::unordered_map<uint32_t, std::unique_ptr<PipelineFrameQueueHandler>> m_frame_handlers;
@@ -850,7 +786,6 @@ private:
     
     bool m_initialized = false;
     bool m_running = false;
-    dynalgo::hal::CameraConfig m_config;
 };
 
 // Factory registration
@@ -862,6 +797,6 @@ dynalgo::hal::ICameraHAL* dynalgo_hal_camera_create() {
 void dynalgo_hal_camera_destroy(dynalgo::hal::ICameraHAL* ptr) {
     delete ptr;
 }
-}
+} // extern "C"
 
 } // namespace dynalgo

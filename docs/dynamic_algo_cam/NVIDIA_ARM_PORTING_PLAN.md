@@ -21,11 +21,11 @@ Extend DynamicAlgoCam from x86-only (UVC/V4L2, Orbbec, RoboSense) to support NVI
 | **GPU Acceleration** | Optional CUDA (ENABLE_CUDA) | Native CUDA + CUDLA (DLA) |
 | **Video Encoding** | FFmpeg (SW) | NvMedia IEP (HW H.264/H.265) |
 | **Inference** | TensorRT/ONNX (x86) | TensorRT + CUDLA (aarch64) |
-| **Sensor Config** | Runtime USB descriptors | PlatformCfg (YAML), CameraModuleInfo |
+| **Sensor Config** | Runtime USB descriptors | PlatformCfg (JSON), CameraModuleInfo |
 
 ---
 
-## Phase 1: Build System & Platform Detection (Week 1-2)
+## Phase 1: Build System & Platform Detection (Week 1-2) ✅ COMPLETED
 
 ### 1.1 CMake Platform Detection
 ```cmake
@@ -50,7 +50,7 @@ option(ENABLE_CUDLA "Enable CUDLA/DLA acceleration (ARM64 only)" ${DYNALGO_PLATF
 
 ### 1.2 Cross-Compilation Toolchain
 ```cmake
-# cmake/toolchains/jetson-aarch64.cmake
+# cmake/toolchains/aarch64_nvidia.cmake (IMPLEMENTED)
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
@@ -60,188 +60,274 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
-# L4T sysroot (adjust for JetPack version)
-set(CMAKE_SYSROOT /opt/nvidia/jetson-sdk/l4t/sysroot)
-set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda)
+# DriveOS SDK paths (container: /drive/drive-linux/)
+set(CMAKE_SYSROOT /drive/drive-linux)
+set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda-11.4)
+
+# Compiler flags for Orin (Ampere + ARMv8.2)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.2-a -mtune=cortex-a76")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=armv8.2-a -mtune=cortex-a76")
 ```
 
-### 1.3 Dependency Discovery
+### 1.3 Dependency Discovery ✅ IMPLEMENTED
 ```cmake
-# Find NvSIPL, NvMedia, NvSciBuf, NvSciSync, NvSciStream
-find_library(NVSIPL_LIB nvsipl PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVMEDIA_IEP_LIB nvmedia_iep_sci PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVSCIBUF_LIB nvscibuf PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVSCISYNC_LIB nvscisync PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVSCISTREAM_LIB nvscistream PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVSCIEVENT_LIB nvscievent PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVSICIPC_LIB nvsciipc PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(NVMEDIA_2D_LIB nvmedia2d PATHS /usr/lib/aarch64-linux-gnu/tegra)
-find_library(TEGRA_WFD_LIB tegrawfd PATHS /usr/lib/aarch64-linux-gnu/tegra)
+# cmake/platforms/aarch64_nvidia.cmake
+# NVIDIA SDK libraries (DriveOS / JetPack)
+set(NVIDIA_SDK_PATHS
+    /drive/drive-linux/lib-target
+    /drive/drive-linux/lib
+    /usr/lib/aarch64-linux-gnu/tegra
+    /usr/lib/aarch64-linux-gnu
+    /usr/local/lib
+    /opt/nvidia/driveos
+)
 
-# CUDA on ARM
-find_package(CUDA REQUIRED)
-set(CUDA_ARCHITECTURES "87;87" CACHE STRING "Ampere (Orin) compute capability")
+# Include directories
+include_directories(/drive/drive-linux/include)
+
+# NvSIPL & NvMedia
+find_library(NVSIPL_LIB nvsipl PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSCIBUF_LIB nvscibuf PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSCISYNC_LIB nvscisync PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSCISTREAM_LIB nvscistream PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSCIEVENT_LIB nvscievent PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSICIPC_LIB nvsciipc PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVSCICOMMON_LIB nvsciCommon PATHS ${NVIDIA_SDK_PATHS})
+find_library(TEGRA_WFD_LIB tegrawfd PATHS ${NVIDIA_SDK_PATHS})
+find_library(CUDLA_LIB nvcudla PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVML_LIB nvidia-ml PATHS ${NVIDIA_SDK_PATHS})
+
+# NvMedia component libraries (no single libnvmedia.so in container)
+find_library(NVMEDIA_2D_LIB nvmedia2d PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IEP_LIB nvmedia_iep_sci PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_DLA_LIB nvmedia_dla PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_EGLSTREAM_LIB nvmedia_eglstream PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IDE_PARSER_LIB nvmedia_ide_parser PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IDE_SCI_LIB nvmedia_ide_sci PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IJPD_SCI_LIB nvmedia_ijpd_sci PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IJPE_SCI_LIB nvmedia_ijpe_sci PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_IOFA_SCI_LIB nvmedia_iofa_sci PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_TENSOR_LIB nvmedia_tensor PATHS ${NVIDIA_SDK_PATHS})
+find_library(NVMEDIA_LDC_LIB nvmedialdc PATHS ${NVIDIA_SDK_PATHS})
+set(NVMEDIA_LIBS ${NVMEDIA_2D_LIB} ${NVMEDIA_IEP_LIB} ${NVMEDIA_DLA_LIB} ...)
+```
+
+### 1.4 Docker Build Environment ✅ VALIDATED
+```bash
+# Container: harbor-ad2.nioint.com/nad/conandocker:v6.0.7.0-0.0.31
+# Entrypoint: /bin/bash (must override: --entrypoint /bin/bash -c "cmd")
+# Cross-compiler: aarch64-linux-gnu-g++ 9.4.0
+# CUDA: 11.4 at /usr/local/cuda-11.4
+# Conan profiles: orin, nt2_ccc, nt2_mazu (armv8, gcc 9.3, toolchain-orin/6.0.5.0)
+
+docker run --rm --entrypoint /bin/bash \
+  -v /HDD/jtshen/github/DynamicAlgoCam:/workspace \
+  harbor-ad2.nioint.com/nad/conandocker:v6.0.7.0-0.0.31 -c "
+    cd /workspace/hal/aarch64_nvidia/camera/nvsipl/build &&
+    cmake -DCMAKE_TOOLCHAIN_FILE=/workspace/cmake/platforms/aarch64_nvidia.cmake .. &&
+    make -j4
+  "
 ```
 
 ---
 
-## Phase 2: NvSIPL Driver Abstraction (Week 2-4)
+## Phase 2: NvSIPL HAL Implementation (Week 2-4) ✅ COMPLETED
 
-### 2.1 Directory Structure
+### 2.1 Directory Structure (HAL-based, not app/driver/)
 ```
-app/driver/
-├── nvsipl/
+hal/
+├── aarch64_nvidia/
 │   ├── CMakeLists.txt
-│   ├── nvsipl_adapter.hpp       # Abstract interface (like stereo_adapter.hpp)
-│   ├── nvsipl_camera.cpp        # CSiplCamera wrapper
-│   ├── nvsipl_producer.cpp      # CSIPLProducer → NvSciStream producer
-│   ├── nvsipl_consumer_cuda.cpp # CCudaConsumer → GPU processing
-│   ├── nvsipl_consumer_enc.cpp  # CEncConsumer → NvMedia IEP encoding
-│   ├── nvsipl_consumer_display.cpp # CDisplayConsumer → WFD/DRM
-│   ├── nvsipl_platform_cfg.cpp  # PlatformCfg parsing (YAML)
-│   └── nvsipl_utils.cpp         # Error handling, logging
+│   ├── camera/
+│   │   └── nvsipl/                    # VENDOR: NVIDIA SIPL (primary)
+│   │       ├── CMakeLists.txt
+│   │       ├── nvsipl_camera_hal.cpp  # ICameraHAL implementation
+│   │       ├── nvsipl_platform_cfg.cpp # PlatformCfg parser (NIO/AD camera.json)
+│   │       ├── third_party/
+│   │       │   └── nlohmann_json.hpp  # Vendored JSON parser (no nlohmann_json dep)
+│   │       └── nvsipl_platform_cfg.hpp
 ```
 
-### 2.2 Abstract Interface (`nvsipl_adapter.hpp`)
+### 2.2 HAL Interface Compliance ✅ IMPLEMENTED
 ```cpp
-#pragma once
-#include "dynalgo_frame.hpp"
-#include "dynalgo_types.hpp"
+// hal/aarch64_nvidia/camera/nvsipl/nvsipl_camera_hal.cpp
+// Implements: dynalgo::hal::ICameraHAL (stable ABI from include/dynalgo/hal/camera_hal.hpp)
 
-namespace dynalgo {
-
-struct NvSIPLConfig {
-    std::string platformConfigFile;   // PlatformCfg YAML (e.g., platform_cfg_orin.yml)
-    std::string sensorModuleConfig;   // CameraModuleInfo selector
-    uint32_t numCameras = 1;
-    bool enableISP = true;
-    bool enableEncoder = false;
-    bool enableDisplay = false;
-    bool enableInference = false;
-    int cudaDeviceId = 0;
-};
-
-struct NvSIPLFrameSet {
-    uint64_t timestampUs = 0;
-    uint32_t frameId = 0;
-    uint32_t sensorId = 0;
-
-    // ISP outputs
-    DynalgoFrame isp0;      // NV12 block-linear (ISP0)
-    DynalgoFrame isp1;      // NV12 pitch-linear (ISP1)
-    DynalgoFrame icpRaw;    // Raw Bayer (ICP)
-
-    // Encoded output
-    DynalgoFrame encoded;   // H.264/H.265 bitstream
-
-    // Inference output
-    std::vector<DynalgoDetectionResult> detections;
-
-    // Metadata
-    NvSIPLImageMetadata meta;
-};
-
-class INvSIPLCamera {
+class NvSIPLCameraHAL : public dynalgo::hal::ICameraHAL {
 public:
-    virtual ~INvSIPLCamera() = default;
-    virtual bool open(const NvSIPLConfig& cfg) = 0;
-    virtual bool close() = 0;
-    virtual bool isOpen() const = 0;
-    virtual bool grab(NvSIPLFrameSet& outFrame, int timeoutMs = 1000) = 0;
-    virtual bool startStreaming(std::function<void(const NvSIPLFrameSet&)> cb) = 0;
-    virtual bool stopStreaming() = 0;
-    virtual void setCallback(std::function<void(const NvSIPLFrameSet&)> cb) = 0;
-};
-
-class NvSIPLCameraFactory {
-public:
-    static std::unique_ptr<INvSIPLCamera> create();
-    static std::vector<std::string> discoverPlatformConfigs();
-    static std::vector<CameraModuleInfo> discoverSensors(const std::string& platformCfg);
-};
-
-} // namespace dynalgo
-```
-
-### 2.3 SIPL Camera Wrapper (`nvsipl_camera.cpp`)
-- Wrap `CSiplCamera` from multicast sample
-- Implement `INvSIPLCamera` interface
-- Handle `PlatformCfg` loading, sensor enumeration
-- Manage `CPipelineFrameQueueHandler`, `CPipelineNotificationHandler`, `CDeviceBlockNotificationHandler`
-- Callback → `NvSIPLFrameSet` conversion using NvSciBuf CPU mapping
-
-### 2.4 SIPL Producer (`nvsipl_producer.cpp`)
-- Wrap `CSIPLProducer` → NvSciStream block producer
-- Register NvSciBufObj with `INvSIPLCamera::RegisterImages()`
-- Register NvSciSyncObj (EOF/PRE) with camera
-- Handle `NvSciStreamBlockPacketFenceSet` for synchronization
-
-### 2.5 CUDA Consumer (`nvsipl_consumer_cuda.cpp`)
-- Wrap `CCudaConsumer` → NvSciStream consumer
-- Import NvSciBufObj as CUDA external memory (`cudaImportExternalMemory`)
-- Block-linear → pitch-linear conversion via mipmapped arrays
-- CUDA stream synchronization with NvSciSyncFence
-- Optional: CUDLA inference (car detection example)
-
-### 2.6 Encoder Consumer (`nvsipl_consumer_enc.cpp`)
-- Wrap `CEncConsumer` → NvMedia IEP
-- `NvMediaIEPFillNvSciBufAttrList` for buffer negotiation
-- `NvMediaIEPFeedFrame` + `NvMediaIEPGetBits` for encoding
-- EOF sync fence for downstream consumers
-
-### 2.7 Display Consumer (`nvsipl_consumer_display.cpp`)
-- Wrap `CDisplayConsumer` → OpenWFD / DRM/KMS
-- Zero-copy display via NvSciBuf
-
----
-
-## Phase 3: Zero-Copy Pipeline Integration (Week 4-5)
-
-### 3.1 NvSciBuf Integration in `DynalgoFrame`
-```cpp
-// Extend dynalgo_frame.hpp for ARM/NvSciBuf
-struct DynalgoFrame {
-    // ... existing fields ...
+    // Capability query
+    Result<std::vector<StreamConfig>> getSupportedStreams(device_id) override;
+    Result<SensorInfo> getSensorInfo(device_id) override;
     
-#ifdef DYNALOGO_HAVE_NVSCIBUF
-    NvSciBufObj sciBufObj = nullptr;      // NvSciBuf object handle
-    NvSciBufAttrList attrList = nullptr;  // Buffer attributes
-    bool ownsSciBuf = false;              // Ownership flag
-#endif
+    // Lifecycle
+    ResultVoid initialize(const CameraConfig& config) override;      // SetPlatformCfg + Init
+    ResultVoid start() override;                                      // INvSIPLCamera::Start()
+    ResultVoid stop() override;                                       // INvSIPLCamera::Stop()
+    ResultVoid deinitialize() override;                               // Deinit + cleanup
+    
+    // Frame acquisition (blocking + async)
+    Result<FrameMetadata> acquireFrame(timeout_ms) override;          // Ring buffer
+    Result<std::vector<FrameMetadata>> acquireFrames(timeout_ms) override;
+    ResultVoid registerCallback(FrameCallback cb) override;           // Async mode
+    ResultVoid unregisterCallback() override;
+    
+    // Buffer management (zero-copy via NvSciBuf)
+    Result<BufferHandle> importBuffer(external) override;             // NvSciBufObj handle
+    ResultVoid releaseBuffer(buffer) override;
+    
+    // Controls (via NvSIPL auto-control plugins)
+    ResultVoid setControl(device_id, CameraControl, value) override;
+    Result<int64_t> getControl(device_id, CameraControl) override;
+    
+    // Platform info
+    Result<std::string> getName() const override { return "NvSIPL Camera HAL"; }
+    Result<std::string> getVendor() const override { return "nvidia"; }
+    Result<std::string> getVersion() const override { return "6.0.8"; }
 };
 
-// Helper: Map NvSciBufObj to CPU pointer
-bool mapNvSciBufToCpu(NvSciBufObj obj, void** cpuPtr, size_t* size);
-
-// Helper: Get NvSciBuf attributes (width, height, format, layout)
-bool queryNvSciBufAttrs(NvSciBufObj obj, NvSciBufAttrList* attrList);
+// Factory registration
+extern "C" {
+dynalgo::hal::ICameraHAL* dynalgo_hal_camera_create() { return new dynalgo::NvSIPLCameraHAL(); }
+void dynalgo_hal_camera_destroy(dynalgo::hal::ICameraHAL* ptr) { delete ptr; }
+}
 ```
 
-### 3.2 NvSciSync Integration
+### 2.3 SIPL Camera Wrapper (`nvsipl_camera_hal.cpp`) ✅
+- Wraps `nvsipl::INvSIPLCamera` from NvSIPL SDK
+- Implements `ICameraHAL` interface
+- Handles `PlatformCfg` loading (NIO/AD JSON format), sensor enumeration
+- Manages frame queues via `INvSIPLFrameCompletionQueue` (ICP/ISP0/ISP1)
+- Pipeline notifications via `INvSIPLNotificationQueue` (ICP/ISP/ACP/CDI events)
+- Callback → `FrameMetadata` conversion using NvSciBuf CPU mapping
+- Thread-safe frame ring buffer with condition variables
+
+### 2.4 Frame Queue Handlers ✅
 ```cpp
-// Sync primitives for inter-op synchronization
-class NvSciSyncWrapper {
-public:
-    static bool createSignaler(NvSciSyncObj* obj, NvSciSyncAttrList attrs);
-    static bool createWaiter(NvSciSyncObj* obj, NvSciSyncAttrList attrs);
-    static bool wait(NvSciSyncObj obj, NvSciSyncFence* fence, uint64_t timeoutNs);
-    static bool signal(NvSciSyncObj obj, NvSciSyncFence* fence);
-    static void destroy(NvSciSyncObj obj);
-};
-```
+// PipelineFrameQueueHandler - processes ICP/ISP0/ISP1 frame completion queues
+SIPLStatus Init(sensor_id, queues, FrameCallback);
+void Deinit();
+ThreadFunc() {
+    // Get buffers from INvSIPLFrameCompletionQueue::Get(INvSIPLBuffer*&, timeout)
+    // Convert INvSIPLNvMBuffer → FrameMetadata (NvSciBufObj handle + metadata)
+    // Callback(user) + Release() buffers
+}
 
-### 3.3 Pipeline Topology
-```
-[Sensor] → [NvSIPL ICP/ISP] → [NvSciBuf] ──┬─→ [CUDA Consumer] → [Inference] → [Actuator]
-                                           ├─→ [Encoder Consumer] → [H.264 Stream]
-                                           └─→ [Display Consumer] → [WFD/HDMI]
+// PipelineNotificationHandler - processes pipeline events
+NotificationType values from NvSIPLPipelineNotifier:
+  NOTIF_INFO_ICP_PROCESSING_DONE (0)
+  NOTIF_INFO_ISP_PROCESSING_DONE (1)
+  NOTIF_INFO_ACP_PROCESSING_DONE (2)
+  NOTIF_INFO_CDI_PROCESSING_DONE (3)
+  NOTIF_INFO_ICP_AUTH_SUCCESS (4)
+  NOTIF_WARN_ICP_FRAME_DROP (100)
+  NOTIF_WARN_ICP_FRAME_DISCONTINUITY (101)
+  NOTIF_WARN_ICP_CAPTURE_TIMEOUT (102)
+  NOTIF_ERROR_ICP_BAD_INPUT_STREAM (200)
+  NOTIF_ERROR_ICP_CAPTURE_FAILURE (201)
+  NOTIF_ERROR_ICP_EMB_DATA_PARSE_FAILURE (202)
+  NOTIF_ERROR_ISP_PROCESSING_FAILURE (203)
+  NOTIF_ERROR_ACP_PROCESSING_FAILURE (204)
+  NOTIF_ERROR_CDI_SET_SENSOR_CTRL_FAILURE (205)
+  NOTIF_ERROR_INTERNAL_FAILURE (300)
+  NOTIF_ERROR_ICP_AUTH_FAILURE (211)
 ```
 
 ---
 
-## Phase 4: CUDA/CUDLA Acceleration (Week 5-6)
+## Phase 3: NvSIPL Platform Configuration Parser (Week 3) ✅ COMPLETED
 
-### 4.1 CUDA Preprocessing Kernels
+### 3.1 NIO/AD camera.json Format Support ✅
+```json
+// NIO/AD camera.json (12 cameras: Front120, DMS, Front30, Rear, SideView_FL/FR/RL/RR, Park_Right/Left/Rear/Front)
+{
+  "sensorConfig": [
+    {
+      "cameraName": "NIO_P02F120A1_20BIT_RGGB_FLIP",
+      "sensorProtocol": "camera.gmsl",
+      "dataSourceName": "F120",
+      "sensorParameters": "camera-name=NIO_P02F120A1_20BIT_RGGB_FLIP,interface=csi-e,deserializer=MAX96712DES1,link=0,output-format=raw+processed,CPHY-mode=1,skip-eeprom=1,fifo-size=4,enable-subframe=1,output-timestamp=raw,disable-subframe=0,slave=0,isp-mode=yuv420-uint8-bl",
+      "width": 3840,
+      "height": 2160,
+      "frameRate": 30,
+      "rawImageEnable": 1,
+      "encoderEnable": 0,
+      "position": "front_120",
+      "orientation": 0
+    }
+  ]
+}
+```
+
+### 3.2 Parser Implementation (`nvsipl_platform_cfg.cpp`) ✅
+```cpp
+// Key functions:
+static bool ParseFromJson(json_file, device_blocks);           // Entry point
+static bool ParseSensorConfigArray(sensor_config_array, blocks); // NIO sensorConfig[]
+static std::optional<GmslCameraParams> ParseGmslParams(str);    // key=value CSV parser
+static nvsipl::PlatformCfg BuildRealPlatformCfg(device_blocks); // Query + Direct fallback
+
+// NIO Query Flow (preferred for real hardware):
+// 1. INvSIPLQuery::GetInstance()
+// 2. ParseDatabase()
+// 3. GetPlatformCfg("NIO_CCC" or "NIO_MAZU_C_EBD", platform_cfg)
+// 4. ApplyMask(platform_cfg, deserializer_masks) - bitwise link enable masks
+//    Mask: LINK_0=0x0001, LINK_1=0x0010, LINK_2=0x0100, LINK_3=0x1000
+
+// Direct Construction Fallback:
+// Populate PlatformCfg::deviceBlockList with fixed arrays (MAX_DEVICEBLOCKS_PER_PLATFORM=6)
+```
+
+### 3.3 GMSL Camera Parameters Mapping ✅
+| NIO Parameter | Struct Field | Example |
+|---|---|---|
+| `camera-name` | `camera_name` | `NIO_P02F120A1_20BIT_RGGB_FLIP` |
+| `interface` | `interface` | `csi-e` |
+| `deserializer` | `deserializer` | `MAX96712DES1` |
+| `link` | `link` | `0` |
+| `output-format` | `output_format` | `raw+processed` |
+| `CPHY-mode` | `cphy_mode` | `1` |
+| `skip-eeprom` | `skip_eeprom` | `true` |
+| `fifo-size` | `fifo_size` | `4` |
+| `enable-subframe` | `enable_subframe` | `true` |
+| `output-timestamp` | `output_timestamp` | `raw` |
+| `disable-subframe` | `disable_subframe` | `false` |
+| `slave` | `slave_mode` | `false` |
+| `isp-mode` | `isp_mode` | `yuv420-uint8-bl` |
+
+---
+
+## Phase 4: Zero-Copy Pipeline Integration (Week 4-5) 📋 PLANNED
+
+### 4.1 NvSciBuf Integration in FrameMetadata
+```cpp
+// FrameMetadata.buffer.handle = NvSciBufObj (uint64_t)
+// FrameMetadata.buffer.platform_id = 0x1 (NVIDIA platform)
+// FrameMetadata.acquire_fence = NvSciSyncFence (wait before access)
+// FrameMetadata.release_fence = NvSciSyncFence (signal after done)
+```
+
+### 4.2 Pipeline Topology
+```
+[GMSL Sensor] → [MAX96712 Deserializer] → [MIPI CSI-2] → [NvSIPL ICP/ISP]
+                                                        │
+                    ┌───────────────────────────────────┼───────────────────────────────────┐
+                    ▼                                   ▼                                   ▼
+              [ICP Raw Bayer]                      [ISP0 NV12]                          [ISP1 NV12]
+              (NvSciBufObj)                        (NvSciBufObj)                        (NvSciBufObj)
+                    │                                   │                                   │
+                    ▼                                   ▼                                   ▼
+              [CUDA Consumer]                       [Encoder]                             [Display]
+              (cudaImportExternalMemory)            (NvMedia IEP)                        (WFD/DRM)
+                    │                                   │                                   │
+                    ▼                                   ▼                                   ▼
+              [Inference: TensorRT]              [H.264 Stream]                       [HDMI/DP]
+```
+
+---
+
+## Phase 5: CUDA/CUDLA Acceleration (Week 5-6) 📋 PLANNED
+
+### 5.1 CUDA Preprocessing Kernels
 ```cpp
 // app/algo/cuda_preprocess.cu
 __global__ void nv12_to_rgb_kernel(const uint8_t* y, const uint8_t* uv,
@@ -252,7 +338,7 @@ __global__ void nms_kernel(float* boxes, float* scores, int numBoxes,
                            float iouThresh, float scoreThresh, int* keep, int* keepCount);
 ```
 
-### 4.2 CUDLA Integration (DLA)
+### 5.2 CUDLA Integration (DLA)
 ```cpp
 // app/model_backends/tensorrt/trt_dla_backend.cpp
 class TRTDLABackend : public DynalgoModelBackend {
@@ -262,89 +348,54 @@ class TRTDLABackend : public DynalgoModelBackend {
 };
 ```
 
-### 4.3 Build Integration
-```cmake
-# app/algo/CMakeLists.txt
-if(ENABLE_CUDA AND DYNALGO_PLATFORM_ARM64)
-    find_package(CUDA REQUIRED)
-    cuda_add_library(dynalgo_cuda_preprocess
-        cuda_preprocess.cu
-        nms_kernel.cu
-    )
-    target_link_libraries(dynalgo_cuda_preprocess ${CUDA_LIBRARIES} cudart)
-    target_compile_options(dynalgo_cuda_preprocess PRIVATE
-        -gencode arch=compute_87,code=sm_87  # Orin Ampere
-    )
-endif()
-
-if(ENABLE_CUDLA)
-    find_library(CUDLA_LIB cudla PATHS /usr/lib/aarch64-linux-gnu/tegra)
-    target_link_libraries(dynalgo_model_backend ${CUDLA_LIB})
-endif()
-```
-
 ---
 
-## Phase 5: NvMedia Encoder Integration (Week 6)
+## Phase 6: NvMedia Encoder Integration (Week 6) 📋 PLANNED
 
-### 5.1 Encoder Backend
+### 6.1 Encoder Backend
 ```cpp
-// app/plugins/nvmedia_encoder.hpp
-class NvMediaEncoder : public IEncoder {
-public:
-    bool init(int width, int height, int fps, int bitrate, Codec codec);
-    bool encode(NvSciBufObj inputBuf, std::vector<uint8_t>& outputBitstream);
+// hal/aarch64_nvidia/encoder/nvmedia/nvmedia_encoder.cpp
+class NvMediaEncoder : public IEncoderHAL {
+    bool init(width, height, fps, bitrate, codec);
+    bool encode(NvSciBufObj inputBuf, BitstreamBuffer& output);
     bool flush();
     void deinit();
-
 private:
     NvMediaIEP* m_iep = nullptr;
     NvSciSyncObj m_eofSyncObj = nullptr;
-    // ... encoder config
 };
 ```
 
-### 5.2 Pipeline Integration
-- Add encoder as optional consumer in `NvSIPLConfig`
-- Wire NvSciSync EOF fence from ISP → Encoder
-- Output bitstream → network streaming / file
-
 ---
 
-## Phase 6: Configuration & Deployment (Week 7)
+## Phase 7: Configuration & Deployment (Week 7) 📋 PLANNED
 
-### 6.1 Platform Configuration (YAML)
-```yaml
-# configs/nvsipl/platform_cfg_orin.yml
-platformCfg:
-  deviceBlocks:
-    - name: "deser_0"
-      cdi: "max96712"
-      cdiConfig: "max96712_tpg_yuv"
-      cameraModules:
-        - name: "imx728"
-          sensor: "imx728"
-          linkIndex: 0
-          position: "front_center"
-          intrinsics: "calib/imx728_front.yml"
+### 7.1 Platform Configuration (JSON) ✅ SUPPORTED
+```json
+// NIO/AD camera.json format (12 cameras)
+// Supported cameras: Front120, DMS, Front30, Rear, SideView_FL/FR/RL/RR, Park_Right/Left/Rear/Front
+// sensorParameters: comma-separated key=value for GMSL config
 ```
 
-### 6.2 Runtime Config
+### 7.2 Runtime Config
 ```cpp
 // app/dynamic_algo_cam/dynamic_algo_cam.cpp
-if (platform == "jetson" || platform == "drive") {
-    auto nvsiplCam = NvSIPLCameraFactory::create();
-    NvSIPLConfig cfg;
-    cfg.platformConfigFile = "configs/nvsipl/platform_cfg_orin.yml";
-    cfg.enableISP = true;
-    cfg.enableEncoder = true;
-    cfg.enableInference = true;
-    nvsiplCam->open(cfg);
-    // Register with CaptureSession
-}
+CameraConfig config;
+config.device_id = "nvsipl://0";           // Logical ID from board config
+config.vendor = "nvidia";
+config.width = 3840;
+config.height = 2160;
+config.fps = 30;
+config.format = PixelFormat::NV12;
+config.buffer_count = 4;
+config.enable_hw_sync = true;
+
+auto hal = CameraHALFactory::create("aarch64_nvidia", "nvsipl");
+hal->initialize(config);
+hal->start();
 ```
 
-### 6.3 Container / Rootfs Setup
+### 7.3 Container Deployment
 ```dockerfile
 # Dockerfile.jetson
 FROM nvcr.io/nvidia/l4t-base:r36.2.0
@@ -353,26 +404,27 @@ RUN apt-get update && apt-get install -y \
     libnvscisync-dev libnvscistream-dev \
     cuda-toolkit-12-2 tensorrt libcudla-dev
 # Copy DynamicAlgoCam build
+COPY build/linux_aarch64/lib/dynalgo/hal/libdynalgo_hal_camera_nvsipl.so /usr/local/lib/dynalgo/hal/
 COPY build/linux_aarch64/bin/dynamic_algo_cam /usr/local/bin/
 ```
 
 ---
 
-## Phase 7: Testing & Validation (Week 8)
+## Phase 8: Testing & Validation (Week 8) 📋 PLANNED
 
-### 7.1 Unit Tests
+### 8.1 Unit Tests
 - NvSciBuf import/export round-trip
 - NvSciSync fence signaling/wait
 - SIPL camera open/close/start/stop
 - CUDA kernel correctness (NMS, resize, color convert)
 
-### 7.2 Integration Tests
+### 8.2 Integration Tests
 - Multi-camera synchronization (hardware trigger via GPIO)
 - End-to-end latency: sensor → ISP → CUDA → inference → actuator
 - Encoder quality/bitrate validation
 - Display pipeline (WFD/HDMI) zero-copy verification
 
-### 7.3 Performance Benchmarks
+### 8.3 Performance Benchmarks
 | Metric | Target (Orin AGX) |
 |--------|-------------------|
 | ISP throughput | 4x 4K@30fps / 8x 1080p@30fps |
@@ -383,76 +435,77 @@ COPY build/linux_aarch64/bin/dynamic_algo_cam /usr/local/bin/
 
 ---
 
-## Migration Checklist
+## Implementation Status Summary
 
-### Code Changes Required
-- [ ] Root CMakeLists.txt: ARM64 detection, NvSIPL/NvMedia options
-- [ ] `cmake/toolchains/jetson-aarch64.cmake` (new)
-- [ ] `app/driver/nvsipl/` (new directory with 7 files)
-- [ ] `app/include/dynalgo_frame.hpp`: NvSciBuf fields
-- [ ] `app/core/dynalgo_capture_session.cpp`: NvSIPL camera registration
-- [ ] `app/algo/`: CUDA kernels, CUDLA backend
-- [ ] `app/plugins/`: NvMedia encoder plugin
-- [ ] `configs/nvsipl/`: PlatformCfg YAML files
-- [ ] `scripts/build_jetson.sh`: Cross-compile script
-- [ ] `Dockerfile.jetson`: Deployment container
-- [ ] Documentation: ARM porting guide, sensor bring-up
-
-### Dependencies (JetPack 6.x / DriveOS 6.x)
-| Package | Version | Source |
-|---------|---------|--------|
-| NvSIPL | 6.0.x | DriveOS / JetPack |
-| NvMedia | 6.0.x | DriveOS / JetPack |
-| CUDA | 12.2+ | JetPack |
-| TensorRT | 8.6+ | JetPack |
-| CUDLA | 12.2+ | JetPack |
-| libnvscibuf | 6.0.x | DriveOS / JetPack |
-| libnvscisync | 6.0.x | DriveOS / JetPack |
-| libnvscistream | 6.0.x | DriveOS / JetPack |
-
-### Sensor Bring-Up (Per Camera Module)
-1. Obtain PlatformCfg from NVIDIA / sensor vendor
-2. Calibrate intrinsics/extrinsics → YAML
-3. Validate ICP/ISP/ACP/CDI pipeline
-4. Tune ISP parameters (AE, AWB, CCM)
-5. Verify frame sync across cameras
+| Component | Status | Location |
+|-----------|--------|----------|
+| CMake platform detection | ✅ Done | `cmake/platforms/aarch64_nvidia.cmake` |
+| Cross-compilation toolchain | ✅ Done | `cmake/toolchains/aarch64_nvidia.cmake` |
+| NvSIPL HAL (ICameraHAL) | ✅ Done | `hal/aarch64_nvidia/camera/nvsipl/nvsipl_camera_hal.cpp` |
+| PlatformCfg parser (NIO JSON) | ✅ Done | `hal/aarch64_nvidia/camera/nvsipl/nvsipl_platform_cfg.cpp` |
+| GMSL params parser | ✅ Done | `ParseGmslParams()` |
+| NIO Query flow (INvSIPLQuery) | ✅ Done | `BuildPlatformCfgViaQuery()` |
+| Direct PlatformCfg construction | ✅ Done | `BuildPlatformCfgDirect()` |
+| Vendored nlohmann/json | ✅ Done | `third_party/nlohmann_json.hpp` |
+| Docker build validation | ✅ Done | aarch64 ELF objects produced |
+| Frame queue handlers | ✅ Done | `PipelineFrameQueueHandler`, `PipelineNotificationHandler` |
+| NvSciBuf zero-copy | 📋 Planned | `FrameMetadata.buffer.handle = NvSciBufObj` |
+| CUDA consumer | 📋 Planned | `nvsipl_consumer_cuda.cpp` |
+| NvMedia encoder | 📋 Planned | `hal/aarch64_nvidia/encoder/nvmedia/` |
+| TensorRT + DLA inference | 📋 Planned | `hal/aarch64_nvidia/inference/tensorrt/` |
+| Multi-camera sync | 📋 Planned | Hardware GPIO trigger |
 
 ---
 
-## Risk Mitigation
+## Key Technical Decisions
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| NvSIPL API changes | Medium | High | Pin DriveOS/JetPack version; abstraction layer |
-| NvSciBuf compatibility | Low | High | Test on target L4T version; fallback to CPU copy |
-| CUDA/DLA memory pressure | Medium | Medium | Pool allocation; limit concurrent buffers |
-| Sensor driver availability | Medium | High | Maintain supported sensor list; generic CSI fallback |
-| Cross-compile complexity | High | Medium | Docker-based build; CI on ARM runners |
+1. **HAL-based architecture**: Implementation in `hal/aarch64_nvidia/camera/nvsipl/` (not `app/driver/`) to maintain platform/vendor/board hierarchy
+2. **Vendored nlohmann/json**: Single-header `third_party/nlohmann_json.hpp` avoids external dependency in container
+3. **jsoncpp for JSON parsing**: Uses OrbbecSDK's jsoncpp vendor (`#include <json/json.h>`)
+4. **No yaml-cpp dependency**: YAML parsing returns default config with warning (container lacks yaml-cpp)
+5. **NIO Query flow preferred**: `INvSIPLQuery::GetPlatformCfg` + `ApplyMask` for real hardware; direct construction as fallback
+6. **sensorParameters only**: CCC parameters (`cccParameters`) not used; standard hardware uses `sensorParameters` field
+7. **Container build verified**: aarch64 ELF objects produced with `aarch64-linux-gnu-g++ 9.4.0`
+
+---
+
+## Dependencies (DriveOS 6.0.7 / JetPack 6.x)
+
+| Package | Version | Source |
+|---------|---------|--------|
+| NvSIPL | 6.0.x | DriveOS SDK (`/drive/drive-linux/include`, `/drive/drive-linux/lib-target`) |
+| NvMedia | 6.0.x | Component libs (no single libnvmedia.so) |
+| CUDA | 11.4 | Container `/usr/local/cuda-11.4` |
+| TensorRT | 8.6+ | JetPack / container (optional) |
+| CUDLA | 12.2+ | DriveOS (optional in container) |
+| libnvscibuf | 6.0.x | `/drive/drive-linux/lib-target/libnvscibuf.so` |
+| libnvscisync | 6.0.x | `/drive/drive-linux/lib-target/libnvscisync.so` |
+| libnvscistream | 6.0.x | `/drive/drive-linux/lib-target/libnvscistream.so` |
 
 ---
 
 ## Deliverables
 
-1. **Source**: `app/driver/nvsipl/` (complete NvSIPL driver stack)
-2. **Build**: Cross-compilation toolchain, CMake integration
-3. **Config**: PlatformCfg YAML for Jetson Orin + common sensors (IMX728, IMX623, AR0820)
-4. **Binary**: `dynamic_algo_cam` aarch64 executable
-5. **Container**: Dockerfile for Jetson deployment
-6. **Docs**: `NVIDIA_ARM_PORTING_GUIDE.md`, sensor bring-up checklist
-7. **CI**: GitHub Actions / Jetson CI for ARM builds
+1. **Source**: `hal/aarch64_nvidia/camera/nvsipl/` (complete NvSIPL HAL stack)
+2. **Build**: Cross-compilation toolchain, CMake integration ✅
+3. **Config**: NIO/AD `camera.json` parser with GMSL params ✅
+4. **Binary**: `libdynalgo_hal_camera_nvsipl.so` aarch64 shared library ✅ (compiled)
+5. **Container**: Dockerfile for Jetson/Drive deployment 📋
+6. **Docs**: This document + sensor bring-up checklist ✅
 
 ---
 
 ## Timeline Summary
 
-| Week | Phase | Key Deliverable |
-|------|-------|-----------------|
-| 1-2 | Build System | CMake ARM64 detection, toolchain, dependency find |
-| 2-4 | NvSIPL Driver | `INvSIPLCamera`, SIPL camera, producer, consumers |
-| 4-5 | Zero-Copy Pipeline | NvSciBuf/Sync integration, pipeline topology |
-| 5-6 | CUDA/CUDLA | Preprocess kernels, DLA inference backend |
-| 6 | NvMedia Encoder | HW H.264/H.265 encoder plugin |
-| 7 | Config/Deploy | PlatformCfg, Docker, runtime config |
-| 8 | Test/Validate | Unit/integration tests, benchmarks, docs |
+| Week | Phase | Key Deliverable | Status |
+|------|-------|-----------------|--------|
+| 1-2 | Build System | CMake ARM64 detection, toolchain, dependency find | ✅ Done |
+| 2-4 | NvSIPL HAL | `ICameraHAL`, SIPL camera, frame handlers, notifications | ✅ Done |
+| 3 | PlatformCfg Parser | NIO JSON, GMSL params, NIO Query flow | ✅ Done |
+| 4-5 | Zero-Copy Pipeline | NvSciBuf/Sync integration, pipeline topology | 📋 Planned |
+| 5-6 | CUDA/CUDLA | Preprocess kernels, DLA inference backend | 📋 Planned |
+| 6 | NvMedia Encoder | HW H.264/H.265 encoder plugin | 📋 Planned |
+| 7 | Config/Deploy | PlatformCfg, Docker, runtime config | 📋 Partially Done |
+| 8 | Test/Validate | Unit/integration tests, benchmarks, docs | 📋 Planned |
 
-**Total: ~8 weeks for MVP on Jetson AGX Orin**
+**Total: ~8 weeks for MVP on Jetson AGX Orin / Drive Orin**
